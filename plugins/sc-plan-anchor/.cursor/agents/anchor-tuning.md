@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.4.3
+version: 0.5.0
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: grok[effort=high]
 is_background: true
@@ -67,6 +67,8 @@ text, a target pass rate, or any instruction to produce a pass.
 ### Operation: `testability`
 
 1. Validate schema/contract and the frozen corpus digest before any Jev call.
+   Descriptor/payload versions are independent; verify canonical JSON SHA-256.
+   Map frozen `atomicity` to `single_constraint`.
 2. Generate a larger candidate pool for exactly `single_constraint`,
    `observable`, `faithful`, `scoped`, and `self_contained`; requirement form is
    deterministic lint and duplicate preselection compares statements only.

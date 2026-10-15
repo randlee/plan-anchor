@@ -1,6 +1,6 @@
 ---
 name: installation-and-troubleshooting
-version: 0.4.3
+version: 0.5.0
 description: Installing and locating the CLIs and credentials plan-anchoring depends on (python3, beads, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
 ---
 

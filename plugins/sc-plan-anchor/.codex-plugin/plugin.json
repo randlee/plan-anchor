@@ -1,6 +1,6 @@
 {
   "name": "sc-plan-anchor",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Keep plans and delivered work aligned with user-approved anchors using Jev-backed gates.",
   "author": {
     "name": "randlee",

@@ -61,6 +61,8 @@ def validate_history(history: dict) -> None:
         expected = None if index == 1 else sha256(events[index - 2])
         if event.get("previous_event_sha256") != expected:
             raise ContractError("HISTORY.CHAIN: previous_event_sha256 mismatch")
+        if (index > 1 or event.get("event") == "protocol_re_evaluated") and not isinstance(event.get("supersedes"), dict):
+            raise ContractError("HISTORY.PREDECESSOR: migrations and later events require a supersedes object")
         reject_forbidden(event, f"$.events[{index - 1}]")
 
 

@@ -35,7 +35,7 @@
         {
           "event_index": 1,
           "previous_event_sha256": null,
-          "event": "protocol_re_evaluated",
+          "event": "question_set_sealed",
           "protocol_version": "plan-anchor/question-tournament/2.0.0",
           "authority": {
             "intent_id": "phase-a-intent",
@@ -83,14 +83,11 @@
             "question_set_sha256": "6c1c3a95b903c3bcbabe0328a1f92175e9701edee17c35cff4a466afd7303af7",
             "reason_code": "TOURNAMENT.SEMANTIC_ACCEPTED"
           },
-          "supersedes": {
-            "protocol_version": "plan-anchor/question-tournament/1",
-            "decision_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
-          }
+          "supersedes": null
         }
       ]
     },
-    "tuning_history_after_sha256": "831dce6dd64d9c6748d9515882db3c5512f7295b760d498b84b1e6b07b5c9b04",
+    "tuning_history_after_sha256": "2ebc67a6ff8d9ae6f128e9f18524fe993651ceeac8564e224698918ebb04894b",
     "production_semantics_unchanged": true,
     "authority_citations": ["ANC-001 v1"],
     "oracle_sha256": "1111111111111111111111111111111111111111111111111111111111111111",

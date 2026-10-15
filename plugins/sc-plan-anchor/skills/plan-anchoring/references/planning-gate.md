@@ -1,6 +1,6 @@
 ---
 name: planning-gate
-version: 0.4.4
+version: 0.5.0
 description: Running the planning gate end to end - what to pass, what Jev sees, the command and exit codes, and how to read results for one sprint item and a whole phase.
 ---
 

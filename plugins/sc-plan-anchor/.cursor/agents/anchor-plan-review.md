@@ -1,6 +1,6 @@
 ---
 name: anchor-plan-review
-version: 0.4.1
+version: 0.5.0
 description: Judges one planning bead against anchors at the planning gate - composes the bead text, resolves question overrides, returns Jev's verdicts unchanged, and points to the weak spot in each failing cell. Read-only on beads and the plan.
 model: composer
 force-default-model: true

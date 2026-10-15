@@ -4,6 +4,21 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-14
+
+- Require predecessor objects for every protocol migration, including the
+  first history event, in request/result schemas and the relational contract.
+  Exercise real before/after histories in calibration regression tests.
+
+- Accept initial tuning-history events without a predecessor and preserve existing evaluator authority IDs in calibration request and result contracts.
+- Align the tuning result template and JSON schema with the shared runner's
+  versioned response envelope, including failures. Add regression coverage
+  across rendered testability, tuning, triage, and error responses.
+- Clarify that the calibration descriptor and frozen corpus have independent
+  schema versions, use the corpus's canonical JSON digest, and preserve its
+  legacy `atomicity` labels as the `single_constraint` role.
+- Publish the minor release with synchronized artifact and manifest versions.
+
 - Package `sc-plan-anchor` for the Cursor marketplace. Gate subagents pin unversioned Composer; the independent tuner pins unversioned Grok at high effort (`grok[effort=high]`). Cursor launches them with the Task tool and does not fall back to the parent chat.
 - Keep Claude, Codex, and Cursor agent bodies and registry comments identical. Harness differences stay in frontmatter and registry paths.
 - Keep maintainer tests outside the marketplace plugin at
