@@ -2,7 +2,7 @@
 name: plan-anchoring
 description: Capture the facts a user states while planning as numbered anchors (ANC-001...), one clear, testable requirement each, with the user's verbatim words kept as provenance, alongside existing requirements (REQ) and ADRs. Turn them into Jev-judged questions, tune and test the questions per anchor, and enforce them at two gates with a triage-apply-rerun loop. The planning gate checks each plan bead still says what the user said; the development gate checks the delivered sprint work followed it. Use when planning a phase or sprint with beads, when the user says "anchor this", "lock this", "don't let this drift", or "remember I said", when re-opening a plan after context compression, or when reviewing a sprint against its plan. Not for general code review, and not a replacement for plan hardening.
 metadata:
-  version: "0.5.0"
+  version: "0.5.1"
 ---
 
 # Plan Anchoring
@@ -17,17 +17,20 @@ Run before any capture, delegation, or gate. On a missing dependency, surface th
 
 ```bash
 which python3 && python3 --version          # 3.9 or newer
-which bd && bd --version                    # beads CLI, 1.x ("(dev)" suffix is fine)
+ANCHOR_TRACKER=br                          # select bd or br for anchor storage
+which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
 which sc-compose && sc-compose --version    # 1.7.0 or newer
 which jq && jq --version                    # gate agents parse question overrides with jq
 test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set" || echo "TYPESAFE_API_KEY missing"
 echo "remote judge opt-in: ${PLAN_ANCHOR_ALLOW_REMOTE_JUDGE:-unset}"
 ```
 
-If `bd` is not on PATH, Claude Code's bash may not share your shell's PATH. Check common locations:
+Select `ANCHOR_TRACKER` from the repository/user configuration, independently of whether plans are Markdown or tracker documents. Require only that selected CLI; never silently switch trackers. Pass it as `anchor_tracker` to the planning reviewer. Existing tracker command examples use `bd`; substitute the selected adapter for anchor and question operations.
+
+If the selected tracker is not on PATH, Claude Code's bash may not share your shell's PATH. Check common locations:
 
 ```bash
-for p in "/opt/homebrew/bin/bd" "$HOME/go/bin/bd" "$HOME/.local/bin/bd" "/usr/local/bin/bd"; do
+for p in "/opt/homebrew/bin/$ANCHOR_TRACKER" "$HOME/go/bin/$ANCHOR_TRACKER" "$HOME/.local/bin/$ANCHOR_TRACKER" "/usr/local/bin/$ANCHOR_TRACKER"; do
   [ -x "$p" ] && echo "Found at: $p" && break
 done
 for p in "/opt/homebrew/bin/sc-compose" "$HOME/.local/bin/sc-compose" "/usr/local/bin/sc-compose"; do
@@ -88,7 +91,7 @@ locking do not load that reference.
 - Never split a bead, trim its text, or raise a size cap to pass `PLAN.TOO_LARGE`. Triage unapproved work, then prose and ceremony, then split.
 - Never send more than one bead or one work description per Jev request, and never the whole plan.
 - Never compute coverage, counts, or "satisfied anywhere" by asking Jev. The script does it.
-- Missing `bd`, `python3`, API key, or opt-in: surface and stop; do not degrade silently.
+- Missing the selected anchor tracker, `python3`, API key, or opt-in: surface and stop; do not degrade silently.
 - Three consecutive gate runs on the same bead with the same failing set: escalate to the user rather than editing the plan again.
 
 Maintainers only: the complete resource index is in

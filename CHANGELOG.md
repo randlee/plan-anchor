@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Route planning reviewers through complete Markdown or bd/br sprint descriptors, independently selecting bd/br anchor storage. Preserve legacy bead callers, validate normalized item digests, and align all harness prompts and invocation instructions (edited artifacts 0.5.0 → 0.5.1).
+
 ## 0.5.0 — 2026-10-14
 
 - Require predecessor objects for every protocol migration, including the
