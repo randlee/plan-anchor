@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Deterministic relational checks for anchor-tuning request/result contracts."""
+"""Deterministic relational checks for anchor-tuning request/result contracts.
+
+Contract violations are returned as ``Err(ToolError)`` values (see
+``result.py``); ``main`` renders one as ``"CODE: detail"``. Structural gaps
+in the input (a missing key) and unreadable files still surface at the CLI
+boundary exactly as before.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,9 @@ import hashlib
 import json
 import pathlib
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from result import Err, Ok, Result, ToolError, err  # noqa: E402
 
 
 FORBIDDEN_FIELDS = {"desired_verdict", "requested_disposition", "proposed_question_text"}
@@ -26,8 +35,8 @@ ROLE_IDS = {
 }
 
 
-class ContractError(ValueError):
-    pass
+Check = Result[None, ToolError]
+OK = Ok(None)
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -40,86 +49,92 @@ def sha256(value: object) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def reject_forbidden(value: object, path: str = "$") -> None:
+def reject_forbidden(value: object, path: str = "$") -> Check:
     if isinstance(value, dict):
         for key, child in value.items():
             if key in FORBIDDEN_FIELDS:
-                raise ContractError(f"VALIDATION.FORBIDDEN_FIELD: {path}.{key}")
-            reject_forbidden(child, f"{path}.{key}")
+                return err("VALIDATION.FORBIDDEN_FIELD", f"{path}.{key}")
+            checked = reject_forbidden(child, f"{path}.{key}")
+            if isinstance(checked, Err):
+                return checked
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            reject_forbidden(child, f"{path}[{index}]")
+            checked = reject_forbidden(child, f"{path}[{index}]")
+            if isinstance(checked, Err):
+                return checked
+    return OK
 
 
-def validate_history(history: dict) -> None:
+def validate_history(history: dict) -> Check:
     events = history.get("events")
     if not isinstance(events, list):
-        raise ContractError("HISTORY.INVALID: events must be an array")
+        return err("HISTORY.INVALID", "events must be an array")
     for index, event in enumerate(events, start=1):
         if event.get("event_index") != index:
-            raise ContractError("HISTORY.INDEX: event_index is not contiguous")
+            return err("HISTORY.INDEX", "event_index is not contiguous")
         expected = None if index == 1 else sha256(events[index - 2])
         if event.get("previous_event_sha256") != expected:
-            raise ContractError("HISTORY.CHAIN: previous_event_sha256 mismatch")
+            return err("HISTORY.CHAIN", "previous_event_sha256 mismatch")
         if (index > 1 or event.get("event") == "protocol_re_evaluated") and not isinstance(event.get("supersedes"), dict):
-            raise ContractError("HISTORY.PREDECESSOR: migrations and later events require a supersedes object")
-        reject_forbidden(event, f"$.events[{index - 1}]")
+            return err("HISTORY.PREDECESSOR", "migrations and later events require a supersedes object")
+        checked = reject_forbidden(event, f"$.events[{index - 1}]")
+        if isinstance(checked, Err):
+            return checked
+    return OK
 
 
-def validate_request(request: dict) -> None:
-    reject_forbidden(request)
+def validate_request(request: dict) -> Check:
+    checked = reject_forbidden(request)
+    if isinstance(checked, Err):
+        return checked
     runtime = request["runtime"]
     expected_model = {"claude": "opus", "codex": "sol", "cursor": "grok[effort=high]"}.get(runtime["harness"])
     if runtime["model"] != expected_model:
-        raise ContractError(
-            f"VALIDATION.MODEL: {runtime['harness']} anchor-tuning requires {expected_model}"
-        )
+        return err("VALIDATION.MODEL", f"{runtime['harness']} anchor-tuning requires {expected_model}")
     operation = request.get("operation")
     if operation in ("testability", "tune"):
         if request.get("acceptance_threshold") is not None:
-            raise ContractError("VALIDATION.DEPRECATED: acceptance_threshold is forbidden")
+            return err("VALIDATION.DEPRECATED", "acceptance_threshold is forbidden")
         if request.get("confidence_reference_threshold") != 0.8:
-            raise ContractError("VALIDATION.CONFIDENCE_REFERENCE: expected 0.8")
+            return err("VALIDATION.CONFIDENCE_REFERENCE", "expected 0.8")
         records = request["authority"]["anchors"]["records"]
         if operation == "tune" and not records:
-            raise ContractError("VALIDATION.AUTHORITY: tune requires at least one locked anchor")
+            return err("VALIDATION.AUTHORITY", "tune requires at least one locked anchor")
         if operation == "testability":
             if request.get("gate") != "testability":
-                raise ContractError("VALIDATION.GATE: testability operation requires testability gate")
+                return err("VALIDATION.GATE", "testability operation requires testability gate")
             questions = request.get("current_questions")
             if not isinstance(questions, dict) or set(questions) != ROLE_IDS["testability"]:
-                raise ContractError("TOURNAMENT.ROLE_SET: testability rubric requires five calibrated questions")
+                return err("TOURNAMENT.ROLE_SET", "testability rubric requires five calibrated questions")
             rendered = json.dumps(questions, sort_keys=True).lower()
             for phrase in FORBIDDEN_QUESTION_META:
                 if phrase in rendered:
-                    raise ContractError(
-                        f"TOURNAMENT.QUESTION_META: rubric question contains {phrase!r}"
-                    )
+                    return err("TOURNAMENT.QUESTION_META", f"rubric question contains {phrase!r}")
             corpus = request["calibration_corpus"]
             if not corpus.get("frozen_before_live"):
-                raise ContractError("TOURNAMENT.ORACLE: calibration corpus was not frozen before live calls")
+                return err("TOURNAMENT.ORACLE", "calibration corpus was not frozen before live calls")
         else:
-            validate_history(request["tuning_history"])
+            return validate_history(request["tuning_history"])
     elif operation == "triage":
-        validate_questions(request["gate"], request["sealed_question_set"])
+        return validate_questions(request["gate"], request["sealed_question_set"])
+    return OK
 
 
-def validate_questions(gate: str, sealed: dict) -> None:
+def validate_questions(gate: str, sealed: dict) -> Check:
     questions = sealed.get("questions") if isinstance(sealed, dict) else None
     if not isinstance(questions, dict) or set(questions) != ROLE_IDS.get(gate):
-        raise ContractError(f"TOURNAMENT.ROLE_SET: expected {sorted(ROLE_IDS.get(gate, []))}")
+        return err("TOURNAMENT.ROLE_SET", f"expected {sorted(ROLE_IDS.get(gate, []))}")
     actual = sha256({"questions": questions})
     if sealed.get("digest") != actual:
-        raise ContractError("TOURNAMENT.QUESTION_DIGEST: sealed digest mismatch")
+        return err("TOURNAMENT.QUESTION_DIGEST", "sealed digest mismatch")
     rendered = json.dumps(questions, sort_keys=True).lower()
     for phrase in FORBIDDEN_QUESTION_META:
         if phrase in rendered:
-            raise ContractError(
-                f"TOURNAMENT.QUESTION_META: production question contains {phrase!r}"
-            )
+            return err("TOURNAMENT.QUESTION_META", f"production question contains {phrase!r}")
+    return OK
 
 
-def validate_tune_result(data: dict) -> None:
+def validate_tune_result(data: dict) -> Check:
     score = data["semantic_score"]
     for numerator, denominator in (
         ("exact_role_cells", "total_role_cells"),
@@ -127,7 +142,7 @@ def validate_tune_result(data: dict) -> None:
         ("stable_cases", "total_cases"),
     ):
         if score[numerator] > score[denominator]:
-            raise ContractError(f"TOURNAMENT.SCORE: {numerator} exceeds {denominator}")
+            return err("TOURNAMENT.SCORE", f"{numerator} exceeds {denominator}")
     exact = (
         score["exact_role_cells"] == score["total_role_cells"]
         and score["exact_semantic_verdicts"] == score["total_semantic_verdicts"]
@@ -136,101 +151,118 @@ def validate_tune_result(data: dict) -> None:
     )
     diagnostics = data["confidence_diagnostics"]
     if diagnostics["threshold"] != data["confidence_reference_threshold"]:
-        raise ContractError("TOURNAMENT.CONFIDENCE_REFERENCE: diagnostic threshold mismatch")
+        return err("TOURNAMENT.CONFIDENCE_REFERENCE", "diagnostic threshold mismatch")
     if diagnostics["cells_at_or_above_threshold"] > diagnostics["total_cells"]:
-        raise ContractError("TOURNAMENT.CONFIDENCE: passing cells exceed total cells")
+        return err("TOURNAMENT.CONFIDENCE", "passing cells exceed total cells")
     if diagnostics["total_cells"] != score["total_role_cells"]:
-        raise ContractError("TOURNAMENT.CONFIDENCE: total cells differ from semantic score")
+        return err("TOURNAMENT.CONFIDENCE", "total cells differ from semantic score")
 
     history = data["tuning_history_after"]
-    validate_history(history)
+    checked = validate_history(history)
+    if isinstance(checked, Err):
+        return checked
     if sha256(history) != data["tuning_history_after_sha256"]:
-        raise ContractError("HISTORY.DIGEST: history_after digest mismatch")
+        return err("HISTORY.DIGEST", "history_after digest mismatch")
     before = {"schema": history["schema"], "history_id": history["history_id"], "events": history["events"][:-1]}
     if sha256(before) != data["tuning_history_before_sha256"]:
-        raise ContractError("HISTORY.DIGEST: history_before digest mismatch")
+        return err("HISTORY.DIGEST", "history_before digest mismatch")
     last = history["events"][-1]
     event_score = dict(last["score"])
     event_confidence = event_score.pop("confidence")
     if event_score != score or event_confidence != diagnostics:
-        raise ContractError("HISTORY.SCORE: history score differs from result")
+        return err("HISTORY.SCORE", "history score differs from result")
 
     if data["accepted"]:
         if not exact:
-            raise ContractError("TOURNAMENT.SEMANTIC_REJECTED: accepted score is not exact and stable")
+            return err("TOURNAMENT.SEMANTIC_REJECTED", "accepted score is not exact and stable")
         sealed = data["sealed_question_set"]
-        validate_questions(data["gate"], sealed)
+        checked = validate_questions(data["gate"], sealed)
+        if isinstance(checked, Err):
+            return checked
         if data["sealed_question_set_digest_after"] != sealed["digest"]:
-            raise ContractError("TOURNAMENT.QUESTION_DIGEST: result digest mismatch")
+            return err("TOURNAMENT.QUESTION_DIGEST", "result digest mismatch")
         if last["decision"]["status"] != "sealed":
-            raise ContractError("HISTORY.DECISION: accepted result is not sealed")
+            return err("HISTORY.DECISION", "accepted result is not sealed")
         if last["decision"]["question_set_sha256"] != sealed["digest"]:
-            raise ContractError("HISTORY.DECISION: history question digest mismatch")
+            return err("HISTORY.DECISION", "history question digest mismatch")
     else:
         if data["sealed_question_set"] is not None or data["sealed_question_set_digest_after"] is not None:
-            raise ContractError("TOURNAMENT.UNSEALED: rejected result contains a seal")
+            return err("TOURNAMENT.UNSEALED", "rejected result contains a seal")
         if last["decision"]["status"] == "sealed":
-            raise ContractError("HISTORY.DECISION: rejected result carries a sealed decision")
+            return err("HISTORY.DECISION", "rejected result carries a sealed decision")
         if last["decision"]["question_set_sha256"] is not None:
-            raise ContractError("HISTORY.DECISION: rejected result carries a question digest")
+            return err("HISTORY.DECISION", "rejected result carries a question digest")
+    return OK
 
 
-def validate_testability_result(data: dict) -> None:
+def validate_testability_result(data: dict) -> Check:
     summary = data["confirmation_summary"]
     semantic = data["semantic_score"]
     dedupe = data["dedupe_score"]
     expected_semantic_cells = data["corpus_case_count"] * len(ROLE_IDS["testability"])
     if semantic["total_cells"] != expected_semantic_cells:
-        raise ContractError("RUBRIC.SCORE: semantic total does not match corpus cases and roles")
+        return err("RUBRIC.SCORE", "semantic total does not match corpus cases and roles")
     if dedupe["total_cells"] != data["dedupe_case_count"]:
-        raise ContractError("RUBRIC.SCORE: dedupe total does not match dedupe case count")
+        return err("RUBRIC.SCORE", "dedupe total does not match dedupe case count")
     for label, score in (("semantic", semantic), ("dedupe", dedupe)):
         for field in ("exact_cells", "confident_cells", "stable_cells"):
             if score[field] > score["total_cells"]:
-                raise ContractError(f"RUBRIC.SCORE: {label} {field} exceeds total")
+                return err("RUBRIC.SCORE", f"{label} {field} exceeds total")
     if summary["two_call_cells"] != semantic["total_cells"]:
-        raise ContractError("RUBRIC.CONFIRMATION: two-call cells differ from semantic total")
+        return err("RUBRIC.CONFIRMATION", "two-call cells differ from semantic total")
     if not data["repeat_requests_byte_identical"]:
-        raise ContractError("RUBRIC.REQUEST_DRIFT: repeated requests were not byte-identical")
+        return err("RUBRIC.REQUEST_DRIFT", "repeated requests were not byte-identical")
     if data["accepted"]:
         if summary["inconclusive_cells"] or summary["unstable_cells"]:
-            raise ContractError("RUBRIC.UNSEALED: accepted rubric has inconclusive or unstable cells")
+            return err("RUBRIC.UNSEALED", "accepted rubric has inconclusive or unstable cells")
         for label, score in (("semantic", semantic), ("dedupe", dedupe)):
             if any(score[field] != score["total_cells"] for field in ("exact_cells", "confident_cells", "stable_cells")):
-                raise ContractError(f"RUBRIC.UNSEALED: accepted {label} score is not exact, confident, and stable")
+                return err("RUBRIC.UNSEALED", f"accepted {label} score is not exact, confident, and stable")
         sealed = data["rubric_question_set"]
         questions = sealed.get("questions") if isinstance(sealed, dict) else None
         if not isinstance(questions, dict) or set(questions) != ROLE_IDS["testability"]:
-            raise ContractError("RUBRIC.QUESTION_SET: accepted rubric lacks the five calibrated questions")
+            return err("RUBRIC.QUESTION_SET", "accepted rubric lacks the five calibrated questions")
         if sealed.get("digest") != sha256({"questions": questions}):
-            raise ContractError("RUBRIC.QUESTION_DIGEST: rubric digest mismatch")
+            return err("RUBRIC.QUESTION_DIGEST", "rubric digest mismatch")
         rendered = json.dumps(questions, sort_keys=True).lower()
         for phrase in FORBIDDEN_QUESTION_META:
             if phrase in rendered:
-                raise ContractError(f"RUBRIC.QUESTION_META: rubric contains {phrase!r}")
+                return err("RUBRIC.QUESTION_META", f"rubric contains {phrase!r}")
     elif data.get("rubric_question_set") is not None:
-        raise ContractError("RUBRIC.UNSEALED: rejected calibration contains a sealed rubric")
+        return err("RUBRIC.UNSEALED", "rejected calibration contains a sealed rubric")
+    return OK
 
 
-def validate_result(result: dict) -> None:
-    reject_forbidden(result)
+def validate_result(result: dict) -> Check:
+    checked = reject_forbidden(result)
+    if isinstance(checked, Err):
+        return checked
     if not result.get("success"):
-        return
+        return OK
     data = result.get("data") or {}
     operation = data.get("operation")
     if operation == "testability":
-        validate_testability_result(data)
+        return validate_testability_result(data)
     elif operation == "tune":
-        validate_tune_result(data)
+        return validate_tune_result(data)
     elif operation == "triage":
-        validate_questions(data.get("gate", "planning"), data["sealed_question_set"])
+        checked = validate_questions(data.get("gate", "planning"), data["sealed_question_set"])
+        if isinstance(checked, Err):
+            return checked
         if data["disposition"] == "plan_violation" and (
             data["sealed_question_set_digest_before"]
             != data["sealed_question_set_digest_after"]
         ):
-            raise ContractError("TRIAGE.DIGEST_CHANGED: plan_violation changed questions")
+            return err("TRIAGE.DIGEST_CHANGED", "plan_violation changed questions")
+        return OK
     else:
-        raise ContractError("VALIDATION.OPERATION: unknown result operation")
+        return err("VALIDATION.OPERATION", "unknown result operation")
+
+
+def render_error(error: ToolError) -> str:
+    """The CLI's historical one-line form of a contract violation."""
+
+    return f"{error.code}: {error.message}"
 
 
 def main() -> int:
@@ -240,9 +272,12 @@ def main() -> int:
     args = parser.parse_args()
     try:
         value = json.loads(args.path.read_text(encoding="utf-8"))
-        (validate_request if args.kind == "request" else validate_result)(value)
-    except (OSError, json.JSONDecodeError, KeyError, ContractError) as exc:
+        checked = (validate_request if args.kind == "request" else validate_result)(value)
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
         print(json.dumps({"valid": False, "error": str(exc)}, sort_keys=True))
+        return 1
+    if isinstance(checked, Err):
+        print(json.dumps({"valid": False, "error": render_error(checked.error)}, sort_keys=True))
         return 1
     print(json.dumps({"valid": True, "sha256": sha256(value)}, sort_keys=True))
     return 0
