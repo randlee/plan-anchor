@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install "jsonschema>=4,<5"
+      - run: python -m pip install "jsonschema>=4,<5" "pyyaml>=5.1"
       - run: python scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
