@@ -12,7 +12,7 @@ agents:
 
 skills:
   plan-anchoring:
-    version: 0.5.3
+    version: 0.5.4
     path: skills/plan-anchoring/SKILL.md
     depends_on:
       anchor-plan-review: "0.x"
