@@ -129,15 +129,15 @@ Source: ANC-018. Status: shipped.
 Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_installation_doc_covers_br_and_selection`.
 
 **REQ-027** The planning gate shall accept a Markdown phase plan and its copy in a tracker, and both shall normalize to the same ordered sprint items and byte-identical Jev request JSON.
-Source: ANC-016; INTENT "Success". Status: shipped.
+Source: ANC-016; INTENT "Success". Status: superseded by ADR-014 (REQ-057); remove when that lands.
 Verified: `test_plan_source.py::PlanSourceTests.test_markdown_and_tracker_copy_normalize_and_order_identically`, `PlanSourceTests.test_canonical_jev_body_excludes_source_metadata_for_all_sources`, `test_plan_review_prompt.py::PlanReviewPromptTests.test_all_source_kinds_preserve_identical_complete_text`.
 
 **REQ-028** Markdown plan review shall require tracker records only for an anchor root and its plan-question and dev-question children.
-Source: ANC-017. Status: shipped.
+Source: ANC-017. Status: superseded by ADR-014 (REQ-057); remove when that lands.
 Verified: `test_plan_review_prompt.py::PlanReviewPromptTests.test_markdown_with_br_does_not_require_bd_or_a_planning_bead`.
 
 **REQ-029** A phase plan shall be a phase index linking separate authoritative sprint documents; malformed structures, duplicate IDs, symlink escapes, copy drift and digest mismatches shall fail before delegation.
-Source: ANC-015; INTENT "Out of scope". Status: shipped.
+Source: ANC-015; INTENT "Out of scope". Status: superseded by ADR-014 (REQ-057); remove when that lands.
 Verified: `test_plan_source.py::PlanSourceTests.test_dogfood_file_and_directory_discover_a0_through_a7`, `test_invalid_phase_structures_fail_before_delegation`, `test_broken_sections_duplicate_ids_and_symlink_escape_fail`, `test_drift_copy_conflict_digest_and_size_are_fail_closed`.
 
 ## Agents and runner
@@ -256,6 +256,6 @@ Verified: `test_package_layout.py::MarketplacePackageLayoutTests.test_maintainer
 Source: ANC-001. Status: shipped.
 Verified: none (not mechanically testable).
 
-**REQ-057** The development gate shall accept the same plan sources as the planning gate (Markdown sprint documents, or a `bd` or `br` copy via `plan_source.py`) and shall store and read anchors only through the tracker `anchor_tracker.py` resolves; installed skill and agent text shall name only the installed tracker's commands.
+**REQ-057** Both gates shall judge the sprint text the calling agent supplies through `judge --item-file` (or stdin), read from wherever that agent wrote the plan, with no plan parsing or format requirement; anchor records shall use only the tracker `anchor_tracker.py` resolves, and installed skill and agent text shall name only the installed tracker's commands.
 Source: OPERATOR (2026-10-17); INTENT "Success"; ADR-014. Status: planned.
-Verified: none yet (replaces `test_development_gate_is_out_of_scope`).
+Verified: none yet.

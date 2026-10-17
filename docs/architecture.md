@@ -89,7 +89,7 @@ REQ-025.
 
 ## ADR-005 Plan sources: Markdown authoritative, tracker copy equivalent
 
-Status: accepted. Date: 2026-10-11.
+Status: superseded by ADR-014. Date: 2026-10-11.
 
 Context: Plans are written as Markdown, but some teams keep a tracker copy;
 the two must not judge differently.
@@ -255,28 +255,29 @@ environment variable because it is a secret. Several `PLAN_ANCHOR_*`
 environment variables are still read by `jev_judge.py`, contrary to ANC-005;
 they are candidates to move to CLI flags or settings. REQ-018, REQ-019.
 
-## ADR-014 Both gates are plan-source and tracker agnostic
+## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
-Status: planned. Date: 2026-10-17.
+Status: planned. Date: 2026-10-17. Supersedes ADR-005.
 
-Context: The skill is designed to anchor Markdown plans and `bd`/`br` plans
-alike. ADR-004 introduced tracker selection for the planning gate only, which
-left the development gate (`anchor-sprint-review`) reading the sprint with
-`bd show`/`bd children` and storing nothing through the resolved tracker. A
-`br` repository or a Markdown plan therefore could not run the development
-gate, and a `br` install would have shipped `bd` instructions.
+Context: The skill anchors Markdown plans and `bd`/`br` plans alike. ADR-005
+put `plan_source.py` between the plan and the gates: it accepts only a
+`plan-phase-*.md` index with a fixed sprint table and fixed `Authoritative ...`
+headings, or a tracker epic copied in that shape. Real plans are not written
+that way. On atm-core's phase-bi (`bd`, sprint beads with `Goal`,
+`Deliverables`, `Does Not Close`), both `discover-tracker` (`SOURCE.PHASE_ID`)
+and `discover-markdown` (`SOURCE.PHASE_INDEX`) refuse the plan. ADR-004 also
+left the development gate calling `bd` directly.
 
-Decision: Both gates take plan text the same way: the sprint and its items come
-through `plan_source.py` from Markdown sprint documents or the resolved
-tracker's copy, and are passed to the agents as text or extracted by them as
-appropriate. Anchor and question records always live in the tracker
-`anchor_tracker.py` resolves (ADR-004), which the installer selects for the
-repository. No gate hardcodes `bd` or `br`; the installer renders the selected
-tracker's commands into the installed skill and agents.
+Decision: The calling agent wrote the plan to its medium, knows that medium,
+and reads the sprint back from it (the Markdown file, `br show`, `bd show`, or
+its own context). It passes that text to `jev_judge.py judge --item-id
+--item-title --item-file` (or stdin) for both gates. No gate parses, discovers
+or normalizes plans. Anchor and question records live in the tracker
+`anchor_tracker.py` resolves (ADR-004), which the installer selects; installed
+text names only that tracker's commands.
 
-Consequences: The plan's format and the anchor tracker are independent
-choices, and neither limits which gate can run. A `br` install contains no
-`bd` instructions for either gate, and the reverse. The development gate gains
-the planning gate's source and mismatch checks. Switching trackers does not
-move issue data. REQ-021, REQ-027, REQ-057.
-
+Consequences: Any plan format works, and the plan's format and the anchor
+tracker are independent choices. `judge` keeps its size cap
+(`PLAN.TOO_LARGE`). Markdown-versus-tracker-copy parity is no longer checked by
+the skill; the plan's author owns it. `plan_source.py` and its contract stop
+shipping unless something else still needs them. REQ-021, REQ-027, REQ-057.
