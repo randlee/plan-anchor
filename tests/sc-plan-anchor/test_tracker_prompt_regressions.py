@@ -1,0 +1,78 @@
+"""Prompt regressions for anchor tracker selection across shipped docs and agents."""
+
+from pathlib import Path
+import re
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
+SKILL = PLUGIN / "skills" / "plan-anchoring"
+HARNESSES = ("claude", "codex", "cursor")
+TEXT_SUFFIXES = {".md", ".py", ".j2", ".json", ".yaml", ".yml", ".txt"}
+NEGATION = re.compile(r"\b(never|not|no|outside)\b", re.IGNORECASE)
+
+
+def shipped_text_files():
+    files = [p for p in PLUGIN.rglob("*") if p.is_file() and p.suffix in TEXT_SUFFIXES]
+    files += [ROOT / "README.md", ROOT / "CONTRIBUTING.md", ROOT / "CHANGELOG.md"]
+    files += sorted((ROOT / "docs").rglob("*.md"))
+    return [p for p in files if p.is_file()]
+
+
+class TrackerPromptRegressionTests(unittest.TestCase):
+    def test_no_text_recommends_bd_init(self):
+        offenders = []
+        for path in shipped_text_files():
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if re.search(r"\bbd init\b", line) and not NEGATION.search(line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+                if "--proxied-server" in line:
+                    offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+        self.assertEqual(offenders, [], "bd init must never be recommended")
+
+    def test_tracker_script_never_builds_a_bd_init_argv(self):
+        source = (SKILL / "scripts" / "anchor_tracker.py").read_text(encoding="utf-8")
+        self.assertNotRegex(source, r"""["']bd["']\s*,\s*["']init["']""")
+        self.assertIn('argv = [cli_path, "init"]', source)
+        self.assertIn('if tracker != "br":', source)
+
+    def test_hardcoded_tracker_assignment_is_gone(self):
+        paths = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
+        paths += [PLUGIN / f".{h}" / "agents" / "anchor-plan-review.md" for h in HARNESSES]
+        for path in paths:
+            with self.subTest(path=path.name):
+                self.assertNotRegex(path.read_text(encoding="utf-8"), r"ANCHOR_TRACKER=(bd|br)\b")
+
+    def test_planning_gate_obtains_tracker_from_resolve(self):
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn('python3 "$T" resolve', skill)
+        self.assertIn("jq -r '.data.tracker // empty'", skill)
+        self.assertIn(".sc/plan-anchor/settings.yaml", skill)
+        for name in ("planning-review-workflow.md", "agent-delegation-workflow.md"):
+            with self.subTest(reference=name):
+                self.assertIn("anchor_tracker.py resolve", (SKILL / "references" / name).read_text(encoding="utf-8"))
+        for harness in HARNESSES:
+            with self.subTest(harness=harness):
+                prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-plan-review.md").read_text(encoding="utf-8")
+                self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
+
+    def test_development_gate_is_out_of_scope(self):
+        for harness in HARNESSES:
+            with self.subTest(harness=harness):
+                prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-sprint-review.md").read_text(encoding="utf-8")
+                self.assertNotIn("anchor_tracker.py", prompt)
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("planning gate (`anchor-plan-review`) only", changelog)
+
+    def test_installation_doc_covers_br_and_selection(self):
+        doc = (SKILL / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")
+        for needle in ("br init", "br sync --flush-only", "beads.db", "0.7.x", "PyYAML",
+                       "python3 -m pip install pyyaml", ".sc/plan-anchor/settings.yaml",
+                       "Dolt provisioning is outside this skill", "## Anchor tracker selection"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, doc)
+
+
+if __name__ == "__main__":
+    unittest.main()
