@@ -73,6 +73,17 @@ class PlanSourceTests(unittest.TestCase):
         cls.source = load_source()
         cls.judge = load_judge()
 
+    def ok(self, result):
+        """Unwrap an expected success; a typed failure fails the test with its code."""
+        self.assertIsInstance(result, self.source.Ok, getattr(getattr(result, "error", None), "code", result))
+        return result.value
+
+    def failure(self, result):
+        """Unwrap an expected typed failure (Err[ToolError]); exceptions are never the failure channel."""
+        self.assertIsInstance(result, self.source.Err)
+        self.assertIsInstance(result.error, self.source.ToolError)
+        return result.error
+
     def fixture_repo(self, root: Path) -> Path:
         plan = root / "docs" / "plans" / "phase-a"
         plan.mkdir(parents=True)
@@ -89,8 +100,8 @@ class PlanSourceTests(unittest.TestCase):
 
     def test_dogfood_file_and_directory_discover_a0_through_a7(self):
         target = "docs/plans/phase-a/plan-phase-a.md"
-        by_file = self.source.discover_markdown(ROOT, target)
-        by_directory = self.source.discover_markdown(ROOT, "docs/plans/phase-a")
+        by_file = self.ok(self.source.discover_markdown(ROOT, target))
+        by_directory = self.ok(self.source.discover_markdown(ROOT, "docs/plans/phase-a"))
         expected = [f"A{number}" for number in range(8)]
         self.assertEqual([item["id"] for item in by_file["sprints"]], expected)
         self.assertEqual([item["id"] for item in by_directory["sprints"]], expected)
@@ -103,7 +114,7 @@ class PlanSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             plan_dir = self.fixture_repo(root)
-            markdown = self.source.discover_markdown(root, "docs/plans/phase-a")
+            markdown = self.ok(self.source.discover_markdown(root, "docs/plans/phase-a"))
             children = []
             for item in reversed(markdown["sprints"]):
                 children.append({
@@ -112,9 +123,9 @@ class PlanSourceTests(unittest.TestCase):
                     "updated_at": "2026-10-11T00:00:00Z",
                 })
             for tracker_name in ("bd", "br"):
-                tracker = self.source.discover_tracker(children, phase="phase-a", tracker=tracker_name, epic="p")
+                tracker = self.ok(self.source.discover_tracker(children, phase="phase-a", tracker=tracker_name, epic="p"))
                 self.assertEqual([item["id"] for item in tracker["sprints"]], ["A1", "A2"])
-                parity = self.source.compare_parity(markdown, tracker)
+                parity = self.ok(self.source.compare_parity(markdown, tracker))
                 self.assertTrue(parity["equal"])
                 self.assertIn('```json\n{"example": true}\n```', tracker["sprints"][1]["text"])
 
@@ -142,9 +153,9 @@ class PlanSourceTests(unittest.TestCase):
             {"id": "p.1", "description": sprint("A1"), "updated_at": "rev-1"},
         ]
         with mock.patch.object(
-            self.source, "_tracker_json", side_effect=[epic, children]
+            self.source, "_tracker_json", side_effect=[self.source.Ok(epic), self.source.Ok(children)]
         ) as run:
-            plan = self.source.discover_tracker_epic(ROOT, "br", "p")
+            plan = self.ok(self.source.discover_tracker_epic(ROOT, "br", "p"))
         self.assertEqual([item["id"] for item in plan["sprints"]], ["A1", "A2"])
         self.assertEqual(
             [item["dependency_relation"] for item in plan["sprints"]],
@@ -172,10 +183,10 @@ class PlanSourceTests(unittest.TestCase):
             "external_ref": "plan-copy:docs/sprint-a1.md",
         }
         tracker = {"source_kind": "br", "sprints": [tracker_item]}
-        dry = self.source.copy_plan_to_tracker(ROOT, markdown, tracker)
+        dry = self.ok(self.source.copy_plan_to_tracker(ROOT, markdown, tracker))
         self.assertEqual(dry["actions"][0]["status"], "update_required")
-        with mock.patch.object(self.source, "_tracker_json", return_value=[{}]) as run:
-            applied = self.source.copy_plan_to_tracker(ROOT, markdown, tracker, apply=True)
+        with mock.patch.object(self.source, "_tracker_json", return_value=self.source.Ok([{}])) as run:
+            applied = self.ok(self.source.copy_plan_to_tracker(ROOT, markdown, tracker, apply=True))
         self.assertEqual(applied["actions"][0]["status"], "updated")
         argv = run.call_args.args[2]
         self.assertEqual(argv[0:2], ["update", "p.1"])
@@ -186,14 +197,14 @@ class PlanSourceTests(unittest.TestCase):
             "plan-copy:docs/sprint-a1.md@sha256:"
             + markdown_item["normalized_sha256"]
         )
-        verified = self.source.copy_plan_to_tracker(ROOT, markdown, tracker)
+        verified = self.ok(self.source.copy_plan_to_tracker(ROOT, markdown, tracker))
         self.assertEqual(verified["actions"][0]["status"], "verified")
 
     def test_canonical_jev_body_excludes_source_metadata_for_all_sources(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             self.fixture_repo(root)
-            markdown = self.source.discover_markdown(root, "docs/plans/phase-a")
+            markdown = self.ok(self.source.discover_markdown(root, "docs/plans/phase-a"))
             base = markdown["sprints"][0]
             anchor = {"id": "ANC-001", "statement": "The runner must be shared.", "scope": "runner"}
             questions = {"q": {"instructions": "Is it shared?", "options": {"yes": "yes", "no": "no"}}}
@@ -201,9 +212,9 @@ class PlanSourceTests(unittest.TestCase):
             sources = [base]
             for kind in ("bd", "br"):
                 sources.append(
-                    self.source.discover_tracker(
+                    self.ok(self.source.discover_tracker(
                         children, phase="phase-a", tracker=kind, epic="p"
-                    )["sprints"][0]
+                    ))["sprints"][0]
                 )
             bodies = [
                 self.source.canonical_jev_body(
@@ -240,15 +251,13 @@ class PlanSourceTests(unittest.TestCase):
                 (original + original[original.index("| Sprint |"):], "SOURCE.PHASE_TABLE"),
             ):
                 index.write_text(replacement, encoding="utf-8")
-                with self.assertRaises(self.source.SourceError) as caught:
-                    self.source.discover_markdown(root, "docs/plans/phase-a")
-                self.assertEqual(caught.exception.code, code)
+                caught = self.failure(self.source.discover_markdown(root, "docs/plans/phase-a"))
+                self.assertEqual(caught.code, code)
                 index.write_text(original, encoding="utf-8")
 
             (plan_dir / "plan-phase-extra.md").write_text(original, encoding="utf-8")
-            with self.assertRaises(self.source.SourceError) as caught:
-                self.source.discover_markdown(root, "docs/plans/phase-a")
-            self.assertEqual(caught.exception.code, "SOURCE.PHASE_INDEX")
+            caught = self.failure(self.source.discover_markdown(root, "docs/plans/phase-a"))
+            self.assertEqual(caught.code, "SOURCE.PHASE_INDEX")
 
     def test_broken_sections_duplicate_ids_and_symlink_escape_fail(self):
         with tempfile.TemporaryDirectory() as td:
@@ -256,9 +265,8 @@ class PlanSourceTests(unittest.TestCase):
             plan_dir = self.fixture_repo(root)
             target = plan_dir / "sprint-a1.md"
             target.write_text(target.read_text(encoding="utf-8").replace("## Non-closure", "## Notes"), encoding="utf-8")
-            with self.assertRaises(self.source.SourceError) as caught:
-                self.source.discover_markdown(root, "docs/plans/phase-a")
-            self.assertEqual(caught.exception.code, "SOURCE.SECTION")
+            caught = self.failure(self.source.discover_markdown(root, "docs/plans/phase-a"))
+            self.assertEqual(caught.code, "SOURCE.SECTION")
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -269,16 +277,14 @@ class PlanSourceTests(unittest.TestCase):
             target.unlink()
             target.symlink_to(outside)
             try:
-                with self.assertRaises(self.source.SourceError) as caught:
-                    self.source.discover_markdown(root, "docs/plans/phase-a")
-                self.assertEqual(caught.exception.code, "SOURCE.PATH")
+                caught = self.failure(self.source.discover_markdown(root, "docs/plans/phase-a"))
+                self.assertEqual(caught.code, "SOURCE.PATH")
             finally:
                 outside.unlink(missing_ok=True)
 
         duplicate = [{"id": "x1", "description": sprint("A1")}, {"id": "x2", "description": sprint("A1")}]
-        with self.assertRaises(self.source.SourceError) as caught:
-            self.source.discover_tracker(duplicate, phase="phase-a", tracker="br", epic="x")
-        self.assertEqual(caught.exception.code, "SOURCE.DUPLICATE_ID")
+        caught = self.failure(self.source.discover_tracker(duplicate, phase="phase-a", tracker="br", epic="x"))
+        self.assertEqual(caught.code, "SOURCE.DUPLICATE_ID")
 
     def test_drift_copy_conflict_digest_and_size_are_fail_closed(self):
         item = {
@@ -287,25 +293,23 @@ class PlanSourceTests(unittest.TestCase):
             "path": "docs/sprint-a1.md",
             "normalized_sha256": self.source.digest_text(sprint("A1")),
         }
-        update = self.source.safe_copy_update(item, None)
+        update = self.ok(self.source.safe_copy_update(item, None))
         self.assertEqual(update["description"], item["text"])
         changed = {"tracker_id": "p.1", "normalized_sha256": "b" * 64, "recorded_source_sha256": "a" * 64}
-        with self.assertRaises(self.source.SourceError) as caught:
-            self.source.safe_copy_update(item, changed)
-        self.assertEqual(caught.exception.code, "SOURCE.COPY_CONFLICT")
+        caught = self.failure(self.source.safe_copy_update(item, changed))
+        self.assertEqual(caught.code, "SOURCE.COPY_CONFLICT")
 
         left = {"sprints": [{"id": "A1", "normalized_sha256": "a" * 64}]}
         right = {"sprints": [{"id": "A1", "normalized_sha256": "b" * 64}]}
-        with self.assertRaises(self.source.SourceError) as caught:
-            self.source.compare_parity(left, right)
-        self.assertEqual(caught.exception.code, "SOURCE.PARITY_DRIFT")
+        caught = self.failure(self.source.compare_parity(left, right))
+        self.assertEqual(caught.code, "SOURCE.PARITY_DRIFT")
+        self.assertEqual(caught.data, {"sprints": ["A1"]})
 
         oversized = sprint("A1") + ("x" * self.source.MAX_PLAN_BYTES)
-        with self.assertRaises(self.source.SourceError) as caught:
-            self.source.shape(oversized)
-        self.assertEqual(caught.exception.code, "PLAN.TOO_LARGE")
-        self.assertTrue(caught.exception.data["over_limit"])
-        self.assertFalse(caught.exception.data["truncated"])
+        caught = self.failure(self.source.shape(oversized))
+        self.assertEqual(caught.code, "PLAN.TOO_LARGE")
+        self.assertTrue(caught.data["over_limit"])
+        self.assertFalse(caught.data["truncated"])
 
 
 if __name__ == "__main__":
