@@ -7,12 +7,12 @@ agents:
     version: 0.5.0
     path: .cursor/agents/anchor-sprint-review.md
   anchor-tuning:
-    version: 0.5.0
+    version: 0.5.1
     path: .cursor/agents/anchor-tuning.md
 
 skills:
   plan-anchoring:
-    version: 0.5.4
+    version: 0.5.5
     path: skills/plan-anchoring/SKILL.md
     depends_on:
       anchor-plan-review: "0.x"
