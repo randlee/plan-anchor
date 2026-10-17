@@ -57,7 +57,7 @@ anchor_tracker: br
 
 `schema_version` must be `1`. Unknown or duplicate keys are rejected (`SETTINGS.UNKNOWN_KEY`, `SETTINGS.MALFORMED`) so a typo never falls back silently. When the file or its `anchor_tracker` key is absent, detection (rule 2) applies. `.gitignore` may ignore `.sc/sessions/` and `.sc/*/cache/`, never this file; `write` reports `settings_ignored_by_git` when it is.
 
-The planning gate follows the selection. The development gate (`anchor-sprint-review`) uses `bd` and needs a Dolt-backed `.beads/`; an installer render for `br` says so instead of shipping its commands.
+Both gates follow the selection: anchor and question beads (and, at the development gate, the sprint's closed children) are read with the selected tracker, and the sprint itself comes from a `plan_source.py` descriptor, Markdown or a tracker copy.
 
 ## Switching trackers
 

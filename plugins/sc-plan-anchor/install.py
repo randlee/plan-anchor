@@ -700,9 +700,6 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
                      f"re-rendered and {SETTINGS_RELPATH} is updated. {NO_DATA_MIGRATION}")
     if opts.init_br and not c.init_br:
         notes.append("--init-br ignored: .beads/ already exists.")
-    if c.tracker == "br":
-        notes.append("The development gate (anchor-sprint-review) requires bd and a Dolt-backed .beads/; "
-                     "the br rendering of that agent returns PREREQ.TRACKER.")
     data: Dict[str, Any] = {
         "package": PACKAGE,
         "version": plan.version,
