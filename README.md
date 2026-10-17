@@ -180,7 +180,7 @@ The offline suite runs on Linux, macOS and Windows in CI. The repository is a Cl
 
 ## Versioning
 
-One release line covers `SKILL.md` metadata, every reference, both harnesses' agents and registries, and all plugin and marketplace manifests. `VERSION` holds it; `scripts/check_version_sync.py` runs in CI and fails on identity, path, version, or changelog drift.
+`VERSION` is the single source of truth: `SKILL.md` metadata, every reference, every harness's agents and registries, and all plugin and marketplace manifests equal it exactly. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` run in CI and fail on identity, path, version, or changelog drift.
 
 ## License
 
