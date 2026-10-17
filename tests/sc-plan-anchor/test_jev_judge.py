@@ -105,7 +105,7 @@ def failure(result):
 
 
 class Transport:
-    """Stub for jev_judge.call_jev: a queue of responses (dicts) or JudgeErrors, recorded per call."""
+    """Stub for jev_judge.call_jev: a queue of responses (dicts, returned as Ok) or JudgeErrors (returned as Err), recorded per call."""
 
     def __init__(self, *script, gate="plan"):
         self.script = list(script)
@@ -115,9 +115,11 @@ class Transport:
     def __call__(self, body, api_key, timeout):
         self.bodies.append(json.loads(json.dumps(body)))
         step = self.script.pop(0) if self.script else self.default()
+        if isinstance(step, jj.JudgeError):
+            return jj.Err(step)
         if isinstance(step, Exception):
             raise step
-        return step
+        return jj.Ok(step)
 
     def default(self):
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
@@ -582,7 +584,7 @@ class RubricTests(unittest.TestCase):
 
     def test_calibrated_questions_separate_deterministic_requirement_form(self):
         self.assertEqual(jj.RUBRIC_QUESTIONS, ("single_constraint", "observable", "faithful", "scoped", "self_contained"))
-        q = jj.load_simple_question_set("testability", jj.RUBRIC_QUESTIONS)["questions"]["self_contained"]
+        q = ok(jj.load_simple_question_set("testability", jj.RUBRIC_QUESTIONS))["questions"]["self_contained"]
         self.assertIn("private shorthand", q["instructions"])
         self.assertIn("approval", q["criteria"]["no"])
         with tempfile.TemporaryDirectory() as d:
@@ -616,17 +618,15 @@ class RubricTests(unittest.TestCase):
 
     def test_shipped_question_sets_load_and_fixtures_validate(self):
         for name, required in (("dedupe", (jj.DEDUPE_QUESTION,)), ("testability", jj.RUBRIC_QUESTIONS)):
-            qs = jj.load_simple_question_set(name, required)
+            qs = ok(jj.load_simple_question_set(name, required))
             self.assertEqual(qs["gate"], name)
             self.assertEqual(set(qs["questions"]), set(required))
             for q in qs["questions"].values():
                 self.assertEqual((q["type"], set(q["criteria"])), ("choice", set(OPTIONS)))
                 self.assertTrue(q["instructions"].strip())
-        jj.validate_response({"answers": rubric_answers()}, jj.load_simple_question_set("testability", jj.RUBRIC_QUESTIONS)["questions"])
+        ok(jj.validate_response({"answers": rubric_answers()}, ok(jj.load_simple_question_set("testability", jj.RUBRIC_QUESTIONS))["questions"]))
         with mock.patch.object(jj, "QUESTIONS_DIR", Path("/nonexistent")):
-            with self.assertRaises(jj.JudgeError) as cm:
-                jj.load_simple_question_set("dedupe", (jj.DEDUPE_QUESTION,))
-            self.assertEqual(cm.exception.code, "INPUT.MISSING")
+            self.assertEqual(failure(jj.load_simple_question_set("dedupe", (jj.DEDUPE_QUESTION,))).code, "INPUT.MISSING")
 
     def test_record_form_with_answers_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1101,24 +1101,20 @@ class ResponseValidationTests(unittest.TestCase):
 
     def test_validate_response_requires_exact_answer_ids(self):
         questions = {"relevant": self.question, "addressed": self.question, "contradicted": self.question}
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.validate_response({"answers": {"relevant": answer("yes")}}, questions)
-        self.assertEqual(cm.exception.code, "JEV.RESPONSE_INVALID")
-        self.assertTrue(cm.exception.recoverable)
+        error = failure(jj.validate_response({"answers": {"relevant": answer("yes")}}, questions))
+        self.assertEqual(error.code, "JEV.RESPONSE_INVALID")
+        self.assertTrue(error.recoverable)
         extra = dict(plan_answers(), bonus=answer("yes"))
-        with self.assertRaises(jj.JudgeError):
-            jj.validate_response({"answers": extra}, questions)
-        with self.assertRaises(jj.JudgeError):
-            jj.validate_response({"answers": []}, questions)
-        with self.assertRaises(jj.JudgeError):
-            jj.validate_response(["not", "a", "dict"], questions)
-        self.assertIs(jj.validate_response({"model": "x", "answers": plan_answers()}, questions)["answers"]["relevant"]["choice"], "yes")
+        failure(jj.validate_response({"answers": extra}, questions))
+        failure(jj.validate_response({"answers": []}, questions))
+        failure(jj.validate_response(["not", "a", "dict"], questions))
+        self.assertIs(ok(jj.validate_response({"model": "x", "answers": plan_answers()}, questions))["answers"]["relevant"]["choice"], "yes")
 
     def test_shipped_fixture_passes_validation(self):
         fixture = json.loads((ASSETS / "examples" / "answers.fixture.json").read_text())
-        plan = jj.load_question_set("plan")
+        plan = ok(jj.load_question_set("plan"))
         for aid, answers in fixture.items():
-            jj.validate_response({"answers": answers}, plan["questions"])
+            ok(jj.validate_response({"answers": answers}, plan["questions"]))
 
 
 class HttpErrorTests(unittest.TestCase):
@@ -1153,39 +1149,31 @@ class HttpErrorTests(unittest.TestCase):
 
 class OverrideTests(unittest.TestCase):
     def test_merge_replaces_by_id_and_roles(self):
-        base = jj.load_question_set("plan")
-        merged = jj.merge_overrides(base, {"questions": {"addressed": {"type": "choice", "instructions": "override", "criteria": {}}}})
+        base = ok(jj.load_question_set("plan"))
+        merged = ok(jj.merge_overrides(base, {"questions": {"addressed": {"type": "choice", "instructions": "override", "criteria": {}}}}))
         self.assertEqual(merged["questions"]["addressed"]["instructions"], "override")
         self.assertEqual(merged["questions"]["relevant"], base["questions"]["relevant"])
         self.assertEqual(merged["roles"], base["roles"])
-        self.assertIs(jj.merge_overrides(base, {})["questions"] is base["questions"], False)
-        renamed = jj.merge_overrides(base, {"questions": {"covers": base["questions"]["addressed"]}, "roles": {"compliance": "covers"}})
+        self.assertIs(ok(jj.merge_overrides(base, {}))["questions"] is base["questions"], False)
+        renamed = ok(jj.merge_overrides(base, {"questions": {"covers": base["questions"]["addressed"]}, "roles": {"compliance": "covers"}}))
         self.assertEqual(renamed["roles"]["compliance"], "covers")
-        jj.check_roles(renamed, "t")
+        self.assertIsNone(ok(jj.check_roles(renamed, "t")))
 
     def test_malformed_overrides_are_refused(self):
-        base = jj.load_question_set("plan")
+        base = ok(jj.load_question_set("plan"))
         for bad in (["list"], {"questions": ["list"]}, {"roles": "compliance=x"}):
-            with self.assertRaises(jj.JudgeError) as cm:
-                jj.merge_overrides(base, bad)
-            self.assertEqual(cm.exception.code, "INPUT.MALFORMED")
+            self.assertEqual(failure(jj.merge_overrides(base, bad)).code, "INPUT.MALFORMED")
 
     def test_roles_rechecked_after_merge(self):
-        base = jj.load_question_set("plan")
-        bad = jj.merge_overrides(base, {"roles": {"compliance": "covers"}})
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.check_roles(bad, "t")
-        self.assertEqual(cm.exception.code, "QUESTIONS.ROLES")
-        dev = jj.load_question_set("dev")
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.check_roles(jj.merge_overrides(dev, {"roles": {"evidence": "missing"}}), "t")
-        self.assertEqual(cm.exception.code, "QUESTIONS.ROLES")
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.check_roles({"roles": PLAN_ROLES, "questions": {}}, "t")
-        self.assertEqual(cm.exception.code, "INPUT.MALFORMED")
+        base = ok(jj.load_question_set("plan"))
+        bad = ok(jj.merge_overrides(base, {"roles": {"compliance": "covers"}}))
+        self.assertEqual(failure(jj.check_roles(bad, "t")).code, "QUESTIONS.ROLES")
+        dev = ok(jj.load_question_set("dev"))
+        self.assertEqual(failure(jj.check_roles(ok(jj.merge_overrides(dev, {"roles": {"evidence": "missing"}})), "t")).code, "QUESTIONS.ROLES")
+        self.assertEqual(failure(jj.check_roles({"roles": PLAN_ROLES, "questions": {}}, "t")).code, "INPUT.MALFORMED")
 
     def test_precedence_record_then_overrides_file(self):
-        base = jj.load_question_set("plan")
+        base = ok(jj.load_question_set("plan"))
         with tempfile.TemporaryDirectory() as d:
             a = anchor(question_overrides={"plan": {"questions": {"addressed": {"type": "choice", "instructions": "from record", "criteria": {"yes": "", "no": "", "unclear": ""}}}}})
             anchors_path = write(d, "anchors.json", record(a))
@@ -1202,7 +1190,7 @@ class OverrideTests(unittest.TestCase):
             code, out2 = run_cli(common + ["--overrides-file", override_path, "--out", str(Path(d) / "r2.json")])
             self.assertEqual(out2["data"]["requests"][0]["questions"]["addressed"]["instructions"], "from bead")
             self.assertNotEqual(entry["questions_sha256"], out2["data"]["results"][0]["questions_sha256"])
-            self.assertEqual(entry["questions_sha256"], jj.questions_digest(jj.merge_overrides(base, a["question_overrides"]["plan"])["questions"]))
+            self.assertEqual(entry["questions_sha256"], jj.questions_digest(ok(jj.merge_overrides(base, a["question_overrides"]["plan"]))["questions"]))
             # a bead override that renames a question without updating roles aborts before anything is sent
             bad_path = write(d, "bad.json", {"ANC-001": {"roles": {"compliance": "nope"}}})
             code, out3 = run_cli(common + ["--overrides-file", bad_path])
@@ -1321,17 +1309,14 @@ class JudgeFixtureTests(unittest.TestCase):
     def test_read_item_truncates_and_rejects_empty(self):
         long_item = write(self.d.name, "long.txt", "x" * 100)
         ns = jj.argparse.Namespace(item_file=long_item, item_id="bd-1", item_title="", max_item_chars=40)
-        item = jj.read_item(ns)
+        item = ok(jj.read_item(ns))
         self.assertTrue(item["truncated"])
         self.assertTrue(item["text"].startswith("x" * 40) and item["text"].endswith(jj.TRUNCATION_MARKER))
         self.assertEqual(jj.item_core(item["text"]), "x" * 40)
         empty = write(self.d.name, "empty.txt", "  \n")
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.read_item(jj.argparse.Namespace(item_file=empty, item_id="x", item_title="", max_item_chars=10))
-        self.assertEqual(cm.exception.code, "INPUT.EMPTY")
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.read_item(jj.argparse.Namespace(item_file=str(Path(self.d.name) / "nope.txt"), item_id="x", item_title="", max_item_chars=10))
-        self.assertEqual(cm.exception.code, "INPUT.MISSING")
+        self.assertEqual(failure(jj.read_item(jj.argparse.Namespace(item_file=empty, item_id="x", item_title="", max_item_chars=10))).code, "INPUT.EMPTY")
+        missing = jj.argparse.Namespace(item_file=str(Path(self.d.name) / "nope.txt"), item_id="x", item_title="", max_item_chars=10)
+        self.assertEqual(failure(jj.read_item(missing)).code, "INPUT.MISSING")
 
     def test_run_file_names_are_sanitised_and_never_collide(self):
         with env():
@@ -2349,14 +2334,12 @@ class ErrorHandlingTests(unittest.TestCase):
 
     def test_documented_question_sets_load(self):
         for gate in ("plan", "dev"):
-            qs = jj.load_question_set(gate)
+            qs = ok(jj.load_question_set(gate))
             self.assertEqual(qs["gate"], gate)
             for q in qs["questions"].values():
                 self.assertEqual(set(q["criteria"]), set(OPTIONS))
-        self.assertEqual(set(jj.load_question_set("dev")["roles"]), {"relevance", "compliance", "conflict", "evidence"})
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.load_question_set("plan", str(Path(__file__)))
-        self.assertEqual(cm.exception.code, "INPUT.MALFORMED")
+        self.assertEqual(set(ok(jj.load_question_set("dev"))["roles"]), {"relevance", "compliance", "conflict", "evidence"})
+        self.assertEqual(failure(jj.load_question_set("plan", str(Path(__file__)))).code, "INPUT.MALFORMED")
 
 
 if __name__ == "__main__":
