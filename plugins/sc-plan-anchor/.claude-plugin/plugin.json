@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "sc-plan-anchor",
   "displayName": "Plan Anchor",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Keep plans and delivered work aligned with user-approved anchors using Jev-backed gates.",
   "author": {
     "name": "randlee",
