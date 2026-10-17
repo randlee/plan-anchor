@@ -2,7 +2,7 @@
 name: plan-anchoring
 description: Capture the facts a user states while planning as numbered anchors (ANC-001...), one clear, testable requirement each, with the user's verbatim words kept as provenance, alongside existing requirements (REQ) and ADRs. Turn them into Jev-judged questions, tune and test the questions per anchor, and enforce them at two gates with a triage-apply-rerun loop. The planning gate checks each plan bead still says what the user said; the development gate checks the delivered sprint work followed it. Use when planning a phase or sprint with beads, when the user says "anchor this", "lock this", "don't let this drift", or "remember I said", when re-opening a plan after context compression, or when reviewing a sprint against its plan. Not for general code review, and not a replacement for plan hardening.
 metadata:
-  version: "0.5.1"
+  version: "0.5.2"
 ---
 
 # Plan Anchoring
@@ -17,17 +17,20 @@ Run before any capture, delegation, or gate. On a missing dependency, surface th
 
 ```bash
 which python3 && python3 --version          # 3.9 or newer
-ANCHOR_TRACKER=br                          # select bd or br for anchor storage
+python3 -c 'import yaml; print("PyYAML", yaml.__version__)'   # anchor_tracker.py only; python3 -m pip install pyyaml
+which jq && jq --version                    # gate agents parse question overrides with jq
+T="<this skill's directory>/scripts/anchor_tracker.py"
+python3 "$T" resolve > /tmp/anchor-tracker.json; echo "exit $?"
+ANCHOR_TRACKER="$(jq -r '.data.tracker // empty' /tmp/anchor-tracker.json)"
 which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
 which sc-compose && sc-compose --version    # 1.7.0 or newer
-which jq && jq --version                    # gate agents parse question overrides with jq
 test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set" || echo "TYPESAFE_API_KEY missing"
 echo "remote judge opt-in: ${PLAN_ANCHOR_ALLOW_REMOTE_JUDGE:-unset}"
 ```
 
-Select `ANCHOR_TRACKER` from the repository/user configuration, independently of whether plans are Markdown or tracker documents. Require only that selected CLI; never silently switch trackers. Pass it as `anchor_tracker` to the planning reviewer. Existing tracker command examples use `bd`; substitute the selected adapter for anchor and question operations.
+`anchor_tracker.py resolve` selects `ANCHOR_TRACKER` (`bd` or `br`) for anchor storage, independently of whether plans are Markdown or tracker documents. An explicit `anchor_tracker` in the committed `.sc/plan-anchor/settings.yaml` wins and is checked against disk; without it a Dolt-backed `.beads/` selects `bd` and anything else selects `br`. A non-zero exit is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick the other tracker by hand. `resolve` is read-only; `python3 "$T" write` records the detected choice for the user to commit, and `write --init` runs `br init` when there is no `.beads/`. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to the planning reviewer, which resolves it again and rejects a mismatch. Existing tracker command examples use `bd`; substitute the selected adapter for anchor and question operations. The development gate is unchanged in this version and still uses `bd`.
 
-If the selected tracker is not on PATH, Claude Code's bash may not share your shell's PATH. Check common locations:
+If `resolve` reports `TRACKER.CLI_MISSING` (its `data.tracker` names the selected tracker, so `ANCHOR_TRACKER` is still set), or `sc-compose` is missing, Claude Code's bash may not share your shell's PATH. Check common locations:
 
 ```bash
 for p in "/opt/homebrew/bin/$ANCHOR_TRACKER" "$HOME/go/bin/$ANCHOR_TRACKER" "$HOME/.local/bin/$ANCHOR_TRACKER" "/usr/local/bin/$ANCHOR_TRACKER"; do
@@ -38,7 +41,7 @@ for p in "/opt/homebrew/bin/sc-compose" "$HOME/.local/bin/sc-compose" "/usr/loca
 done
 ```
 
-If found off PATH, `export PATH="<dir>:$PATH"` for the session. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and per-session opt-in in `references/jev-api.md`. Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
+If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolve`. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and per-session opt-in in `references/jev-api.md`. Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
 
 Then resolve the script once. It sits next to this file:
 
@@ -91,7 +94,7 @@ locking do not load that reference.
 - Never split a bead, trim its text, or raise a size cap to pass `PLAN.TOO_LARGE`. Triage unapproved work, then prose and ceremony, then split.
 - Never send more than one bead or one work description per Jev request, and never the whole plan.
 - Never compute coverage, counts, or "satisfied anywhere" by asking Jev. The script does it.
-- Missing the selected anchor tracker, `python3`, API key, or opt-in: surface and stop; do not degrade silently.
+- Missing the selected anchor tracker, `python3`, PyYAML, API key, or opt-in, or an `anchor_tracker.py resolve` error: surface and stop; do not degrade silently.
 - Three consecutive gate runs on the same bead with the same failing set: escalate to the user rather than editing the plan again.
 
 Maintainers only: the complete resource index is in

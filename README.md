@@ -56,8 +56,9 @@ For a source checkout, use the files under `plugins/sc-plan-anchor/` directly. H
 
 | Need | For | Notes |
 | --- | --- | --- |
-| `python3` 3.9+ | everything | The script is standard-library only |
-| `bd` ([beads](https://github.com/steveyegge/beads)) 1.x | the bead tree and reading beads | Agents use it read-only; the skill creates anchor beads and posts comments from the main session |
+| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` |
+| PyYAML 5.1+ | anchor tracker selection | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
+| `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Export it in the shell that launches Claude Code, Codex, or Cursor |
 | `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` | every live Jev operation | Per-session opt-in; set it only when sending this plan's scoped text to TypeSafe is acceptable |
 

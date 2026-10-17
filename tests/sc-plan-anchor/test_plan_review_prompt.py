@@ -93,8 +93,8 @@ class PlanReviewPromptTests(unittest.TestCase):
         self.assertIsNone(output)
 
     def test_markdown_with_br_does_not_require_bd_or_a_planning_bead(self):
-        self.assertIn('`anchor_tracker` (string, required for descriptor mode', self.prompt)
-        self.assertIn('bd` or `br`, selected for anchor/question storage independently', self.prompt)
+        self.assertIn('`anchor_tracker` (string, optional): `bd` or `br`, as the parent obtained it from `anchor_tracker.py resolve`', self.prompt)
+        self.assertIn('selected for anchor/question storage independently', self.prompt)
         self.assertIn('"$ANCHOR_TRACKER" show "$qb"', self.prompt)
         self.assertNotIn('bd show', self.prompt)
         self.assertNotIn('bd --version', self.prompt)
@@ -109,6 +109,15 @@ class PlanReviewPromptTests(unittest.TestCase):
         self.assertIn('Never fall back from a failed descriptor to legacy mode.', self.prompt)
         self.assertIn('"$ANCHOR_TRACKER" show "$bead_id"', self.prompt)
         self.assertIn('compose-item --show-json "$W/bead.json" --for plan', self.prompt)
+
+
+    def test_tracker_comes_from_resolve_not_a_default(self):
+        self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', self.prompt)
+        self.assertIn("jq -r '.data.tracker'", self.prompt)
+        self.assertIn('when `anchor_tracker` was supplied and differs, return `VALIDATION.TRACKER`', self.prompt)
+        self.assertIn('never run its `write` subcommand', self.prompt)
+        self.assertNotIn('default `bd` for legacy mode', self.prompt)
+        self.assertNotRegex(self.prompt, r"ANCHOR_TRACKER=(bd|br)\b")
 
 
 if __name__ == "__main__":
