@@ -223,7 +223,7 @@ class SelectionRuleTests(RepoCase):
         self.assertIn("'bd'", error.message)
         self.assertEqual(error.data, {"tracker": "bd"})
         sel = self.assertOk(self.resolve(which=fake_which("bd")))
-        self.assertEqual(sel.cli_path, "/fake/bin/bd")
+        self.assertEqual(sel.cli_path, os.path.abspath("/fake/bin/bd"))
 
     def test_selection_never_switches_to_the_other_cli(self):
         self.dolt()
@@ -401,7 +401,7 @@ class WriteAndInitTests(RepoCase):
         data = self.assertOk(self.write(init=True, run=run))
         self.assertEqual(len(run.calls), 1)
         argv, kwargs = run.calls[0]
-        self.assertEqual(argv, ["/fake/bin/br", "init"])
+        self.assertEqual(argv, [os.path.abspath("/fake/bin/br"), "init"])
         self.assertEqual(Path(kwargs["cwd"]), self.root)
         self.assertFalse(kwargs.get("shell", False))
         self.assertTrue(data["initialized_now"])
@@ -452,7 +452,7 @@ class WriteAndInitTests(RepoCase):
                 tracker.write(self.root, init=True, which=fake_which("bd", "br"), run=run)
                 for argv, _ in run.calls:
                     self.assertNotIn("bd", [Path(argv[0]).stem] + argv[1:])
-                    self.assertEqual(argv, ["/fake/bin/br", "init"])
+                    self.assertEqual(argv, [os.path.abspath("/fake/bin/br"), "init"])
 
 
 class CliTests(RepoCase):
