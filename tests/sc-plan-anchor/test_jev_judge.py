@@ -575,11 +575,11 @@ class RubricTests(unittest.TestCase):
     def test_requirement_form_is_deterministic_lint(self):
         warnings = jj.lint_statement("We should keep it clean.", "keep it clean")
         self.assertTrue(set(jj.REQUIREMENT_FORM_WARNINGS) <= set(warnings))
-        outcome = jj.rubric_confirmation_outcome(
+        outcome = ok(jj.rubric_confirmation_outcome(
             [{"answers": rubric_answers()}, {"answers": rubric_answers()}],
             jj.RUBRIC_QUESTIONS, 0.6,
             [warning for warning in warnings if warning in jj.REQUIREMENT_FORM_WARNINGS],
-        )
+        ))
         self.assertEqual(outcome["verdict"], "needs_work")
 
     def test_calibrated_questions_separate_deterministic_requirement_form(self):
@@ -603,17 +603,19 @@ class RubricTests(unittest.TestCase):
         low = {"answers": rubric_answers(observable=("yes", 0.5))}
         no = {"answers": rubric_answers(observable=("no", 0.9))}
         unclear = {"answers": rubric_answers(observable=("unclear", 0.9))}
-        self.assertEqual(jj.rubric_confirmation_outcome([yes, yes], jj.RUBRIC_QUESTIONS, 0.6, [])["verdict"], "testable")
-        self.assertEqual(jj.rubric_confirmation_outcome([no, no], jj.RUBRIC_QUESTIONS, 0.6, [])["verdict"], "needs_work")
-        self.assertEqual(jj.rubric_confirmation_outcome([low, low], jj.RUBRIC_QUESTIONS, 0.6, [])["verdict"], "inconclusive")
-        resolved = jj.rubric_confirmation_outcome(
+        self.assertEqual(ok(jj.rubric_confirmation_outcome([yes, yes], jj.RUBRIC_QUESTIONS, 0.6, []))["verdict"], "testable")
+        self.assertEqual(ok(jj.rubric_confirmation_outcome([no, no], jj.RUBRIC_QUESTIONS, 0.6, []))["verdict"], "needs_work")
+        self.assertEqual(ok(jj.rubric_confirmation_outcome([low, low], jj.RUBRIC_QUESTIONS, 0.6, []))["verdict"], "inconclusive")
+        resolved = ok(jj.rubric_confirmation_outcome(
             [{"answers": rubric_answers(observable=("yes", 0.5))}, no, no],
             jj.RUBRIC_QUESTIONS, 0.6, [],
-        )
+        ))
         self.assertEqual((resolved["verdict"], resolved["initial_disagreements"]), ("needs_work", ["observable"]))
-        confident_competition = jj.rubric_confirmation_outcome([yes, no, yes], jj.RUBRIC_QUESTIONS, 0.6, [])
+        confident_competition = ok(jj.rubric_confirmation_outcome([yes, no, yes], jj.RUBRIC_QUESTIONS, 0.6, []))
         self.assertEqual((confident_competition["verdict"], confident_competition["unstable"]), ("unstable", ["observable"]))
-        unstable = jj.rubric_confirmation_outcome([yes, no, unclear], jj.RUBRIC_QUESTIONS, 0.6, [])
+        unstable = ok(jj.rubric_confirmation_outcome([yes, no, unclear], jj.RUBRIC_QUESTIONS, 0.6, []))
+        self.assertEqual(failure(jj.rubric_confirmation_outcome([yes], jj.RUBRIC_QUESTIONS, 0.6, [])).code, "RUBRIC.CONFIRMATION")
+        self.assertEqual(failure(jj.rubric_confirmation_outcome([yes, no], jj.RUBRIC_QUESTIONS, 0.6, [])).code, "RUBRIC.CONFIRMATION")
         self.assertEqual((unstable["verdict"], unstable["unstable"]), ("unstable", ["observable"]))
 
     def test_shipped_question_sets_load_and_fixtures_validate(self):
