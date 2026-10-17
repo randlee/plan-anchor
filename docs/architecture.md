@@ -83,8 +83,8 @@ checked against disk. Otherwise a Dolt-backed `.beads/` selects `bd`, any other
 error; there is no fallback to the other CLI. The planning reviewer re-resolves
 and rejects a mismatch. plan-anchor itself pins `br`.
 
-Consequences: The planning gate and anchor storage are tracker-neutral. The
-development gate still calls `bd` and is outside this change. REQ-021 to
+Consequences: Anchor storage and the planning gate are tracker-neutral. The
+development gate's `bd`-only carve-out is reversed by ADR-014. REQ-021 to
 REQ-025.
 
 ## ADR-005 Plan sources: Markdown authoritative, tracker copy equivalent
@@ -254,3 +254,29 @@ Consequences: A typo never falls back to a default. `TYPESAFE_API_KEY` stays an
 environment variable because it is a secret. Several `PLAN_ANCHOR_*`
 environment variables are still read by `jev_judge.py`, contrary to ANC-005;
 they are candidates to move to CLI flags or settings. REQ-018, REQ-019.
+
+## ADR-014 Both gates are plan-source and tracker agnostic
+
+Status: planned. Date: 2026-10-17.
+
+Context: The skill is designed to anchor Markdown plans and `bd`/`br` plans
+alike. ADR-004 introduced tracker selection for the planning gate only, which
+left the development gate (`anchor-sprint-review`) reading the sprint with
+`bd show`/`bd children` and storing nothing through the resolved tracker. A
+`br` repository or a Markdown plan therefore could not run the development
+gate, and a `br` install would have shipped `bd` instructions.
+
+Decision: Both gates take plan text the same way: the sprint and its items come
+through `plan_source.py` from Markdown sprint documents or the resolved
+tracker's copy, and are passed to the agents as text or extracted by them as
+appropriate. Anchor and question records always live in the tracker
+`anchor_tracker.py` resolves (ADR-004), which the installer selects for the
+repository. No gate hardcodes `bd` or `br`; the installer renders the selected
+tracker's commands into the installed skill and agents.
+
+Consequences: The plan's format and the anchor tracker are independent
+choices, and neither limits which gate can run. A `br` install contains no
+`bd` instructions for either gate, and the reverse. The development gate gains
+the planning gate's source and mismatch checks. Switching trackers does not
+move issue data. REQ-021, REQ-027, REQ-057.
+

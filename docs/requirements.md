@@ -105,7 +105,7 @@ Verified: none.
 ## Trackers and plan sources
 
 **REQ-021** Anchor and question storage shall work with either `br` or `bd`.
-Source: OPERATOR; INTENT "Success"; retired ANC-007 (requirement retained). Status: shipped for anchor storage and the planning gate; the development gate still uses `bd` (SKILL.md Step 1).
+Source: OPERATOR; INTENT "Success"; retired ANC-007 (requirement retained). Status: shipped for anchor storage and the planning gate; planned for the development gate (ADR-014), which still uses `bd` (SKILL.md Step 1).
 Verified: `test_anchor_tracker.py::SelectionRuleTests`, `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_development_gate_is_out_of_scope` (records the `bd`-only development gate).
 
 **REQ-022** Tracker selection shall be: an explicit `anchor_tracker` in the committed settings wins and is validated against disk; otherwise a Dolt-backed `.beads/` selects `bd`, any other `.beads/` selects `br`, and no `.beads/` selects `br`; a mismatch is an error, never a silent switch.
@@ -255,3 +255,7 @@ Verified: `test_package_layout.py::MarketplacePackageLayoutTests.test_maintainer
 **REQ-056** `claude-code-skills-agents-guidelines.md` shall be the governing architecture baseline for the skill, agents, registries, runner and orchestration.
 Source: ANC-001. Status: shipped.
 Verified: none (not mechanically testable).
+
+**REQ-057** The development gate shall accept the same plan sources as the planning gate (Markdown sprint documents, or a `bd` or `br` copy via `plan_source.py`) and shall store and read anchors only through the tracker `anchor_tracker.py` resolves; installed skill and agent text shall name only the installed tracker's commands.
+Source: OPERATOR (2026-10-17); INTENT "Success"; ADR-014. Status: planned.
+Verified: none yet (replaces `test_development_gate_is_out_of_scope`).
