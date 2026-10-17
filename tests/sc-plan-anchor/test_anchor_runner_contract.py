@@ -26,6 +26,15 @@ class RunnerContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.contract = load_contract()
 
+    def ok(self, result):
+        self.assertIsInstance(result, self.contract.Ok, result)
+        return result.value
+
+    def failure(self, result):
+        self.assertIsInstance(result, self.contract.Err, result)
+        self.assertIsInstance(result.error, self.contract.ToolError)
+        return result.error
+
     def plugin(self, root: Path, harness: str = "codex", *, model: str = "luna", version: str = "0.5.0") -> Path:
         agent_dir = root / f".{harness}" / "agents"
         agent_dir.mkdir(parents=True)
@@ -75,10 +84,10 @@ class RunnerContractTests(unittest.TestCase):
 
     def test_resolves_real_claude_and_codex_registries(self):
         plugin = ROOT / "plugins" / "sc-plan-anchor"
-        claude = self.contract.resolve_agent(plugin, "claude", "anchor-plan-review")
-        codex = self.contract.resolve_agent(plugin, "codex", "anchor-plan-review")
-        cursor = self.contract.resolve_agent(plugin, "cursor", "anchor-plan-review")
-        tuning = self.contract.resolve_agent(plugin, "cursor", "anchor-tuning")
+        claude = self.ok(self.contract.resolve_agent(plugin, "claude", "anchor-plan-review"))
+        codex = self.ok(self.contract.resolve_agent(plugin, "codex", "anchor-plan-review"))
+        cursor = self.ok(self.contract.resolve_agent(plugin, "cursor", "anchor-plan-review"))
+        tuning = self.ok(self.contract.resolve_agent(plugin, "cursor", "anchor-tuning"))
         self.assertEqual((claude["model"], codex["model"], cursor["model"]), ("sonnet", "luna", "composer"))
         self.assertEqual(tuning["model"], "grok[effort=high]")
         self.assertRegex(claude["sha256"], r"^[0-9a-f]{64}$")
@@ -89,7 +98,7 @@ class RunnerContractTests(unittest.TestCase):
             definition = self.plugin(root)
             content = definition.read_bytes().replace(b"\n", b"\r\n")
             definition.write_bytes(content)
-            runtime = self.contract.resolve_agent(root, "codex", "anchor-plan-review")
+            runtime = self.ok(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
             self.assertEqual(runtime["agent"], "anchor-plan-review")
             self.assertEqual(runtime["sha256"], self.contract.sha256_bytes(content))
 
@@ -106,8 +115,8 @@ class RunnerContractTests(unittest.TestCase):
                 "agents:\n  anchor-plan-review:\n    version: 0.5.0\n    path: ../outside.md\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(self.contract.RunnerContractError, "untrusted|resolve"):
-                self.contract.resolve_agent(root, "codex", "anchor-plan-review")
+            caught = self.failure(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
+            self.assertRegex(caught.message, "untrusted|resolve")
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
@@ -115,8 +124,8 @@ class RunnerContractTests(unittest.TestCase):
             real = definition.with_suffix(".real")
             definition.rename(real)
             definition.symlink_to(real)
-            with self.assertRaisesRegex(self.contract.RunnerContractError, "symlink"):
-                self.contract.resolve_agent(root, "codex", "anchor-plan-review")
+            caught = self.failure(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
+            self.assertRegex(caught.message, "symlink")
 
         for bad_line, code in (
             ("name: other", "RUNTIME.IDENTITY"),
@@ -130,62 +139,55 @@ class RunnerContractTests(unittest.TestCase):
                 key = bad_line.split(":", 1)[0]
                 text = text.replace(f"{key}: " + {"name": "anchor-plan-review", "version": "0.5.0", "model": "luna"}[key], bad_line)
                 definition.write_text(text, encoding="utf-8")
-                with self.assertRaises(self.contract.RunnerContractError) as caught:
-                    self.contract.resolve_agent(root, "codex", "anchor-plan-review")
-                self.assertEqual(caught.exception.code, code)
+                caught = self.failure(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
+                self.assertEqual(caught.code, code)
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
             definition = self.plugin(root)
             definition.unlink()
             definition.mkdir()
-            with self.assertRaises(self.contract.RunnerContractError) as caught:
-                self.contract.resolve_agent(root, "codex", "anchor-plan-review")
-            self.assertEqual(caught.exception.code, "RUNTIME.PATH")
+            caught = self.failure(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
+            self.assertEqual(caught.code, "RUNTIME.PATH")
 
     def test_detects_hash_change_after_resolution(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
             definition = self.plugin(root)
-            runtime = self.contract.resolve_agent(root, "codex", "anchor-plan-review")
+            runtime = self.ok(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
             definition.write_text(definition.read_text(encoding="utf-8") + "changed\n", encoding="utf-8")
-            with self.assertRaises(self.contract.RunnerContractError) as caught:
-                self.contract.verify_resolved_agent(root, runtime)
-            self.assertEqual(caught.exception.code, "RUNTIME.HASH")
+            caught = self.failure(self.contract.verify_resolved_agent(root, runtime))
+            self.assertEqual(caught.code, "RUNTIME.HASH")
 
     def test_request_and_result_require_exactly_one_json_fence(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
             self.plugin(root)
-            runtime = self.contract.resolve_agent(root, "codex", "anchor-plan-review")
+            runtime = self.ok(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
             request = self.request(runtime)
             fenced = "```json\n" + json.dumps(request) + "\n```"
-            self.assertEqual(self.contract.parse_request(fenced), request)
+            self.assertEqual(self.ok(self.contract.parse_request(fenced)), request)
             for invalid in (fenced + "\n" + fenced, "prefix\n" + fenced, "```json\n{bad}\n```"):
-                with self.assertRaises(self.contract.RunnerContractError):
-                    self.contract.parse_request(invalid)
+                self.failure(self.contract.parse_request(invalid))
             duplicate = fenced.replace('"schema_version": "1.0.0",', '"schema_version": "1.0.0", "schema_version": "1.0.0",')
-            with self.assertRaises(self.contract.RunnerContractError) as caught:
-                self.contract.parse_request(duplicate)
-            self.assertEqual(caught.exception.code, "ENVELOPE.DUPLICATE_KEY")
+            caught = self.failure(self.contract.parse_request(duplicate))
+            self.assertEqual(caught.code, "ENVELOPE.DUPLICATE_KEY")
 
             result = self.result()
             result_fence = "```json\n" + json.dumps(result) + "\n```"
-            self.assertEqual(self.contract.parse_result(result_fence, "phase-a:A1"), result)
-            with self.assertRaises(self.contract.RunnerContractError):
-                self.contract.parse_result(result_fence, "other")
+            self.assertEqual(self.ok(self.contract.parse_result(result_fence, "phase-a:A1")), result)
+            self.failure(self.contract.parse_result(result_fence, "other"))
 
             unknown = dict(request)
             unknown["extra"] = True
-            with self.assertRaises(self.contract.RunnerContractError):
-                self.contract.validate_request(unknown)
+            self.failure(self.contract.validate_request(unknown))
 
     def test_attestation_is_redacted_and_atomic_failures_are_typed(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
             self.plugin(root)
-            runtime = self.contract.resolve_agent(root, "codex", "anchor-plan-review")
-            attestation = self.contract.build_attestation(
+            runtime = self.ok(self.contract.resolve_agent(root, "codex", "anchor-plan-review"))
+            attestation = self.ok(self.contract.build_attestation(
                 runtime,
                 "plan_review",
                 "phase-a:A1",
@@ -194,18 +196,17 @@ class RunnerContractTests(unittest.TestCase):
                 outcome="timeout",
                 source_sha256="a" * 64,
                 error_code="JEV.TIMEOUT",
-            )
+            ))
             rendered = json.dumps(attestation)
             self.assertNotIn("sk-canary", rendered)
             self.assertNotIn("Authorization", rendered)
             destination = Path(td) / "runs" / "attestation.json"
-            self.contract.atomic_write_json(destination, attestation)
+            self.ok(self.contract.atomic_write_json(destination, attestation))
             self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), attestation)
             with mock.patch.object(self.contract.os, "replace", side_effect=OSError("canary secret")):
-                with self.assertRaises(self.contract.RunnerContractError) as caught:
-                    self.contract.atomic_write_json(destination, attestation)
-            self.assertEqual(caught.exception.code, "ATTESTATION.WRITE")
-            self.assertNotIn("canary", caught.exception.message)
+                caught = self.failure(self.contract.atomic_write_json(destination, attestation))
+            self.assertEqual(caught.code, "ATTESTATION.WRITE")
+            self.assertNotIn("canary", caught.message)
 
     def test_sc_compose_invocation_has_one_valid_fenced_request(self):
         binary = shutil.which("sc-compose")
@@ -237,7 +238,7 @@ class RunnerContractTests(unittest.TestCase):
             blocks = re.findall(r"```json\s*(.*?)\s*```", text, re.S)
             self.assertEqual(len(blocks), 1)
             request = json.loads(blocks[0])
-            self.contract.validate_request(request)
+            self.ok(self.contract.validate_request(request))
 
 
 if __name__ == "__main__":

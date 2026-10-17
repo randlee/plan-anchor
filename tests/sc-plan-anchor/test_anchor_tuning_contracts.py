@@ -114,7 +114,7 @@ class AnchorTuningContractTests(unittest.TestCase):
                 self.contract.validate_result(result)
                 correlation_id = result["metadata"]["correlation_id"]
                 fenced = "```json\n" + json.dumps(result) + "\n```"
-                self.assertEqual(self.runner.parse_result(fenced, correlation_id), result)
+                self.assertEqual(self.runner.parse_result(fenced, correlation_id), self.runner.Ok(result))
 
     def test_rendered_failure_satisfies_runner_and_tuning_contracts(self):
         result = self.render("anchor-tuning-result.md.j2", {
@@ -141,7 +141,7 @@ class AnchorTuningContractTests(unittest.TestCase):
         self.validate(result, "anchor-tuning-result.schema.json")
         self.validate(result, "agent-runner-result.schema.json")
         self.contract.validate_result(result)
-        self.runner.validate_result(result, "contract-failure")
+        self.assertEqual(self.runner.validate_result(result, "contract-failure"), self.runner.Ok(result))
         for version in (None, "2.0.0"):
             invalid = dict(result)
             if version is None:
@@ -151,8 +151,7 @@ class AnchorTuningContractTests(unittest.TestCase):
             with self.subTest(version=version):
                 with self.assertRaises(self.jsonschema.ValidationError):
                     self.validate(invalid, "anchor-tuning-result.schema.json")
-                with self.assertRaises(self.runner.RunnerContractError):
-                    self.runner.validate_result(invalid, "contract-failure")
+                self.assertIsInstance(self.runner.validate_result(invalid, "contract-failure"), self.runner.Err)
 
     def test_v2_corpus_descriptor_preserves_v1_frozen_payload(self):
         request = self.render(
