@@ -24,7 +24,7 @@ Subcommands
 
 Output is the JSON envelope {success, data, error}.
 
-Exit codes (the plugin convention shared with jev_judge.py and plan_source.py)
+Exit codes (the plugin convention shared with jev_judge.py)
   0  success: stdout holds {success: true, data}
   2  any error, including invalid arguments (VALIDATION.INPUT) and an internal
      error (SCRIPT.INTERNAL): stdout holds {success: false, error}; the error

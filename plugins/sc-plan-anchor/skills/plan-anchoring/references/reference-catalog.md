@@ -22,7 +22,6 @@ version: 0.7.0
 - `references/plan-size-and-shape.md` - oversized beads and phases: triage order, what Jev reads, `shape` metrics
 - `references/measured-behaviour.md` - the numbers behind every rule
 - `references/planning-gate.md` - inputs, run, exit codes, reading results
-- `references/plan-source-contract.md` - Markdown and bd/br phase discovery, parity, safe copy, and canonical Jev bodies
 - `references/development-gate.md` - inputs, evidence, run, exit codes, reading results
 - `references/plan-anchor-questions.md` - the planning-gate question set and why it is orthogonal
 - `references/code-review-questions.md` - the development-gate question set and its evidence

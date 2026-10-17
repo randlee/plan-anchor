@@ -278,8 +278,8 @@ class LintTests(unittest.TestCase):
 
     def test_unknown_item_warns_without_failing_lint(self):
         with tempfile.TemporaryDirectory() as d:
-            discover = write(d, "discover.json", {"success": True, "data": {"sprints": [{"id": "atm-bi-2"}, {"id": "atm-bi-3"}]}, "error": None})
-            code, out = self.lint(d, "--plan-items", discover)
+            shown = write(d, "shown.json", [{"id": "atm-bi-2", "title": "bi-2"}, {"id": "atm-bi-3", "title": "bi-3"}])
+            code, out = self.lint(d, "--plan-items", shown)
             data = out["data"]
             self.assertEqual((code, data["warning_count"], data["exclusions_checked"], data["exclusions"]), (0, 0, True, 1))
             self.assertEqual([(w["id"], w["item"]) for w in data["exclusion_warnings"]], [("ANC-011", "atm-bi-9")])
@@ -305,6 +305,10 @@ class LintTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             bad = write(d, "bad.json", {"sprints": [{"title": "no id"}]})
             code, out = self.lint(d, "--plan-items", bad)
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "INPUT.MALFORMED"))
+            # ADR-014: plan_source discover output is no longer an accepted form.
+            discover = write(d, "discover.json", {"success": True, "data": {"sprints": [{"id": "atm-bi-2"}]}, "error": None})
+            code, out = self.lint(d, "--plan-items", discover)
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "INPUT.MALFORMED"))
             code, out = self.lint(d, "--plan-items", str(Path(d) / "missing.json"))
             self.assertEqual((code, out["success"]), (2, False))

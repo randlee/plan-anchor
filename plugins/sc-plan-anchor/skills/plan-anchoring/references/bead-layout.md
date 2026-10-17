@@ -62,7 +62,7 @@ Edit with `bd update <question bead> --body-file <file>`. Overrides may also liv
 ## How the agents read beads
 
 - `bd show <id> --json` prints a **one-element JSON array**. Text fields: `title`, `description`, `design`, `acceptance_criteria`, `notes`; an empty field is **absent**. Agents do not parse it: `python3 "$S" compose-item --show-json <file or -> --out <item.txt>` composes `# Title`, `## Description`, `## Design`, `## Acceptance criteria`, `## Notes` from what is present.
-- `bd show <id> --json` lists children under `dependents` (`dependency_type: parent-child`); `bd show <child id>... --json` returns their records with `status`, `title`, and for closed children `close_reason`. The development gate reads a sprint's children this way; `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
+- `bd children <id> --json` lists children with `status`, `title`, `labels`, and for closed children `close_reason` and `closed_at`. `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
 - Question beads resolve from `anchors.json` (`beads.plan_questions` / `beads.dev_questions`) first, then `bd children <anchor bead> --json` filtered on the `gate:plan` or `gate:dev` label.
 - The fenced JSON from the question bead's `description` goes into an overrides file keyed by anchor ID, passed as `--overrides-file`; the script merges.
 

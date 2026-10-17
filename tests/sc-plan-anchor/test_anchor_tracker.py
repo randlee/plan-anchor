@@ -477,7 +477,7 @@ class CliTests(RepoCase):
         self.dolt()
         self.pin("br")
         code, env = self.main("resolve")
-        self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py and plan_source.py
+        self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py
         self.assertFalse(env["success"])
         self.assertEqual(env["error"]["code"], "TRACKER.MISMATCH")
         self.assertEqual(set(env["error"]), {"code", "message", "recoverable", "suggested_action"})
@@ -668,7 +668,7 @@ class RepositoryContractTests(unittest.TestCase):
                     self.assertNotIn("import yaml", source)
                     self.assertNotIn("plan_anchor_settings", source)
         self.assertNotIn("import yaml", (SCRIPTS / "plan_anchor_settings.py").read_text(encoding="utf-8"))
-        for name in ("jev_judge.py", "plan_source.py", "anchor_runner_contract.py",
+        for name in ("jev_judge.py", "anchor_runner_contract.py",
                      "anchor_tuning_contract.py", "anchor_tracker.py"):
             with self.subTest(help=name):
                 code = ("import runpy, sys\nsys.modules['yaml'] = None\n"

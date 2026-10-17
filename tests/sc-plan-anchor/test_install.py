@@ -82,7 +82,6 @@ def sha(data):
 
 # ---------------------------------------------------------------- single-tracker text
 
-DEV_GATE_PHRASE = re.compile(r"requires bd and a Dolt-backed `?\.beads/`?")
 BD_WORD = re.compile(r"(?<![\w./<-])bd(?![\w-])")
 BR_WORD = re.compile(r"(?<![\w./<-])br(?![\w-])")
 # The install reference documents choosing and switching trackers, so every
@@ -95,7 +94,6 @@ def other_tracker_mentions(text, tracker):
     hits = []
     for number, line in enumerate(text.splitlines(), 1):
         if tracker == "br":
-            line = DEV_GATE_PHRASE.sub("", line)
             if BD_WORD.search(line):
                 hits.append((number, line))
         elif BR_WORD.search(line):
@@ -197,14 +195,17 @@ class RenderingTests(unittest.TestCase):
                     text = self.renderer.agent_file(target, name, tracker).value.decode("utf-8")
                     self.assertEqual(other_tracker_mentions(text, tracker), [], f"{tracker} .{target}/agents/{name}")
 
-    def test_br_dev_gate_says_it_requires_bd(self):
-        for target in inst.TARGETS:
-            text = self.renderer.agent_file(target, "anchor-sprint-review.md", "br").value.decode("utf-8")
-            self.assertIn("The development gate requires bd and a Dolt-backed `.beads/`", text)
-            self.assertIn('"code": "PREREQ.TRACKER"', text)
-            self.assertNotIn("jev_judge.py dev", text)
-            bd_text = self.renderer.agent_file(target, "anchor-sprint-review.md", "bd").value.decode("utf-8")
-            self.assertNotIn("PREREQ.TRACKER", bd_text)
+    def test_both_gates_render_the_selected_tracker(self):
+        for tracker in inst.TRACKERS:
+            for target in inst.TARGETS:
+                for name in ("anchor-plan-review.md", "anchor-sprint-review.md"):
+                    with self.subTest(tracker=tracker, target=target, agent=name):
+                        text = self.renderer.agent_file(target, name, tracker).value.decode("utf-8")
+                        self.assertIn(f"`anchor_tracker` (string, optional): `{tracker}`, as the parent", text)
+                        self.assertIn(f"or the resolved tracker is not `{tracker}` (this install is rendered for `{tracker}`", text)
+                        self.assertIn('"$ANCHOR_TRACKER" show "$qb" --json', text)
+                        self.assertIn('--item-file "$', text)
+                        self.assertNotIn("PREREQ.TRACKER", text)
 
     def test_tracker_command_forms(self):
         br = self.renderer.skill_file("references/bead-layout.md", "br").value.decode("utf-8")
@@ -219,7 +220,7 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(other_tracker_mentions("run `bd show pa-1`\n", "br"))
         self.assertTrue(other_tracker_mentions("use bd here\n", "br"))
         self.assertTrue(other_tracker_mentions("run br ready\n", "bd"))
-        self.assertEqual(other_tracker_mentions("the gate requires bd and a Dolt-backed `.beads/`\n", "br"), [])
+        self.assertTrue(other_tracker_mentions("the gate requires bd and a Dolt-backed `.beads/`\n", "br"))
         self.assertEqual(other_tracker_mentions("IDs look like bd-42 in scripts/bd_x.py\n", "br"), [])
         # A drifted committed file is caught by the neutral comparison.
         rel = "references/bead-layout.md"
@@ -422,7 +423,7 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(any("does not migrate issue data" in n for n in data["notes"]))
         self.assert_installed(repo, "bd", ["claude", "codex"])
         sprint = repo.path(".codex/agents/anchor-sprint-review.md").read_text(encoding="utf-8")
-        self.assertNotIn("PREREQ.TRACKER", sprint)
+        self.assertIn("this install is rendered for `bd`", sprint)
 
     def test_switch_bd_to_br(self):
         repo = TempRepo(self, beads="dolt")
@@ -432,7 +433,7 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(data["switched"])
         self.assert_installed(repo, "br", ["claude"])
         sprint = repo.path(".claude/agents/anchor-sprint-review.md").read_text(encoding="utf-8")
-        self.assertIn("PREREQ.TRACKER", sprint)
+        self.assertIn("this install is rendered for `br`", sprint)
 
     def test_switch_to_br_without_beads_needs_init_flag(self):
         repo = TempRepo(self, beads="dolt")
@@ -549,6 +550,7 @@ HISTORY = {
     "0.4.0": "94c3215",   # ships anchor-question-tune.md and tests/
     "0.4.2": "8b33dd9",   # released from a commit no branch here contains
     "0.6.0": "79dd7a0",
+    "0.6.1": "eba5b5a",
 }
 FIXTURE_LAYOUTS = (
     (re.compile(r"^skills/\.claude/skills/plan-anchoring/(.+)$"), ".claude/skills/plan-anchoring/{}"),
@@ -614,9 +616,16 @@ class HistoryMigrationTests(unittest.TestCase):
         data = self.migrate("0.4.2")
         self.assertTrue([k for k in data["plan"]["remove"] if "/tests/" in k])
 
-    def test_migrate_0_6_0(self):
+    def test_migrate_0_6_0_removes_plan_source(self):
         data = self.migrate("0.6.0")
         self.assertTrue(data["plan"]["replace"])
+        # ADR-014: the gates take the caller's sprint text; plan_source.py is no longer shipped.
+        self.assertIn(".claude/skills/plan-anchoring/scripts/plan_source.py", data["plan"]["remove"])
+        self.assertIn(".claude/skills/plan-anchoring/references/plan-source-contract.md", data["plan"]["remove"])
+
+    def test_migrate_0_6_1(self):
+        data = self.migrate("0.6.1")
+        self.assertIn(".claude/skills/plan-anchoring/scripts/plan_source.py", data["plan"]["remove"])
 
     def test_edited_legacy_file_is_not_owned(self):
         commit = HISTORY["0.4.0"]

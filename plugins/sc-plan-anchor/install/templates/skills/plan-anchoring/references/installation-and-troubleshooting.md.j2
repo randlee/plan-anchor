@@ -61,7 +61,7 @@ The installer applies the same rules. Without `--tracker` it uses the resolved t
 
 `resolve` is read-only and never initializes. `write` records the result in the settings file (`--tracker br|bd` pins a choice, checked the same way; an existing setting is never rewritten, and a different pin is `SETTINGS.CONFLICT`). `write --init` also runs `br init` when br is selected and there is no `.beads/`. Commit what `write` reports in `commit_paths`.
 
-Exit codes follow the plugin convention shared with `jev_judge.py` and `plan_source.py`: 0 selected; 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
+Exit codes follow the plugin convention shared with `jev_judge.py`: 0 selected; 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
 
 **Settings file.** Synaptic Canvas packages keep repository settings at `<repository root>/.sc/<package>/settings.yaml`: YAML, snake_case keys, committed to git, never secrets. The repository root is `git rev-parse --show-toplevel` (falling back to the nearest ancestor with `.git`), never the working directory. For this package:
 
@@ -76,9 +76,9 @@ anchor_tracker: {% if tracker == "bd" %}bd{% else %}br{% endif %}
 `schema_version` must be `1`. Unknown or duplicate keys are rejected (`SETTINGS.UNKNOWN_KEY`, `SETTINGS.MALFORMED`) so a typo never falls back silently. When the file or its `anchor_tracker` key is absent, detection (rule 2) applies. `.gitignore` may ignore `.sc/sessions/` and `.sc/*/cache/`, never this file; `write` reports `settings_ignored_by_git` when it is.
 
 {% if tracker == "neutral" %}
-Both gates follow the selection: anchor and question beads (and, at the development gate, the sprint's closed children) are read with the selected tracker, and the sprint itself comes from a `plan_source.py` descriptor, Markdown or a tracker copy.
+Both gates follow the selection: anchor and question beads are read with the selected tracker. The sprint text comes from the caller, from wherever it wrote it (`item_file`).
 {% else %}
-This install is rendered for `{{ tracker }}`; both gates read anchor and question beads (and, at the development gate, the sprint's closed children) with it, and take the sprint from a `plan_source.py` descriptor.
+This install is rendered for `{{ tracker }}`; both gates read anchor and question beads with it. The sprint text comes from the caller, from wherever it wrote it (`item_file`).
 {% endif %}
 
 ## Switching trackers

@@ -39,7 +39,7 @@ class TrackerPromptRegressionTests(unittest.TestCase):
 
     def test_hardcoded_tracker_assignment_is_gone(self):
         paths = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
-        paths += [PLUGIN / f".{h}" / "agents" / "anchor-plan-review.md" for h in HARNESSES]
+        paths += [PLUGIN / f".{h}" / "agents" / n for h in HARNESSES for n in ("anchor-plan-review.md", "anchor-sprint-review.md")]
         for path in paths:
             with self.subTest(path=path.name):
                 self.assertNotRegex(path.read_text(encoding="utf-8"), r"ANCHOR_TRACKER=(bd|br)\b")
@@ -57,13 +57,21 @@ class TrackerPromptRegressionTests(unittest.TestCase):
                 prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-plan-review.md").read_text(encoding="utf-8")
                 self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
 
-    def test_development_gate_is_out_of_scope(self):
+    def test_development_gate_resolves_tracker_and_takes_caller_text(self):
+        """REQ-057 / ADR-014: the development gate selects the tracker like the planning gate and judges the caller's text."""
         for harness in HARNESSES:
             with self.subTest(harness=harness):
                 prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-sprint-review.md").read_text(encoding="utf-8")
-                self.assertNotIn("anchor_tracker.py", prompt)
+                self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
+                self.assertIn('when `anchor_tracker` was supplied and differs', prompt)
+                self.assertIn('"$ANCHOR_TRACKER" show "$qb" --json', prompt)
+                self.assertIn('--evidence "$item_file"', prompt)
+                self.assertIn('--item-file "$W/item.txt"', prompt)
+                self.assertNotRegex(prompt, r"\bbd (show|children)\b")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        self.assertIn("planning gate (`anchor-plan-review`) only", changelog)
+        latest = changelog.split("\n## ")[1]
+        self.assertIn("ADR-014", latest)
+        self.assertIn("REQ-057", latest)
 
     def test_installation_doc_covers_br_and_selection(self):
         doc = (SKILL / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")

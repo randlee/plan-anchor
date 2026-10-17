@@ -2390,7 +2390,7 @@ def cmd_lint(args) -> Result[dict, JudgeError]:
 def plan_item_ids(args) -> Result[Any, JudgeError]:
     """Plan item ids for the exclusion check: --plan-item (repeatable) plus --plan-items FILE; None when neither is given.
 
-    FILE is `plan_source.py discover-*` output (data.sprints[].id), `bd show/children --json` output, or a JSON list of ids.
+    FILE is `bd show --json` / `br show --json` output (one record or a list, each with `id`) or a JSON list of ids.
     """
     ids = [i for i in (getattr(args, "plan_item", None) or []) if i]
     path = getattr(args, "plan_items", "")
@@ -2399,15 +2399,11 @@ def plan_item_ids(args) -> Result[Any, JudgeError]:
         if isinstance(loaded, Err):
             return loaded
         obj = loaded.value
-        if isinstance(obj, dict) and isinstance(obj.get("data"), dict):
-            obj = obj["data"]
-        if isinstance(obj, dict) and isinstance(obj.get("sprints"), list):
-            obj = obj["sprints"]
         if isinstance(obj, dict):
             obj = [obj]
         if not isinstance(obj, list) or not all(isinstance(x, str) or (isinstance(x, dict) and isinstance(x.get("id"), str)) for x in obj):
-            return fail("INPUT.MALFORMED", "plan items file must be plan_source discover output, bd JSON, or a list of item ids",
-                        action="Pass `plan_source.py discover-markdown|discover-tracker` output or a JSON array of ids.")
+            return fail("INPUT.MALFORMED", "plan items file must be bd/br show JSON or a list of item ids",
+                        action="Pass `bd show --json` or `br show --json` output, or a JSON array of ids.")
         ids.extend(x if isinstance(x, str) else x["id"] for x in obj)
     if not ids and not path:
         return Ok(None)
@@ -3088,7 +3084,7 @@ def build_parser() -> argparse.ArgumentParser:
     ln.add_argument("--anchors", required=True)
     ln.add_argument("--id", default="", help="one anchor id")
     ln.add_argument("--all", action="store_true", help="every non-retired anchor (the default when --id is not given)")
-    ln.add_argument("--plan-items", default="", help="plan_source discover output, bd JSON or a JSON list of ids: warn on exclusions naming another item")
+    ln.add_argument("--plan-items", default="", help="bd/br show JSON or a JSON list of ids: warn on exclusions naming another item")
     ln.add_argument("--plan-item", action="append", help="a plan item id for the exclusion check; repeatable")
     ln.set_defaults(func=cmd_lint)
 

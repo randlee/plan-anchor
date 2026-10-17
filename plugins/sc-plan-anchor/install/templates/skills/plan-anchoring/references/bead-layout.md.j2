@@ -92,7 +92,13 @@ The wording of record is `assets/questions/plan.json` and `assets/questions/dev.
 ## How the agents read beads
 
 {% if tracker == "br" %}- `br show <id> --json` prints{% else %}- `bd show <id> --json` prints{% endif %} a **one-element JSON array**. Text fields: `title`, `description`, `design`, `acceptance_criteria`, `notes`; an empty field is **absent**. Agents do not parse it: `python3 "$S" compose-item --show-json <file or -> --out <item.txt>` composes `# Title`, `## Description`, `## Design`, `## Acceptance criteria`, `## Notes` from what is present.
-{% if tracker == "br" %}- `br show <id> --json` lists children under `dependents` (`dependency_type: parent-child`); `br show <child id>... --json` returns{% else %}- `bd show <id> --json` lists children under `dependents` (`dependency_type: parent-child`); `bd show <child id>... --json` returns{% endif %} their records with `status`, `title`, and for closed children `close_reason`. The development gate reads a sprint's children this way; `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
+{% if tracker == "br" %}
+- `br show <id> --json` lists children under `dependents` (`dependency_type: parent-child`) with `id`, `title` and `status`; `br show <child id>... --json` returns each child's record, with `close_reason` when closed. `br list --label <label> ... --json` prints `{"issues": [...]}` with every label given (AND). `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
+{% elif tracker == "bd" %}
+- `bd children <id> --json` lists children with `status`, `title`, `labels`, and for closed children `close_reason` and `closed_at`. `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
+{% else %}
+- `bd children <id> --json` lists children with `status`, `title`, `labels`, and for closed children `close_reason` and `closed_at`. `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
+{% endif %}
 - Question beads resolve from `anchors.json` (`beads.plan_questions` / `beads.dev_questions`) first, {% if tracker == "br" %}then `br list --label "anchor:$ID" --label gate:plan --json`.
 {% else %}then `bd children <anchor bead> --json` filtered on the `gate:plan` or `gate:dev` label.
 {% endif %}- The fenced JSON from the question bead's `description` goes into an overrides file keyed by anchor ID, passed as `--overrides-file`; the script merges.
