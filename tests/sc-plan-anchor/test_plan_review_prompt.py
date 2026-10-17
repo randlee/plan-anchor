@@ -58,12 +58,13 @@ class PlanReviewPromptTests(unittest.TestCase):
 
     def test_real_tracker_descriptors_ignore_ancillary_fields(self):
         for tracker in ("bd", "br"):
-            plan = self.source.discover_tracker([{
+            discovered = self.source.discover_tracker([{
                 "id": "project.1", "description": sprint("A1"),
                 "title": "Not the sprint title", "acceptance_criteria": "Do not append",
                 "design": "Do not append", "notes": "Do not append",
             }], phase="phase-a", tracker=tracker, epic="project")
-            item = plan["sprints"][0]
+            self.assertIsInstance(discovered, self.source.Ok)
+            item = discovered.value["sprints"][0]
             result, output = self.materialize(item)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output, self.source.normalized_text(sprint("A1")).encode("utf-8"))

@@ -39,6 +39,16 @@ class AnchorTuningContractTests(unittest.TestCase):
         cls.runner = importlib.util.module_from_spec(runner_spec)
         runner_spec.loader.exec_module(cls.runner)
 
+    def valid(self, checked):
+        self.assertEqual(checked, self.contract.Ok(None))
+
+    def violation(self, checked, pattern=None):
+        self.assertIsInstance(checked, self.contract.Err, checked)
+        self.assertIsInstance(checked.error, self.contract.ToolError)
+        if pattern is not None:
+            self.assertRegex(self.contract.render_error(checked.error), pattern)
+        return checked.error
+
     def render(self, template: str, variables) -> dict:
         binary = shutil.which("sc-compose")
         template_path = SKILL / "templates" / template
@@ -95,12 +105,11 @@ class AnchorTuningContractTests(unittest.TestCase):
         self.assertEqual(request["confidence_reference_threshold"], 0.8)
         self.assertEqual((request["runtime"]["harness"], request["runtime"]["model"]), ("codex", "sol"))
         self.assertNotIn("acceptance_threshold", request)
-        self.contract.validate_request(request)
+        self.valid(self.contract.validate_request(request))
 
         invalid_model = json.loads(json.dumps(request))
         invalid_model["runtime"]["model"] = "opus"
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_request(invalid_model)
+        self.violation(self.contract.validate_request(invalid_model))
 
     def test_rendered_tuning_results_satisfy_runner_and_tuning_contracts(self):
         for operation in ("testability", "tune", "triage"):
@@ -111,10 +120,10 @@ class AnchorTuningContractTests(unittest.TestCase):
                 )
                 self.validate(result, "anchor-tuning-result.schema.json")
                 self.validate(result, "agent-runner-result.schema.json")
-                self.contract.validate_result(result)
+                self.valid(self.contract.validate_result(result))
                 correlation_id = result["metadata"]["correlation_id"]
                 fenced = "```json\n" + json.dumps(result) + "\n```"
-                self.assertEqual(self.runner.parse_result(fenced, correlation_id), result)
+                self.assertEqual(self.runner.parse_result(fenced, correlation_id), self.runner.Ok(result))
 
     def test_rendered_failure_satisfies_runner_and_tuning_contracts(self):
         result = self.render("anchor-tuning-result.md.j2", {
@@ -140,8 +149,8 @@ class AnchorTuningContractTests(unittest.TestCase):
         })
         self.validate(result, "anchor-tuning-result.schema.json")
         self.validate(result, "agent-runner-result.schema.json")
-        self.contract.validate_result(result)
-        self.runner.validate_result(result, "contract-failure")
+        self.valid(self.contract.validate_result(result))
+        self.assertEqual(self.runner.validate_result(result, "contract-failure"), self.runner.Ok(result))
         for version in (None, "2.0.0"):
             invalid = dict(result)
             if version is None:
@@ -151,8 +160,7 @@ class AnchorTuningContractTests(unittest.TestCase):
             with self.subTest(version=version):
                 with self.assertRaises(self.jsonschema.ValidationError):
                     self.validate(invalid, "anchor-tuning-result.schema.json")
-                with self.assertRaises(self.runner.RunnerContractError):
-                    self.runner.validate_result(invalid, "contract-failure")
+                self.assertIsInstance(self.runner.validate_result(invalid, "contract-failure"), self.runner.Err)
 
     def test_v2_corpus_descriptor_preserves_v1_frozen_payload(self):
         request = self.render(
@@ -160,7 +168,7 @@ class AnchorTuningContractTests(unittest.TestCase):
             "anchor-tuning-testability-request.sample-vars.json",
         )
         self.validate(request, "anchor-tuning-request.schema.json")
-        self.contract.validate_request(request)
+        self.valid(self.contract.validate_request(request))
         descriptor = request["calibration_corpus"]
         corpus = json.loads((ROOT / descriptor["path"]).read_text(encoding="utf-8"))
         self.assertEqual(descriptor["schema"], "plan-anchor/testability-calibration/2")
@@ -182,7 +190,7 @@ class AnchorTuningContractTests(unittest.TestCase):
         self.assertEqual(request["authority"]["anchors"]["records"], [])
         self.assertTrue(request["calibration_corpus"]["frozen_before_live"])
         self.assertEqual(set(request["current_questions"]), self.contract.ROLE_IDS["testability"])
-        self.contract.validate_request(request)
+        self.valid(self.contract.validate_request(request))
 
         result = self.render(
             "anchor-tuning-result.md.j2",
@@ -191,22 +199,19 @@ class AnchorTuningContractTests(unittest.TestCase):
         self.validate(result, "anchor-tuning-result.schema.json")
         self.assertTrue(result["data"]["accepted"])
         self.assertEqual(result["data"]["confirmation_summary"]["third_call_cells"], 0)
-        self.contract.validate_result(result)
+        self.valid(self.contract.validate_result(result))
 
         unstable = json.loads(json.dumps(result))
         unstable["data"]["confirmation_summary"]["unstable_cells"] = 1
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(unstable)
+        self.violation(self.contract.validate_result(unstable))
 
         incomplete = json.loads(json.dumps(result))
         incomplete["data"]["semantic_score"]["exact_cells"] = 84
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(incomplete)
+        self.violation(self.contract.validate_result(incomplete))
 
         request_drift = json.loads(json.dumps(result))
         request_drift["data"]["repeat_requests_byte_identical"] = False
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(request_drift)
+        self.violation(self.contract.validate_result(request_drift))
 
     def test_v2_tune_result_renders_and_validates(self):
         result = self.render(
@@ -216,7 +221,7 @@ class AnchorTuningContractTests(unittest.TestCase):
         self.validate(result, "anchor-tuning-result.schema.json")
         self.assertTrue(result["data"]["production_semantics_unchanged"])
         self.assertEqual(result["data"]["confidence_diagnostics"]["threshold"], 0.8)
-        self.contract.validate_result(result)
+        self.valid(self.contract.validate_result(result))
 
         rejected = json.loads(json.dumps(result))
         rejected["data"]["accepted"] = False
@@ -228,12 +233,11 @@ class AnchorTuningContractTests(unittest.TestCase):
             rejected["data"]["tuning_history_after"]
         )
         self.validate(rejected, "anchor-tuning-result.schema.json")
-        self.contract.validate_result(rejected)
+        self.valid(self.contract.validate_result(rejected))
 
         invalid = json.loads(json.dumps(result))
         invalid["data"]["semantic_score"]["regressions"] = 1
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(invalid)
+        self.violation(self.contract.validate_result(invalid))
 
         confidence_gaming = json.loads(json.dumps(result))
         confidence_gaming["data"]["sealed_question_set"]["questions"]["addressed"][
@@ -243,13 +247,11 @@ class AnchorTuningContractTests(unittest.TestCase):
         digest = self.contract.sha256({"questions": questions})
         confidence_gaming["data"]["sealed_question_set"]["digest"] = digest
         confidence_gaming["data"]["sealed_question_set_digest_after"] = digest
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(confidence_gaming)
+        self.violation(self.contract.validate_result(confidence_gaming))
 
         impossible = json.loads(json.dumps(result))
         impossible["data"]["semantic_score"]["exact_role_cells"] = 999
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(impossible)
+        self.violation(self.contract.validate_result(impossible))
 
         unknown = self.render(
             "anchor-tuning-tune-request.md.j2",
@@ -265,19 +267,18 @@ class AnchorTuningContractTests(unittest.TestCase):
             "anchor-tuning-review-feedback.sample-vars.json",
         )
         self.validate(request, "anchor-tuning-request.schema.json")
-        self.contract.validate_request(request)
+        self.valid(self.contract.validate_request(request))
 
         result = self.render(
             "anchor-tuning-result.md.j2",
             "anchor-tuning-result-triage.sample-vars.json",
         )
         self.validate(result, "anchor-tuning-result.schema.json")
-        self.contract.validate_result(result)
+        self.valid(self.contract.validate_result(result))
 
         invalid = json.loads(json.dumps(result))
         invalid["data"]["sealed_question_set_digest_after"] = "f" * 64
-        with self.assertRaises(self.contract.ContractError):
-            self.contract.validate_result(invalid)
+        self.violation(self.contract.validate_result(invalid))
 
     def tuning_pair(self):
         request = self.render(
@@ -301,9 +302,9 @@ class AnchorTuningContractTests(unittest.TestCase):
         result["data"]["tuning_history_before_sha256"] = self.contract.sha256(before)
         result["data"]["tuning_history_after_sha256"] = self.contract.sha256(history)
         self.validate(request, "anchor-tuning-request.schema.json")
-        self.contract.validate_request(request)
+        self.valid(self.contract.validate_request(request))
         self.validate(result, "anchor-tuning-result.schema.json")
-        self.contract.validate_result(result)
+        self.valid(self.contract.validate_result(result))
 
     def test_initial_migration_and_later_history_events(self):
         request, result = self.tuning_pair()
@@ -359,10 +360,8 @@ class AnchorTuningContractTests(unittest.TestCase):
             self.validate(request, "anchor-tuning-request.schema.json")
         with self.assertRaises(self.jsonschema.ValidationError):
             self.validate(result, "anchor-tuning-result.schema.json")
-        with self.assertRaisesRegex(self.contract.ContractError, "HISTORY.PREDECESSOR"):
-            self.contract.validate_request(request)
-        with self.assertRaisesRegex(self.contract.ContractError, "HISTORY.PREDECESSOR"):
-            self.contract.validate_result(result)
+        self.violation(self.contract.validate_request(request), "HISTORY.PREDECESSOR")
+        self.violation(self.contract.validate_result(result), "HISTORY.PREDECESSOR")
 
     def test_later_event_requires_predecessor_in_relational_contract(self):
         request, result = self.tuning_pair()
@@ -376,10 +375,8 @@ class AnchorTuningContractTests(unittest.TestCase):
         result["data"]["tuning_history_after_sha256"] = self.contract.sha256(history)
         request["tuning_history"] = copy.deepcopy(history)
 
-        with self.assertRaisesRegex(self.contract.ContractError, "HISTORY.PREDECESSOR"):
-            self.contract.validate_request(request)
-        with self.assertRaisesRegex(self.contract.ContractError, "HISTORY.PREDECESSOR"):
-            self.contract.validate_result(result)
+        self.violation(self.contract.validate_request(request), "HISTORY.PREDECESSOR")
+        self.violation(self.contract.validate_result(result), "HISTORY.PREDECESSOR")
 
     def test_authority_ids_preserve_evaluator_source_references(self):
         original_request, original_result = self.tuning_pair()
