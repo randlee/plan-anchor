@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.5.0
+version: 0.5.1
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: opus
 color: purple
@@ -84,8 +84,8 @@ text, a target pass rate, or any instruction to produce a pass.
 ### Operation: `tune`
 
 1. Validate the fenced object and schema, then run the supplied
-   `anchor_tuning_contract.py request` relational check. Validate immutable
-   runtime and authority digests. Fail closed on any mismatch.
+   `anchor_tuning_contract.py request` relational check (pass: exit 0). Validate
+   immutable runtime and authority digests. Fail closed on any mismatch.
 2. Treat approved INTENT and the applicable locked ANC records as the only
    normative authority. If they do not determine a stable expectation, return
    an `authority_recommendation`; do not guess or change their meaning.

@@ -375,6 +375,8 @@ def phase(rows):
 
 ROWS = "| A1 | [One](sprint-a1.md) | `p.1` | root | done |\n| A2 | [Two](sprint-a2.md) | `p.2` | `must_follow` A1 | done |"
 PLAN = {"plan/sprint-a1.md": sprint("A1"), "plan/sprint-a2.md": sprint("A2"), "plan/plan-phase-a.md": phase(ROWS)}
+# An absolute path on this platform: "/x" is drive-relative (not absolute) on Windows.
+ABSOLUTE = Path(Path.cwd().anchor, "tmp", "x.md").as_posix()
 
 
 def plan_with(**files):
@@ -403,7 +405,7 @@ class PlanSourceErrorContracts(unittest.TestCase):
             ({index: phase(ROWS.replace("| A2 |", "| A1 |"))}, "SOURCE.DUPLICATE_ID", "phase sprint identifiers must be unique"),
             ({index: phase(ROWS.replace("sprint-a2.md", "sprint-a1.md"))}, "SOURCE.DUPLICATE_PATH", "phase sprint paths must be unique"),
             ({index: phase(ROWS.replace("(sprint-a2.md)", "(./sprint-a1.md)"))}, "SOURCE.DUPLICATE_PATH", "multiple sprint links resolve to the same file"),
-            ({index: phase(ROWS.replace("sprint-a2.md", "/tmp/x.md"))}, "SOURCE.PATH", "source path must be repository-relative"),
+            ({index: phase(ROWS.replace("sprint-a2.md", ABSOLUTE))}, "SOURCE.PATH", "source path must be repository-relative"),
             ({index: phase(ROWS.replace("sprint-a2.md", "missing.md"))}, "SOURCE.PATH", "source path is missing or escapes the repository"),
             ({index: phase(ROWS.replace("sprint-a2.md", "sub")), "plan__sub__x": "1"}, "SOURCE.PATH", "source path must resolve to a non-symlink regular file"),
             ({index: phase(ROWS).replace("# Phase A", "# Fase A")}, "SOURCE.PHASE_ID", "phase index must contain exactly one Phase title"),
@@ -417,7 +419,7 @@ class PlanSourceErrorContracts(unittest.TestCase):
             with self.subTest(code=code, message=message):
                 exit_code, out = self.discover(plan_with(**files))
                 self.assertEqual((exit_code, out), (2, source_error(code, message)))
-        self.assertEqual(self.discover(PLAN, "/abs"), (2, source_error("SOURCE.PATH", "phase target must be repository-relative")))
+        self.assertEqual(self.discover(PLAN, ABSOLUTE), (2, source_error("SOURCE.PATH", "phase target must be repository-relative")))
         self.assertEqual(self.discover(PLAN, "nope"), (2, source_error("SOURCE.PATH", "phase target is missing or escapes the repository")))
 
     def test_too_large_carries_shape_evidence(self):
@@ -450,6 +452,24 @@ class PlanSourceErrorContracts(unittest.TestCase):
         for argv, files, expected in cases:
             with self.subTest(expected=expected["error"]["message"]), Workspace(files):
                 self.assertEqual(call_main(ps.main, argv), (2, expected))
+
+    def test_malformed_parity_input_is_a_typed_error_not_a_traceback(self):
+        expected = {"success": False, "data": None, "error": {
+            "code": "SOURCE.PARITY_INPUT",
+            "message": "parity input must be a discovered plan whose sprints carry id and normalized_sha256",
+            "recoverable": False,
+            "suggested_action": "Pass the data object from discover-markdown and discover-tracker output."}}
+        good = {"sprints": [{"id": "A1", "normalized_sha256": "a"}]}
+        for bad in ({}, [], {"sprints": {}}, {"sprints": [1]}, {"sprints": [{"normalized_sha256": "a"}]}, {"sprints": [{"id": "A1"}]}):
+            for left, right in ((bad, good), (good, bad)):
+                with self.subTest(left=left, right=right), Workspace({"m.json": left, "t.json": right}):
+                    self.assertEqual(call_main(ps.main, ["parity", "--markdown-json", "m.json", "--tracker-json", "t.json"]), (2, expected))
+
+    def test_unexpected_exception_is_script_internal(self):
+        with mock.patch.object(ps, "_run", side_effect=RuntimeError("boom")):
+            self.assertEqual(call_main(ps.main, ["parity", "--markdown-json", "m.json", "--tracker-json", "t.json"]), (2, {
+                "success": False, "data": None, "error": {"code": "SCRIPT.INTERNAL", "message": "RuntimeError: boom", "recoverable": False,
+                                                          "suggested_action": "Report this with the command line and its JSON inputs."}}))
 
     def test_tracker_command_failures(self):
         def completed(returncode, stdout):
@@ -547,18 +567,30 @@ class TuningContractCli(unittest.TestCase):
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 
-    def test_cli_reports_contract_key_and_json_errors_with_exit_one(self):
+    def test_cli_reports_every_error_as_an_envelope_with_exit_two(self):
         cases = (
-            ("result", {"x": [{"desired_verdict": 1}]}, '{"error": "VALIDATION.FORBIDDEN_FIELD: $.x[0].desired_verdict", "valid": false}\n'),
-            ("result", {"success": True, "data": {"operation": "x"}}, '{"error": "VALIDATION.OPERATION: unknown result operation", "valid": false}\n'),
-            ("request", {"runtime": {"harness": "codex", "model": "opus"}}, '{"error": "VALIDATION.MODEL: codex anchor-tuning requires sol", "valid": false}\n'),
-            ("request", {"runtime": {}}, '{"error": "\'harness\'", "valid": false}\n'),
-            ("request", "{", '{"error": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)", "valid": false}\n'),
+            ("result", {"x": [{"desired_verdict": 1}]}, "VALIDATION.FORBIDDEN_FIELD", "$.x[0].desired_verdict"),
+            ("result", {"success": True, "data": {"operation": "x"}}, "VALIDATION.OPERATION", "unknown result operation"),
+            ("request", {"runtime": {"harness": "codex", "model": "opus"}}, "VALIDATION.MODEL", "codex anchor-tuning requires sol"),
+            ("request", {"runtime": {}}, "VALIDATION.MISSING_FIELD", "required field is missing: harness"),
+            ("request", "{", "VALIDATION.JSON", "input is not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
+            ("result", [1], "VALIDATION.SHAPE", "result must be a JSON object"),
+            ("request", b"\xff", "SCRIPT.IO", "input could not be read"),
         )
-        for kind, value, expected in cases:
-            with self.subTest(expected=expected):
-                self.assertEqual(self.run_cli(kind, value), (1, expected))
-        self.assertEqual(self.run_cli("result", {"success": False}), (0, '{"sha256": "%s", "valid": true}\n' % hashlib.sha256(b'{"success":false}').hexdigest()))
+        for kind, value, code, message in cases:
+            with self.subTest(code=code):
+                rc_, out = self.run_cli(kind, value)
+                self.assertEqual((rc_, json.loads(out)), (2, contract_error(code, message)))
+                self.assertEqual(out, json.dumps(contract_error(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+        rc_, out = self.run_cli("result", {"success": False})
+        self.assertEqual((rc_, json.loads(out)), (0, {"success": True, "error": None, "data": {
+            "valid": True, "sha256": hashlib.sha256(b'{"success":false}').hexdigest()}}))
+
+    def test_unexpected_failure_is_script_internal(self):
+        rc_, out = self.run_cli("request", {"runtime": []})
+        error = json.loads(out)["error"]
+        self.assertEqual((rc_, error["code"], error["message"].split(":")[0]), (2, "SCRIPT.INTERNAL", "TypeError"))
+        self.assertEqual(error["suggested_action"], "Validate the object against its JSON schema first, then report this with the input.")
 
 
 if __name__ == "__main__":

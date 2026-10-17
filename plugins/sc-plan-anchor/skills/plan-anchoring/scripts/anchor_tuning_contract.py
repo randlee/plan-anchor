@@ -2,9 +2,10 @@
 """Deterministic relational checks for anchor-tuning request/result contracts.
 
 Contract violations are returned as ``Err(ToolError)`` values (see
-``result.py``); ``main`` renders one as ``"CODE: detail"``. Structural gaps
-in the input (a missing key) and unreadable files still surface at the CLI
-boundary exactly as before.
+``result.py``). The CLI prints one ``{success, data, error}`` JSON envelope:
+exit 0 with ``data = {"valid": true, "sha256": ...}`` when the object passes,
+exit 2 with a typed ``error`` for a violation, a missing field, unreadable or
+non-JSON input, or an unexpected failure (``SCRIPT.INTERNAL``).
 """
 
 from __future__ import annotations
@@ -260,26 +261,51 @@ def validate_result(result: dict) -> Check:
 
 
 def render_error(error: ToolError) -> str:
-    """The CLI's historical one-line form of a contract violation."""
+    """One-line ``CODE: detail`` form of a contract violation, for logs and messages."""
 
     return f"{error.code}: {error.message}"
 
 
-def main() -> int:
+def _emit(value: dict) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def _check_file(kind: str, path: pathlib.Path) -> Result[dict, ToolError]:
+    """Read, decode and check one contract file. Raises only for unexpected failures."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return err("SCRIPT.IO", "input could not be read")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return err("VALIDATION.JSON", f"input is not valid JSON: {exc}")
+    if not isinstance(value, dict):
+        return err("VALIDATION.SHAPE", f"{kind} must be a JSON object")
+    try:
+        checked = (validate_request if kind == "request" else validate_result)(value)
+    except KeyError as exc:
+        return err("VALIDATION.MISSING_FIELD", f"required field is missing: {exc.args[0]}")
+    if isinstance(checked, Err):
+        return checked
+    return Ok({"valid": True, "sha256": sha256(value)})
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("kind", choices=("request", "result"))
     parser.add_argument("path", type=pathlib.Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
-        value = json.loads(args.path.read_text(encoding="utf-8"))
-        checked = (validate_request if args.kind == "request" else validate_result)(value)
-    except (OSError, json.JSONDecodeError, KeyError) as exc:
-        print(json.dumps({"valid": False, "error": str(exc)}, sort_keys=True))
-        return 1
-    if isinstance(checked, Err):
-        print(json.dumps({"valid": False, "error": render_error(checked.error)}, sort_keys=True))
-        return 1
-    print(json.dumps({"valid": True, "sha256": sha256(value)}, sort_keys=True))
+        outcome = _check_file(args.kind, args.path)
+    except Exception as exc:  # noqa: BLE001 - the CLI boundary: a JSON error object beats a traceback
+        outcome = err("SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
+                      action="Validate the object against its JSON schema first, then report this with the input.")
+    if isinstance(outcome, Err):
+        _emit({"success": False, "data": None, "error": outcome.error.to_json()})
+        return 2
+    _emit({"success": True, "data": outcome.value, "error": None})
     return 0
 
 
