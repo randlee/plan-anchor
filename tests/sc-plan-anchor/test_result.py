@@ -20,7 +20,6 @@ sys.path.insert(0, str(SCRIPTS))
 import anchor_runner_contract as rc  # noqa: E402
 import anchor_tuning_contract as tc  # noqa: E402
 import jev_judge as jj  # noqa: E402
-import plan_source as ps  # noqa: E402
 import result  # noqa: E402
 from result import Err, Ok, ToolError, err  # noqa: E402
 
@@ -51,17 +50,13 @@ class ResultHelperTests(unittest.TestCase):
         self.assertIsNone(err("C", "m").error.to_json()["suggested_action"])
 
     def test_scripts_share_one_result_module(self):
-        for module in (ps, rc, tc, jj):
+        for module in (rc, tc, jj):
             self.assertIs(module.Ok, result.Ok)
             self.assertIs(module.Err, result.Err)
 
 
 class ScriptErrValueTests(unittest.TestCase):
     """Expected failures come back as Err values, not exceptions."""
-
-    def test_plan_source(self):
-        self.assertEqual(ps.validate_sprint("no heading").error.code, "SOURCE.SPRINT_TITLE")
-        self.assertEqual(ps.phase_rows("nothing").error.code, "SOURCE.PHASE_TABLE")
 
     def test_runner_contract(self):
         dup = rc.parse_single_fenced_json('```json\n{"a": 1, "a": 2}\n```', kind="request")
