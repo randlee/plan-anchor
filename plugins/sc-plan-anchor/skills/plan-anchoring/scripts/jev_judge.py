@@ -84,21 +84,27 @@ import urllib.request
 from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from result import Err, Ok, Result  # noqa: E402
+from result import Err, Ok, Result, ToolError, err  # noqa: E402
+
+
+def parse_env_number(name: str, default, cast) -> Result[Any, ToolError]:
+    """Read a numeric environment variable; Ok(default) when unset or blank, Err when it is not a number."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return Ok(default)
+    try:
+        return Ok(cast(raw))
+    except ValueError:
+        return err("VALIDATION.INPUT", f"{name}={raw!r} is not a number", f"Unset {name} or give it a numeric value.")
 
 
 def _env_number(name: str, default, cast):
-    """Read a numeric environment variable; a non-numeric value is a JSON error, not a traceback."""
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        return cast(raw)
-    except ValueError:
-        print(json.dumps({"success": False, "data": None, "error": {
-            "code": "VALIDATION.INPUT", "message": f"{name}={raw!r} is not a number",
-            "recoverable": False, "suggested_action": f"Unset {name} or give it a numeric value."}}, indent=2))
+    """Module-load boundary for parse_env_number: a non-numeric value is a JSON error and exit 2, not a traceback."""
+    parsed = parse_env_number(name, default, cast)
+    if isinstance(parsed, Err):
+        print(json.dumps({"success": False, "data": None, "error": parsed.error.to_json()}, indent=2))
         sys.exit(2)
+    return parsed.value
 
 
 JEV_URL = os.environ.get("PLAN_ANCHOR_JEV_URL", "https://api.typesafe.ai/v1/systemone")
@@ -175,10 +181,11 @@ BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s\"']+")
 # --------------------------------------------------------------------------- #
 # plumbing
 # --------------------------------------------------------------------------- #
-class JudgeError(Exception):
+class JudgeError:
+    """An expected failure, carried in Err. Never raised: main() turns it into the error envelope and exit 2."""
+
     def __init__(self, code: str, message: str, recoverable: bool = False, action: str = "",
                  status=None, retry_after=None):
-        super().__init__(message)
         self.code = code
         self.message = message
         self.recoverable = recoverable
@@ -187,6 +194,12 @@ class JudgeError(Exception):
         self.retry_after = retry_after  # parsed Retry-After header, seconds, or None
         self.meta = {}                  # attempt / shortening bookkeeping, filled by judge_with_policy
         self.data = None                # optional facts that explain the error (PLAN.TOO_LARGE carries the bead's shape)
+
+    def __str__(self) -> str:
+        return self.message
+
+    def __repr__(self) -> str:
+        return f"JudgeError({self.code!r}, {self.message!r})"
 
     def to_json(self) -> dict:
         return redact_sensitive({
@@ -204,13 +217,6 @@ class JudgeError(Exception):
 def fail(code: str, message: str, **fields) -> Err[JudgeError]:
     """An expected failure as a value: ``return fail(...)`` where the old code raised."""
     return Err(JudgeError(code, message, **fields))
-
-
-def _unwrap(result):
-    """Transitional bridge for callers not yet converted to Result: re-raise an Err. Removed when no caller needs it."""
-    if isinstance(result, Err):
-        raise result.error
-    return result.value
 
 
 def redact_sensitive(value):
@@ -2653,8 +2659,11 @@ def report_lines(run: dict, include_passing: bool = False) -> list:
     return lines
 
 
-def cmd_report(args) -> dict:
-    run = _unwrap(load_run(args.run, "run file"))
+def cmd_report(args) -> Result[Any, JudgeError]:
+    loaded = load_run(args.run, "run file")
+    if isinstance(loaded, Err):
+        return loaded
+    run = loaded.value
     s = run["summary"]
     head = [f"## Anchor gate: {run['gate']} · {run['item']['id']}" + (f" - {run['item']['title']}" if run['item'].get('title') else ""), "",
             f"Run `{run['run_id']}`, model `{run.get('model_answered') or run.get('model_requested')}`, threshold {run['threshold']}. "
@@ -2665,8 +2674,8 @@ def cmd_report(args) -> dict:
         body = ["All judged anchors are satisfied or not applicable.", ""]
     md = "\n".join(head + body).rstrip() + "\n"
     if args.format == "md":
-        return md
-    return {"success": True, "data": {"run_id": run["run_id"], "pass": s.get("pass"), "failing": s.get("failing"), "markdown": md}, "error": None}
+        return Ok(md)
+    return Ok({"success": True, "data": {"run_id": run["run_id"], "pass": s.get("pass"), "failing": s.get("failing"), "markdown": md}, "error": None})
 
 
 def collect_runs(paths: list) -> list:
@@ -2685,12 +2694,12 @@ def collect_runs(paths: list) -> list:
     return runs
 
 
-def cmd_coverage(args) -> dict:
+def cmd_coverage(args) -> Result[Any, JudgeError]:
     runs = collect_runs(args.runs)
     if args.gate:
         runs = [r for r in runs if r.get("gate") == args.gate]
     if not runs:
-        raise JudgeError("RUNS.NONE", "no run files found", action="Run `judge` first, or check the --runs path.")
+        return fail("RUNS.NONE", "no run files found", action="Run `judge` first, or check the --runs path.")
     # latest run per (gate, item) wins
     latest = {}
     for r in sorted(runs, key=lambda r: str(r.get("created_at", ""))):
@@ -2717,8 +2726,8 @@ def cmd_coverage(args) -> dict:
         lines.append("")
         if uncovered:
             lines.append("Uncovered anchors (no item satisfies them): " + ", ".join(uncovered))
-        return "\n".join(lines) + "\n"
-    return {"success": True, "data": data, "error": None}
+        return Ok("\n".join(lines) + "\n")
+    return Ok({"success": True, "data": data, "error": None})
 
 
 def diff_rank(verdict) -> int:
@@ -2728,14 +2737,20 @@ def diff_rank(verdict) -> int:
     return SEVERITY.get(verdict, -1)
 
 
-def cmd_diff(args) -> dict:
-    prev = _unwrap(load_run(args.prev, "previous run"))
-    nxt = _unwrap(load_run(args.next, "next run"))
+def cmd_diff(args) -> Result[dict, JudgeError]:
+    loaded = load_run(args.prev, "previous run")
+    if isinstance(loaded, Err):
+        return loaded
+    prev = loaded.value
+    loaded = load_run(args.next, "next run")
+    if isinstance(loaded, Err):
+        return loaded
+    nxt = loaded.value
     if prev["gate"] != nxt["gate"]:
-        raise JudgeError("RUNS.MISMATCH", "runs are for different gates")
+        return fail("RUNS.MISMATCH", "runs are for different gates")
     if prev["item"]["id"] != nxt["item"]["id"]:
-        raise JudgeError("RUNS.MISMATCH", f"runs are for different items ({prev['item']['id']} vs {nxt['item']['id']})",
-                         action="Diff two runs of the same bead or sprint.")
+        return fail("RUNS.MISMATCH", f"runs are for different items ({prev['item']['id']} vs {nxt['item']['id']})",
+                    action="Diff two runs of the same bead or sprint.")
     pv = {r["anchor_id"]: r for r in prev["results"]}
     nv = {r["anchor_id"]: r for r in nxt["results"]}
     changed, added, removed = [], [], []
@@ -2768,13 +2783,16 @@ def cmd_diff(args) -> dict:
                           "delta_chars": after_chars - before_chars, "grew": after_chars > before_chars},
             "pass_before": prev["summary"].get("pass"), "pass_after": nxt["summary"].get("pass")}
     if getattr(args, "expected", ""):
-        expected = _unwrap(load_json(args.expected, "expected verdicts"))
+        loaded = load_json(args.expected, "expected verdicts")
+        if isinstance(loaded, Err):
+            return loaded
+        expected = loaded.value
         if not isinstance(expected, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in expected.items()):
-            raise JudgeError("INPUT.MALFORMED", "expected verdicts must be a JSON object {anchor_id: verdict}", action="Write the verdict a human reading gives each anchor.")
+            return fail("INPUT.MALFORMED", "expected verdicts must be a JSON object {anchor_id: verdict}", action="Write the verdict a human reading gives each anchor.")
         cells = []
         for aid, want in sorted(expected.items()):
             if want not in VERDICTS:
-                raise JudgeError("VALIDATION.INPUT", f"expected verdict for {aid} must be one of {VERDICTS}, got {want!r}")
+                return fail("VALIDATION.INPUT", f"expected verdict for {aid} must be one of {VERDICTS}, got {want!r}")
             p = pv[aid]["verdict"] if aid in pv else None
             n = nv[aid]["verdict"] if aid in nv else None
             cells.append({"anchor_id": aid, "expected": want, "prev": p, "next": n, "prev_matches": p == want, "next_matches": n == want})
@@ -2785,7 +2803,7 @@ def cmd_diff(args) -> dict:
             "still_off": [c["anchor_id"] for c in cells if not c["prev_matches"] and not c["next_matches"]],
             "all_match": all(c["next_matches"] for c in cells),
         }
-    return {"success": True, "data": data, "error": None}
+    return Ok({"success": True, "data": data, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -3022,12 +3040,6 @@ def main(argv=None) -> int:
     fmt = getattr(args, "format", "json")
     try:
         outcome = args.func(args)
-        if isinstance(outcome, Err):
-            raise outcome.error
-        out = outcome.value if isinstance(outcome, Ok) else outcome
-    except JudgeError as exc:
-        emit(exc.to_json())
-        return 2
     except KeyboardInterrupt:
         emit({"success": False, "canceled": True, "aborted_by": "user", "data": None, "error": None})
         return 130
@@ -3035,6 +3047,10 @@ def main(argv=None) -> int:
         emit(JudgeError("SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
                         action="Report this with the command line; check the JSON inputs against references/anchor-document.md.").to_json())
         return 2
+    if isinstance(outcome, Err):
+        emit(outcome.error.to_json())
+        return 2
+    out = outcome.value
     emit(out, fmt)
     return exit_code_for(args.cmd, out)
 

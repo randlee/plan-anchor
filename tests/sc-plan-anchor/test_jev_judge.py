@@ -1294,8 +1294,8 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertTrue(Path(run["run_path"]).is_file() and Path(run["path"]).parent == Path(self.run_dir))
         self.assertIsNone(run["results"][0]["verdict"])
         self.assertEqual(run["results"][0]["attempts"], 0)
-        with self.assertRaises(jj.JudgeError):
-            jj.cmd_coverage(jj.argparse.Namespace(runs=[self.run_dir], gate="", format="json"))  # dry runs never count
+        dry_only = jj.cmd_coverage(jj.argparse.Namespace(runs=[self.run_dir], gate="", format="json"))  # dry runs never count
+        self.assertEqual(failure(dry_only).code, "RUNS.NONE")
 
     def test_judge_refuses_invalid_record_and_options(self):
         bad = write(self.d.name, "bad.json", record(anchor(status="nope")))
@@ -2324,6 +2324,12 @@ class ErrorHandlingTests(unittest.TestCase):
             self.assertEqual(jj._env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float), 0.7)
         with env():
             self.assertEqual(jj._env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float), 0.6)
+        with env(PLAN_ANCHOR_MAX_ITEM_CHARS="12.5"):
+            bad = jj.parse_env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int)
+            self.assertIsInstance(bad, jj.Err)
+            self.assertEqual((bad.error.code, bad.error.message), ("VALIDATION.INPUT", "PLAN_ANCHOR_MAX_ITEM_CHARS='12.5' is not a number"))
+        with env(PLAN_ANCHOR_MAX_ITEM_CHARS="  "):
+            self.assertEqual(jj.parse_env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int), jj.Ok(24000))
 
     def test_exit_codes(self):
         self.assertEqual(jj.exit_code_for("judge", {"success": True, "data": {"dry_run": False, "summary": {"pass": True}}}), 0)
