@@ -1,6 +1,6 @@
 ---
 name: plan-source-contract
-version: 0.6.0
+version: 0.7.0
 description: Hardened discovery and parity contract for Markdown phase plans and bd/br epic copies.
 ---
 

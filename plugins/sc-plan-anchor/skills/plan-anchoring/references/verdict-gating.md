@@ -1,6 +1,6 @@
 ---
 name: verdict-gating
-version: 0.6.0
+version: 0.7.0
 description: How jev_judge.py turns independent Jev answers into one verdict per anchor and item, the role contract, thresholds, severity order, pass criteria and exit codes, coverage, run diffs, and offline fixtures.
 ---
 

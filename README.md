@@ -52,7 +52,15 @@ Then open `/plugins` and install **Plan Anchor**. Codex discovers the skill from
 
 Cursor: in Customize, import this GitHub repository (it reads `.cursor-plugin/marketplace.json`), then install **Plan Anchor**. The slash command is `/plan-anchoring`. Gate subagents pin Composer (`model: composer`). The tuner pins Grok at high effort with the version left off (`model: grok[effort=high]`). The skill launches them with the Task tool and does not pass a model override.
 
-For a source checkout, use the files under `plugins/sc-plan-anchor/` directly. Hermes distribution is likewise deferred; it has no marketplace manifest and this package has not been landed in its registry.
+To vendor the skill and agents into a repository instead (rendered for that repository's tracker, so the installed text names only `br` or only `bd`), run the installer from a checkout of this repository:
+
+```bash
+uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd] [--target claude,codex,cursor] [--dry-run]
+```
+
+Rerun it to upgrade or, with the other `--tracker`, to switch trackers (switching re-renders the text and updates `.sc/plan-anchor/settings.yaml`; it does not migrate issue data). It owns only the files recorded in `<repo>/.sc/plan-anchor/install-lock.json`, removes files a newer version no longer ships, and refuses to overwrite modified or foreign files without `--overwrite`. Details: `references/installation-and-troubleshooting.md`.
+
+Hermes distribution is likewise deferred; it has no marketplace manifest and this package has not been landed in its registry.
 
 | Need | For | Notes |
 | --- | --- | --- |

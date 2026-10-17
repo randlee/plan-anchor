@@ -1,5 +1,5 @@
 ---
-version: 0.6.0
+version: 0.7.0
 ---
 
 # Reference catalog
@@ -29,7 +29,7 @@ version: 0.6.0
 - `references/verdict-gating.md` - answers to verdicts, thresholds, coverage, diffs
 - `references/report-format.md` - the provenance-quoting report and what to do with each verdict
 - `references/jev-api.md` - endpoint, request and response, limits, retries, privacy opt-in, every flag and error code
-- `references/installation-and-troubleshooting.md` - installing python3, bd, and the API key; PATH; Codex
+- `references/installation-and-troubleshooting.md` - installing the plugin (`install.py`), python3, br or bd, and the API key; tracker selection and switching; PATH; Codex
 - `references/agent-runner-contract.md` - one trusted agent resolution, strict fenced envelopes, and redacted attestation
 - `assets/questions/plan.json`, `assets/questions/dev.json`, `assets/questions/testability.json`, `assets/questions/dedupe.json` - the question wording of record
 - `assets/templates/intent.md`, `assets/templates/anchor-questions-bead.md`, `assets/examples/` - starting points and a worked example
