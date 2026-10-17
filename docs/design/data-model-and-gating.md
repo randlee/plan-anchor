@@ -60,6 +60,7 @@ classDiagram
         deterministic_check
         fixtures : pass[], fail[]
         question_overrides : plan?, dev?
+        exclude : item, reason []
         version : int
         status : proposed | locked | promoted | retired
         promoted_to
@@ -98,7 +99,7 @@ classDiagram
 Rules that follow from the model:
 
 - `quote` is immutable: the user's words. `statement` is the instrument Jev judges; it may be reworded for testability (`update --statement`), and every run file copies the statement it judged, so past verdicts keep their meaning. A changed directive is a new anchor; the old one is retired with `replaced_by` in its history.
-- `version` bumps on statement, scope, summary, fixtures, overrides or status changes.
+- `version` bumps on statement, scope, summary, fixtures, overrides or status changes. `exclude` (items the anchor does not apply to, each with a reason) never bumps it: `judge` skips the cell with no Jev call and reports `excluded`, which passes.
 - `ANC-NNN` is allocated by the script as max plus one and never reused. REQ and ADR anchors use their register ID so a report line points at the register directly.
 - `summary` exists for tables; Jev never sees it. `scope` is sent, because it drives the relevance question.
 
@@ -166,6 +167,7 @@ What each verdict means for the caller:
 | `underspecified` | Jev not confident: sharpen `scope` or the bead | Same, usually a vague sprint report |
 | `satisfied` | Nothing | Run the paired deterministic check |
 | `not_applicable` | Nothing, unless the anchor should have applied (scope too narrow) | Same |
+| `excluded` | Nothing; Jev was not asked, the anchor's `exclude` names this item with a reason | Same |
 
 Before editing on any failing verdict, the caller re-reads the exact text that was sent (the composed item file) at the point the anchor governs. If Jev looks wrong, the posted report says so with the reason and the user is asked, rather than rewording the bead until Jev agrees.
 
