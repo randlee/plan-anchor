@@ -108,6 +108,7 @@ In a Claude Code, Codex, or Cursor session the skill does this for you: say "anc
 | `underspecified` | Jev was not confident | Sharpen the anchor's scope or the bead | Usually a vague report |
 | `satisfied` | The directive is carried forward or followed | Nothing | Run the paired deterministic check |
 | `not_applicable` | The anchor does not govern this item | Nothing | Nothing |
+| `excluded` | Not asked: the anchor's `exclude` list names this item, with a reason | Nothing | Nothing |
 
 Every run is stored in `anchor-runs/` so edits can be diffed against the last run. Coverage, counts and "satisfied anywhere" are computed from run files, never asked of Jev. Verdicts are gate outcomes, but before editing on one, the caller re-reads the exact text that was sent and says so in the report if Jev looks wrong.
 

@@ -1230,7 +1230,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(verdicts, {"ANC-001": "not_addressed", "REQ-014": "not_applicable"})
         self.assertEqual(run["results"][0]["anchor_id"], "ANC-001")  # failing first
         self.assertEqual(run["summary"], {"counts": {"not_addressed": 1, "not_applicable": 1}, "failing": ["ANC-001"],
-                                          "leaning_counts": {"not_addressed": 1, "not_applicable": 1}, "unstable": [], "errors": [], "shortened": [], "pass": False})
+                                          "leaning_counts": {"not_addressed": 1, "not_applicable": 1}, "unstable": [], "errors": [], "excluded": [], "shortened": [], "pass": False})
         self.assertTrue(run["fixture"])
         self.assertEqual(run["model_answered"], "fixture")
         self.assertEqual(run["results"][0]["attempts"], 1)

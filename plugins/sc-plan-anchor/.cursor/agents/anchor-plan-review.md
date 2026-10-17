@@ -63,8 +63,9 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
    - `where`: the verbatim sentence of the item text the failing answer concerns, or null when the bead says nothing on it;
    - `change`: one sentence on what the bead should state, or drop, so the answer is firm.
    Read only what those answers concern; do not re-judge other questions or anchors, and never reverse or soften Jev's verdict.
+   If the anchor's own `scope` is right and this sprint simply does not touch it, set `where` to null and `change` to `exclude --id <ANC> --item <item_id> --reason "<one sentence>"`; recommend a scope fix only when the scope itself is wrong. Never apply either. An `excluded` cell (`summary.excluded`) was not judged and passes: return it with its `exclusion` and no `to_fix`.
 6. Render: `python3 "$SCRIPT" report --run <run path> --format md`.
-7. Return the envelope below. `results` copy the run's `results[]` unchanged (`verdict`, `leaning`, `min_confidence`, `attempts`, `confirmed`, `unstable`, `explanation`, `answers`, `low_questions`, and `answers_second` when present) plus `to_fix` on failing cells; `reused_run` is true when `run` was given; `overrides_applied` is every anchor whose `question_set.overridden` is true; `item_truncated` is `item.truncated`; `shortened` is `summary.shortened`. Include the report markdown verbatim; do not summarise verdicts in prose. Measure `duration_ms` from invocation start to return, count actual external tool calls, and set `retry_count` to the sum of `max(attempts - 1, 0)` in returned results. A zero is valid only when measured.
+7. Return the envelope below. `results` copy the run's `results[]` unchanged (`verdict`, `leaning`, `min_confidence`, `attempts`, `confirmed`, `unstable`, `explanation`, `answers`, `low_questions`, and `answers_second` and `exclusion` when present) plus `to_fix` on failing cells; `reused_run` is true when `run` was given; `overrides_applied` is every anchor whose `question_set.overridden` is true; `item_truncated` is `item.truncated`; `shortened` is `summary.shortened`. Include the report markdown verbatim; do not summarise verdicts in prose. Measure `duration_ms` from invocation start to return, count actual external tool calls, and set `retry_count` to the sum of `max(attempts - 1, 0)` in returned results. A zero is valid only when measured.
 
 ## Output Format
 
@@ -86,6 +87,7 @@ Return fenced JSON:
     "pass": false,
     "failing": ["ANC-012"],
     "errors": [],
+    "excluded": [],
     "results": [
       {"anchor_id": "ANC-012", "verdict": "underspecified", "leaning": "satisfied", "min_confidence": 0.45, "attempts": 1, "confirmed": false, "unstable": false,
        "explanation": "Jev was not confident (min confidence 0.45); the anchor or the bead may be underspecified.",

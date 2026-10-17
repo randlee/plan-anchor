@@ -54,7 +54,7 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
    Exit codes as for the planning gate: 0 passed or dry run, 1 failing or `error` verdicts, 2 fatal. The script retries and shortens; do not re-run.
 8. Point to the weak spot for each failing cell exactly as `anchor-plan-review` step 5, against `$W/item.txt`; here `change` says what the work or the sprint report should show. Then render: `python3 "$SCRIPT" report --run <run path> --format md`.
 9. Collect `deterministic_checks`: for every result whose `verdict` is `satisfied` or `asserted_only` and whose `deterministic_check` is non-empty, emit `{anchor_id, verdict, check}`.
-10. Return the envelope below. `results` copy the run's `results[]` unchanged plus `to_fix` on failing cells; `reused_run` is true when `run` was given. Measure `duration_ms`, count actual external tool calls, and derive `retry_count` from extra script attempts exactly as `anchor-plan-review` does; do not emit placeholder zeroes.
+10. Return the envelope below. `results` copy the run's `results[]` unchanged plus `to_fix` on failing cells; `reused_run` is true when `run` was given. An `excluded` cell (`summary.excluded`) was not judged and passes: return it unchanged with its `exclusion`, no `to_fix` and no deterministic check. Measure `duration_ms`, count actual external tool calls, and derive `retry_count` from extra script attempts exactly as `anchor-plan-review` does; do not emit placeholder zeroes.
 
 ## Output Format
 
@@ -75,6 +75,7 @@ Return fenced JSON:
     "exit_code": 1,
     "pass": false,
     "failing": ["ANC-012"],
+    "excluded": [],
     "errors": [],
     "results": [
       {"anchor_id": "ANC-012", "verdict": "asserted_only", "min_confidence": 0.8, "attempts": 1, "explanation": "Compliance is asserted but no concrete evidence (paths, diffs, commands, tests) is cited.", "to_fix": {"where": "Runtime crates were ported.", "change": "Replace the assertion with the source and destination paths plus the diff or history command that proves the copy-and-delete approach."}}
