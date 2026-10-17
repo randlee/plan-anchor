@@ -453,6 +453,24 @@ class PlanSourceErrorContracts(unittest.TestCase):
             with self.subTest(expected=expected["error"]["message"]), Workspace(files):
                 self.assertEqual(call_main(ps.main, argv), (2, expected))
 
+    def test_malformed_parity_input_is_a_typed_error_not_a_traceback(self):
+        expected = {"success": False, "data": None, "error": {
+            "code": "SOURCE.PARITY_INPUT",
+            "message": "parity input must be a discovered plan whose sprints carry id and normalized_sha256",
+            "recoverable": False,
+            "suggested_action": "Pass the data object from discover-markdown and discover-tracker output."}}
+        good = {"sprints": [{"id": "A1", "normalized_sha256": "a"}]}
+        for bad in ({}, [], {"sprints": {}}, {"sprints": [1]}, {"sprints": [{"normalized_sha256": "a"}]}, {"sprints": [{"id": "A1"}]}):
+            for left, right in ((bad, good), (good, bad)):
+                with self.subTest(left=left, right=right), Workspace({"m.json": left, "t.json": right}):
+                    self.assertEqual(call_main(ps.main, ["parity", "--markdown-json", "m.json", "--tracker-json", "t.json"]), (2, expected))
+
+    def test_unexpected_exception_is_script_internal(self):
+        with mock.patch.object(ps, "_run", side_effect=RuntimeError("boom")):
+            self.assertEqual(call_main(ps.main, ["parity", "--markdown-json", "m.json", "--tracker-json", "t.json"]), (2, {
+                "success": False, "data": None, "error": {"code": "SCRIPT.INTERNAL", "message": "RuntimeError: boom", "recoverable": False,
+                                                          "suggested_action": "Report this with the command line and its JSON inputs."}}))
+
     def test_tracker_command_failures(self):
         def completed(returncode, stdout):
             return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")

@@ -398,9 +398,33 @@ def _sprint_order(identifier: str) -> tuple[str, int, str]:
     return (match.group(1), int(match.group(2)), "") if match else (identifier, -1, identifier)
 
 
+def _parity_sprints(document: Any) -> Result[list[dict[str, Any]], ToolError]:
+    """The sprints of one discovered plan, or a typed error when the JSON is not one."""
+
+    sprints = document.get("sprints") if isinstance(document, dict) else None
+    if not isinstance(sprints, list) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("normalized_sha256"), str)
+        for item in sprints
+    ):
+        return err(
+            "SOURCE.PARITY_INPUT",
+            "parity input must be a discovered plan whose sprints carry id and normalized_sha256",
+            action="Pass the data object from discover-markdown and discover-tracker output.",
+        )
+    return Ok(sprints)
+
+
 def compare_parity(markdown: dict[str, Any], tracker: dict[str, Any]) -> Result[dict[str, Any], ToolError]:
-    left = {item["id"]: item for item in markdown["sprints"]}
-    right = {item["id"]: item for item in tracker["sprints"]}
+    left_sprints = _parity_sprints(markdown)
+    if isinstance(left_sprints, Err):
+        return left_sprints
+    right_sprints = _parity_sprints(tracker)
+    if isinstance(right_sprints, Err):
+        return right_sprints
+    left = {item["id"]: item for item in left_sprints.value}
+    right = {item["id"]: item for item in right_sprints.value}
     if list(left) != list(right):
         return err("SOURCE.PARITY_SET", "Markdown and tracker sprint order or identifiers differ")
     drift = []
@@ -615,6 +639,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (OSError, UnicodeError, json.JSONDecodeError):
         _emit({"success": False, "data": None, "error": {"code": "SOURCE.INPUT", "message": "source input could not be read", "recoverable": False, "suggested_action": None}})
+        return 2
+    except Exception as exc:  # noqa: BLE001 - the CLI boundary: a JSON error object beats a traceback
+        _emit({"success": False, "data": None, "error": {"code": "SCRIPT.INTERNAL", "message": f"{type(exc).__name__}: {exc}", "recoverable": False, "suggested_action": "Report this with the command line and its JSON inputs."}})
         return 2
 
 
