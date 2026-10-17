@@ -1,18 +1,18 @@
 # Agent registry for plan-anchoring. Paths are relative to the plugin root.
 agents:
   anchor-plan-review:
-    version: 0.5.2
+    version: 0.6.0
     path: .cursor/agents/anchor-plan-review.md
   anchor-sprint-review:
-    version: 0.5.0
+    version: 0.6.0
     path: .cursor/agents/anchor-sprint-review.md
   anchor-tuning:
-    version: 0.5.1
+    version: 0.6.0
     path: .cursor/agents/anchor-tuning.md
 
 skills:
   plan-anchoring:
-    version: 0.5.5
+    version: 0.6.0
     path: skills/plan-anchoring/SKILL.md
     depends_on:
       anchor-plan-review: "0.x"

@@ -13,21 +13,18 @@ plan-anchoring is a general-purpose skill. Anyone, human or agent, may propose a
 
 ## Versioning
 
-`VERSION` at the repo root is the release version. Every versioned artifact (`SKILL.md`, each `references/*.md`, each `agents/*.md`, mirrored in `registry.yaml`) shares its major.minor.
+`VERSION` at the repo root is the single source of truth. Every version declared in shipped metadata equals it exactly: the plugin manifests, the marketplace manifests that carry a version, `SKILL.md`, each `references/*.md`, each harness agent, and each `registry.yaml` entry. Nothing has its own patch line.
 
-| You are | You do |
-| --- | --- |
-| Proposing a change | Bump the **patch** of every artifact you edit, from the version it has on the base branch: `0.3.0` becomes `0.3.1`. Edits to `scripts/`, `assets/` or the repository-level `tests/sc-plan-anchor/` suite count against `SKILL.md`. Mirror every agent and skill bump in `registry.yaml`. Add a line under `## Unreleased` in `CHANGELOG.md`. |
-| Releasing (maintainers) | Bump the **minor** in `VERSION`, set every artifact and manifest to exactly that version in one commit, turn `## Unreleased` into `## X.Y.0 — date`. |
+A PR that changes shipped content (anything under `plugins/` or a marketplace manifest) raises `VERSION` (patch for a fix or addition, minor for a release-worthy change), sets every version above to it, and adds a `## X.Y.Z — date` section to `CHANGELOG.md`. A PR that touches only tests, `scripts/` or `docs/` needs no bump.
 
-Never change major.minor in a non-release PR, never bump a file you did not edit, and never leave an edited artifact at its old version. `scripts/check_version_sync.py` enforces this: by default it checks that every artifact shares `VERSION`'s major.minor with a patch at or above it, that the registry mirrors the agents, that manifests equal `VERSION`, and that the changelog has the release entry; with `--base <ref>` (CI runs it on every pull request) it also checks that each artifact you touched advanced its patch and that `CHANGELOG.md` changed. A PR that changes `VERSION` is a release and must bring every artifact to the new version exactly.
+`scripts/check_version_sync.py` enforces this: by default it checks that every declaration it finds by glob equals `VERSION` and that the changelog has the entry; with `--base <ref>` (CI runs it on every pull request) it also checks that a PR changing shipped content raised `VERSION` and changed `CHANGELOG.md`. `tests/sc-plan-anchor/test_version_ssot.py` runs the same discovery in the suite. Template `metadata.version` and `schema_version` values are wire-contract versions pinned by the JSON schemas, not release versions.
 
 ## Proposing a change as an agent
 
 1. Read `SKILL.md`, then only the reference you intend to change.
-2. Make the change, bump the patch of what you edited, add the changelog line.
+2. Make the change; if it touches shipped content, raise `VERSION`, set every version to it, and add the changelog section.
 3. Run the tests, the version check with `--base`, and the general-wording grep.
-4. Open the PR with: what changed, which aspect, the evidence (test names, measured cells), and the before and after version of each artifact.
+4. Open the PR with: what changed, which aspect, the evidence (test names, measured cells), and the before and after `VERSION`.
 
 ## What not to propose
 
