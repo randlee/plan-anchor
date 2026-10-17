@@ -17,6 +17,12 @@ statement; `validate` reports it.
 
 Standard library only. Python 3.9+.
 
+Expected failures travel as values: a function that can fail returns
+``Ok(value)`` or ``Err(JudgeError)`` (see ``result.py``) and its caller
+propagates the ``Err`` explicitly. ``main`` is the only place an error becomes
+JSON on stdout and an exit code; anything unexpected that still raises is
+reported there as SCRIPT.INTERNAL.
+
 Subcommands
   add             append an anchor record (allocates the next ANC-NNN); lints the statement and refuses likely duplicates
   update          edit statement / scope / summary / deterministic_check / fixtures (never the quote)
@@ -75,6 +81,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from typing import Any
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from result import Err, Ok, Result  # noqa: E402
 
 
 def _env_number(name: str, default, cast):
@@ -190,6 +200,18 @@ class JudgeError(Exception):
         })
 
 
+def fail(code: str, message: str, **fields) -> Err[JudgeError]:
+    """An expected failure as a value: ``return fail(...)`` where the old code raised."""
+    return Err(JudgeError(code, message, **fields))
+
+
+def _unwrap(result):
+    """Transitional bridge for callers not yet converted to Result: re-raise an Err. Removed when no caller needs it."""
+    if isinstance(result, Err):
+        raise result.error
+    return result.value
+
+
 def redact_sensitive(value):
     """Remove the live TypeSafe credential and bearer tokens from every emitted value."""
     if isinstance(value, dict):
@@ -229,38 +251,44 @@ def history_event(event: str, **fields) -> dict:
     return ev
 
 
-def load_json(path: str, what: str):
+def load_json(path: str, what: str) -> Result[Any, JudgeError]:
     if path == "-":
         raw = sys.stdin.read()
         try:
-            return json.loads(raw)
+            return Ok(json.loads(raw))
         except json.JSONDecodeError as exc:
-            raise JudgeError("INPUT.MALFORMED", f"{what} on stdin is not valid JSON: {exc}")
+            return fail("INPUT.MALFORMED", f"{what} on stdin is not valid JSON: {exc}")
     p = pathlib.Path(path) if path else None
     if p is None or not path.strip() or not p.is_file():
-        raise JudgeError("INPUT.MISSING", f"{what} not found: {path!r}" + (" (not a regular file)" if p is not None and path.strip() and p.exists() else ""),
-                         action=f"Pass the path of an existing file for the {what}.")
+        return fail("INPUT.MISSING", f"{what} not found: {path!r}" + (" (not a regular file)" if p is not None and path.strip() and p.exists() else ""),
+                    action=f"Pass the path of an existing file for the {what}.")
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return Ok(json.loads(p.read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
-        raise JudgeError("INPUT.MALFORMED", f"{what} is not valid JSON: {exc}", action=f"Fix the JSON in {path}.")
+        return fail("INPUT.MALFORMED", f"{what} is not valid JSON: {exc}", action=f"Fix the JSON in {path}.")
     except (OSError, UnicodeDecodeError) as exc:
-        raise JudgeError("INPUT.MALFORMED", f"{what} could not be read: {exc}", action=f"Check {path} is a readable UTF-8 file.")
+        return fail("INPUT.MALFORMED", f"{what} could not be read: {exc}", action=f"Check {path} is a readable UTF-8 file.")
 
 
-def load_record(path: str) -> dict:
-    rec = load_json(path, "anchors.json")
+def load_record(path: str) -> Result[dict, JudgeError]:
+    loaded = load_json(path, "anchors.json")
+    if isinstance(loaded, Err):
+        return loaded
+    rec = loaded.value
     if not isinstance(rec, dict):
-        raise JudgeError("INPUT.MALFORMED", "anchors.json must be a JSON object", action="See references/anchor-document.md for the schema.")
-    return rec
+        return fail("INPUT.MALFORMED", "anchors.json must be a JSON object", action="See references/anchor-document.md for the schema.")
+    return Ok(rec)
 
 
-def load_run(path: str, what: str) -> dict:
-    run = load_json(path, what)
+def load_run(path: str, what: str) -> Result[dict, JudgeError]:
+    loaded = load_json(path, what)
+    if isinstance(loaded, Err):
+        return loaded
+    run = loaded.value
     if not isinstance(run, dict) or run.get("schema") != "plan-anchoring/run/1" or not isinstance(run.get("results"), list) \
             or not isinstance(run.get("item"), dict) or not isinstance(run.get("summary"), dict):
-        raise JudgeError("INPUT.MALFORMED", f"{what} {path} is not a plan-anchoring run file", action="Pass a file written by `judge`.")
-    return run
+        return fail("INPUT.MALFORMED", f"{what} {path} is not a plan-anchoring run file", action="Pass a file written by `judge`.")
+    return Ok(run)
 
 
 def write_text_atomic(path: str, text: str) -> None:
@@ -292,65 +320,75 @@ def _inside(path: pathlib.Path, root: pathlib.Path) -> bool:
 
 
 def canonical_workspace_path(raw: str, root: pathlib.Path, what: str, *, must_exist: bool,
-                             regular_file: bool = False) -> pathlib.Path:
+                             regular_file: bool = False) -> Result[pathlib.Path, JudgeError]:
     if not raw or not raw.strip():
-        raise JudgeError("VALIDATION.PATH", f"{what} is empty", action=f"Pass a {what} inside the repository.")
+        return fail("VALIDATION.PATH", f"{what} is empty", action=f"Pass a {what} inside the repository.")
     candidate = pathlib.Path(raw).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     try:
         resolved = candidate.resolve(strict=must_exist)
     except (OSError, RuntimeError) as exc:
-        raise JudgeError("VALIDATION.PATH", f"{what} could not be resolved: {exc}",
-                         action=f"Pass a readable {what} inside {root}.")
+        return fail("VALIDATION.PATH", f"{what} could not be resolved: {exc}",
+                    action=f"Pass a readable {what} inside {root}.")
     if not _inside(resolved, root):
-        raise JudgeError("VALIDATION.PATH", f"{what} is outside the repository: {resolved}",
-                         action=f"Use a path under {root}; external files are never read or sent to Jev.")
+        return fail("VALIDATION.PATH", f"{what} is outside the repository: {resolved}",
+                    action=f"Use a path under {root}; external files are never read or sent to Jev.")
     if regular_file and not resolved.is_file():
-        raise JudgeError("VALIDATION.PATH", f"{what} is not a regular file: {resolved}",
-                         action=f"Pass an existing regular file for {what}.")
-    return resolved
+        return fail("VALIDATION.PATH", f"{what} is not a regular file: {resolved}",
+                    action=f"Pass an existing regular file for {what}.")
+    return Ok(resolved)
 
 
-def cmd_agent_preflight(args) -> dict:
+def cmd_agent_preflight(args) -> Result[dict, JudgeError]:
     """Fail closed before an agent reads local evidence or sends it to Jev."""
     try:
         root = pathlib.Path(args.workspace_root).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as exc:
-        raise JudgeError("VALIDATION.PATH", f"workspace root could not be resolved: {exc}",
-                         action="Run from a Git worktree and pass `git rev-parse --show-toplevel`.")
+        return fail("VALIDATION.PATH", f"workspace root could not be resolved: {exc}",
+                    action="Run from a Git worktree and pass `git rev-parse --show-toplevel`.")
     if not root.is_dir():
-        raise JudgeError("VALIDATION.PATH", f"workspace root is not a directory: {root}")
+        return fail("VALIDATION.PATH", f"workspace root is not a directory: {root}")
 
     try:
         script = pathlib.Path(args.script).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as exc:
-        raise JudgeError("VALIDATION.PATH", f"script could not be resolved: {exc}",
-                         action="Use the installed plan-anchoring script selected from the harness skill directory.")
+        return fail("VALIDATION.PATH", f"script could not be resolved: {exc}",
+                    action="Use the installed plan-anchoring script selected from the harness skill directory.")
     running_script = pathlib.Path(__file__).resolve()
     if script != running_script:
-        raise JudgeError("VALIDATION.PATH", f"script does not match the running plan-anchoring script: {script}",
-                         action="Use the installed plan-anchoring script selected from the harness skill directory.")
+        return fail("VALIDATION.PATH", f"script does not match the running plan-anchoring script: {script}",
+                    action="Use the installed plan-anchoring script selected from the harness skill directory.")
 
-    anchors = canonical_workspace_path(args.anchors, root, "anchors file", must_exist=True, regular_file=True)
+    resolved = canonical_workspace_path(args.anchors, root, "anchors file", must_exist=True, regular_file=True)
+    if isinstance(resolved, Err):
+        return resolved
+    anchors = resolved.value
     raw_run_dir = args.run_dir or str(anchors.parent / "anchor-runs")
-    run_dir = canonical_workspace_path(raw_run_dir, root, "run directory", must_exist=False)
+    resolved = canonical_workspace_path(raw_run_dir, root, "run directory", must_exist=False)
+    if isinstance(resolved, Err):
+        return resolved
+    run_dir = resolved.value
     if run_dir.exists() and not run_dir.is_dir():
-        raise JudgeError("VALIDATION.PATH", f"run directory is not a directory: {run_dir}",
-                         action="Pass a directory inside the repository for run output.")
-    evidence = [str(canonical_workspace_path(path, root, "evidence file", must_exist=True, regular_file=True))
-                for path in args.evidence]
+        return fail("VALIDATION.PATH", f"run directory is not a directory: {run_dir}",
+                    action="Pass a directory inside the repository for run output.")
+    evidence = []
+    for path in args.evidence:
+        resolved = canonical_workspace_path(path, root, "evidence file", must_exist=True, regular_file=True)
+        if isinstance(resolved, Err):
+            return resolved
+        evidence.append(str(resolved.value))
 
     for identifier in args.identifier:
         if not SAFE_AGENT_ID_RE.fullmatch(identifier):
-            raise JudgeError("VALIDATION.ID", f"unsafe agent identifier: {identifier!r}",
-                             action="Use 1-128 letters, digits, dots, underscores, colons or hyphens; do not use paths or whitespace.")
+            return fail("VALIDATION.ID", f"unsafe agent identifier: {identifier!r}",
+                        action="Use 1-128 letters, digits, dots, underscores, colons or hyphens; do not use paths or whitespace.")
     if args.pr_number and (not args.pr_number.isascii() or not args.pr_number.isdigit() or int(args.pr_number) < 1):
-        raise JudgeError("VALIDATION.ID", f"invalid PR number: {args.pr_number!r}",
-                         action="Pass a positive decimal pull-request number.")
+        return fail("VALIDATION.ID", f"invalid PR number: {args.pr_number!r}",
+                    action="Pass a positive decimal pull-request number.")
 
     work_source = args.correlation_id or (args.identifier[0] if args.identifier else "run")
-    return {"success": True, "data": {
+    return Ok({"success": True, "data": {
         "workspace_root": str(root),
         "script": str(script),
         "anchors_path": str(anchors),
@@ -359,7 +397,7 @@ def cmd_agent_preflight(args) -> dict:
         "identifiers": list(args.identifier),
         "pr_number": args.pr_number or None,
         "work_key": sanitize_id(work_source)[:128],
-    }, "error": None}
+    }, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -374,36 +412,43 @@ def empty_record(plan: str, intent_ref: str) -> dict:
     }
 
 
-def anchor_list(rec: dict) -> list:
+def anchor_list(rec: dict) -> Result[list, JudgeError]:
     anchors = rec.get("anchors")
     if anchors is None:
         anchors = rec["anchors"] = []
     if not isinstance(anchors, list):
-        raise JudgeError("INPUT.MALFORMED", "anchors.json: 'anchors' must be a list", action="Fix the record by hand, then run validate.")
-    return anchors
+        return fail("INPUT.MALFORMED", "anchors.json: 'anchors' must be a list", action="Fix the record by hand, then run validate.")
+    return Ok(anchors)
 
 
-def find_anchor(rec: dict, anchor_id: str) -> dict:
-    for a in anchor_list(rec):
+def find_anchor(rec: dict, anchor_id: str) -> Result[dict, JudgeError]:
+    listed = anchor_list(rec)
+    if isinstance(listed, Err):
+        return listed
+    for a in listed.value:
         if isinstance(a, dict) and a.get("id") == anchor_id:
-            return a
-    raise JudgeError("ANCHOR.UNKNOWN", f"No anchor with id {anchor_id}", action="Check anchors.json for the exact ID.")
+            return Ok(a)
+    return fail("ANCHOR.UNKNOWN", f"No anchor with id {anchor_id}", action="Check anchors.json for the exact ID.")
 
 
-def next_anc_id(rec: dict) -> str:
+def next_anc_id(rec: dict) -> Result[str, JudgeError]:
+    listed = anchor_list(rec)
+    if isinstance(listed, Err):
+        return listed
     nums = []
-    for a in anchor_list(rec):
+    for a in listed.value:
         aid = a.get("id") if isinstance(a, dict) else None
         if isinstance(aid, str) and re.fullmatch(r"ANC-\d{3,}", aid):
             nums.append(int(aid[4:]))
-    return f"ANC-{(max(nums) + 1 if nums else 1):03d}"
+    return Ok(f"ANC-{(max(nums) + 1 if nums else 1):03d}")
 
 
-def require_valid(rec: dict) -> None:
+def require_valid(rec: dict) -> Result[None, JudgeError]:
     problems = validate_record(rec)
     if problems:
-        raise JudgeError("VALIDATION.ANCHORS", "anchors.json has problems: " + "; ".join(problems[:5]), recoverable=True,
-                         action="Run `jev_judge.py validate` and fix the record first.")
+        return fail("VALIDATION.ANCHORS", "anchors.json has problems: " + "; ".join(problems[:5]), recoverable=True,
+                    action="Run `jev_judge.py validate` and fix the record first.")
+    return Ok(None)
 
 
 # --------------------------------------------------------------------------- #
@@ -500,53 +545,68 @@ def similar_anchors(anchors: list, statement: str, quote: str, floor: float = SI
     return found
 
 
-def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -> list:
+def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -> Result[list, JudgeError]:
     """Run the lint; the verbatim rule is always a refusal for ANC, every other warning only under --strict."""
     warnings = lint_statement(statement, quote, source_type)
     if LINT_VERBATIM in warnings:
-        raise JudgeError("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, recoverable=True,
-                         action="Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote.")
+        return fail("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, recoverable=True,
+                    action="Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote.")
     if strict and warnings:
-        raise JudgeError("ANCHOR.LINT", "statement has testability warnings: " + "; ".join(warnings), recoverable=True,
-                         action="Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway.")
-    return warnings
+        return fail("ANCHOR.LINT", "statement has testability warnings: " + "; ".join(warnings), recoverable=True,
+                    action="Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway.")
+    return Ok(warnings)
 
 
-def cmd_add(args) -> dict:
+def cmd_add(args) -> Result[dict, JudgeError]:
     p = pathlib.Path(args.anchors)
-    rec = load_record(args.anchors) if p.exists() else empty_record(args.plan, args.intent_ref)
-    anchors = anchor_list(rec)
+    if p.exists():
+        loaded = load_record(args.anchors)
+        if isinstance(loaded, Err):
+            return loaded
+        rec = loaded.value
+    else:
+        rec = empty_record(args.plan, args.intent_ref)
+    listed = anchor_list(rec)
+    if isinstance(listed, Err):
+        return listed
+    anchors = listed.value
     statement = args.statement.strip()
     if not statement:
-        raise JudgeError("VALIDATION.INPUT", "statement cannot be empty; write the testable anchor text",
-                         action="Pass --statement with the authored requirement and --quote with the user's verbatim words.")
+        return fail("VALIDATION.INPUT", "statement cannot be empty; write the testable anchor text",
+                    action="Pass --statement with the authored requirement and --quote with the user's verbatim words.")
     if args.status == "retired":
-        raise JudgeError("VALIDATION.INPUT", "a new anchor cannot be added as retired", action="Add it as proposed or locked; retire it later with `retire`.")
+        return fail("VALIDATION.INPUT", "a new anchor cannot be added as retired", action="Add it as proposed or locked; retire it later with `retire`.")
     if args.source_type == "ANC":
-        anchor_id = next_anc_id(rec)
+        allocated = next_anc_id(rec)
+        if isinstance(allocated, Err):
+            return allocated
+        anchor_id = allocated.value
         source_ref = None
     else:
         if not args.source_ref:
-            raise JudgeError("VALIDATION.INPUT", f"--source-ref is required for source type {args.source_type}",
-                             action="Pass the register ID, e.g. --source-ref REQ-014.")
+            return fail("VALIDATION.INPUT", f"--source-ref is required for source type {args.source_type}",
+                        action="Pass the register ID, e.g. --source-ref REQ-014.")
         anchor_id = args.source_ref
         source_ref = args.source_ref
         if any(isinstance(a, dict) and a.get("id") == anchor_id for a in anchors):
-            raise JudgeError("ANCHOR.DUPLICATE", f"{anchor_id} already recorded")
+            return fail("ANCHOR.DUPLICATE", f"{anchor_id} already recorded")
     quote = (args.quote or "").strip()
     if args.source_type == "ANC":
         if not quote:
-            raise JudgeError("VALIDATION.INPUT", "--quote is required for ANC anchors: record the user's verbatim words",
-                             action='Pass --quote "<the user\'s exact words>" alongside the authored --statement.')
+            return fail("VALIDATION.INPUT", "--quote is required for ANC anchors: record the user's verbatim words",
+                        action='Pass --quote "<the user\'s exact words>" alongside the authored --statement.')
     elif not quote:
         quote = statement  # register text: the quote is the statement
-    warnings = lint_or_refuse(statement, quote, args.source_type, bool(args.strict))
+    linted = lint_or_refuse(statement, quote, args.source_type, bool(args.strict))
+    if isinstance(linted, Err):
+        return linted
+    warnings = linted.value
     similar = similar_anchors(anchors, statement, quote)
     candidates = [s for s in similar if s["jaccard"] >= DUPLICATE_JACCARD]
     if candidates and not args.allow_similar:
         names = ", ".join(f"{s['id']} (jaccard {s['jaccard']}, {s['field']})" for s in candidates)
-        raise JudgeError("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", recoverable=True,
-                         action=f"Update {candidates[0]['id']} instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint.")
+        return fail("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", recoverable=True,
+                    action=f"Update {candidates[0]['id']} instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint.")
     rubric = add_rubric_gate(args, statement, quote, args.source_type) if getattr(args, "rubric", False) else None
     record = {
         "id": anchor_id,
@@ -574,21 +634,35 @@ def cmd_add(args) -> dict:
     data = {"anchor": record, "path": args.anchors, "lint": {"warnings": warnings}, "similar": similar}
     if rubric is not None:
         data["rubric"] = rubric
-    return {"success": True, "data": data, "error": None}
+    return Ok({"success": True, "data": data, "error": None})
 
 
-def cmd_update(args) -> dict:
+def _record_and_anchor(path: str, anchor_id: str) -> Result[tuple, JudgeError]:
+    """Load anchors.json and find one anchor in it: (record, anchor)."""
+    loaded = load_record(path)
+    if isinstance(loaded, Err):
+        return loaded
+    rec = loaded.value
+    found = find_anchor(rec, anchor_id)
+    if isinstance(found, Err):
+        return found
+    return Ok((rec, found.value))
+
+
+def cmd_update(args) -> Result[dict, JudgeError]:
     if getattr(args, "quote", None) is not None:
-        raise JudgeError("VALIDATION.INPUT", "quote is verbatim provenance and immutable",
-                         action="If the user said something different, `add` a new anchor with the new quote and `retire --replaced-by` this one.")
-    rec = load_record(args.anchors)
-    a = find_anchor(rec, args.id)
+        return fail("VALIDATION.INPUT", "quote is verbatim provenance and immutable",
+                    action="If the user said something different, `add` a new anchor with the new quote and `retire --replaced-by` this one.")
+    loaded = _record_and_anchor(args.anchors, args.id)
+    if isinstance(loaded, Err):
+        return loaded
+    rec, a = loaded.value
     changed = []
     previous_statement = None
     if args.statement is not None:
         new_statement = args.statement.strip()
         if not new_statement:
-            raise JudgeError("VALIDATION.INPUT", "statement cannot be empty; write the testable anchor text")
+            return fail("VALIDATION.INPUT", "statement cannot be empty; write the testable anchor text")
         if new_statement != (a.get("statement") or ""):
             previous_statement = a.get("statement")
             a["statement"] = new_statement
@@ -617,29 +691,36 @@ def cmd_update(args) -> dict:
         a["fixtures"] = fixtures
         changed.append("fixtures")
     if not changed:
-        raise JudgeError("VALIDATION.INPUT", "nothing to update", action="Pass --statement, --scope, --summary, --deterministic-check, --fixture-pass, --fixture-fail or --clear-fixtures.")
-    warnings = lint_or_refuse(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC", bool(getattr(args, "strict", False)))
+        return fail("VALIDATION.INPUT", "nothing to update", action="Pass --statement, --scope, --summary, --deterministic-check, --fixture-pass, --fixture-fail or --clear-fixtures.")
+    linted = lint_or_refuse(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC", bool(getattr(args, "strict", False)))
+    if isinstance(linted, Err):
+        return linted
+    warnings = linted.value
     a["version"] = int(a.get("version", 1)) + 1
     event = history_event("updated", fields=changed)
     if "statement" in changed:
         event["previous_statement"] = previous_statement
     a.setdefault("history", []).append(event)
     save_json(args.anchors, rec)
-    return {"success": True, "data": {"id": a["id"], "changed": changed, "version": a["version"], "anchor": a, "lint": {"warnings": warnings}}, "error": None}
+    return Ok({"success": True, "data": {"id": a["id"], "changed": changed, "version": a["version"], "anchor": a, "lint": {"warnings": warnings}}, "error": None})
 
 
-def cmd_retire(args) -> dict:
-    rec = load_record(args.anchors)
-    a = find_anchor(rec, args.id)
+def cmd_retire(args) -> Result[dict, JudgeError]:
+    loaded = _record_and_anchor(args.anchors, args.id)
+    if isinstance(loaded, Err):
+        return loaded
+    rec, a = loaded.value
     if a.get("status") == "retired":
-        raise JudgeError("VALIDATION.INPUT", f"{args.id} is already retired")
+        return fail("VALIDATION.INPUT", f"{args.id} is already retired")
     if args.replaced_by:
-        find_anchor(rec, args.replaced_by)  # the replacement must exist
+        replacement = find_anchor(rec, args.replaced_by)  # the replacement must exist
+        if isinstance(replacement, Err):
+            return replacement
     a["status"] = "retired"
     a["version"] = int(a.get("version", 1)) + 1
     a.setdefault("history", []).append(history_event("retired", replaced_by=args.replaced_by or None, reason=args.reason or ""))
     save_json(args.anchors, rec)
-    return {"success": True, "data": {"id": a["id"], "status": "retired", "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None}
+    return Ok({"success": True, "data": {"id": a["id"], "status": "retired", "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None})
 
 
 def validate_record(rec: dict) -> list:
@@ -718,15 +799,19 @@ def record_warnings(rec: dict, anchors_path: str) -> list:
     return warnings
 
 
-def cmd_validate(args) -> dict:
-    rec = load_record(args.anchors)
+def cmd_validate(args) -> Result[dict, JudgeError]:
+    loaded = load_record(args.anchors)
+    if isinstance(loaded, Err):
+        return loaded
+    rec = loaded.value
     problems = validate_record(rec)
     warnings = record_warnings(rec, args.anchors)
     if problems:
-        return {"success": False, "data": {"problems": problems, "warnings": warnings}, "error": {
+        # A completed negative answer (exit 1), not a failure of the command: it stays an Ok value.
+        return Ok({"success": False, "data": {"problems": problems, "warnings": warnings}, "error": {
             "code": "VALIDATION.ANCHORS", "message": f"{len(problems)} problem(s) in {args.anchors}",
-            "recoverable": True, "suggested_action": "Fix the listed problems and re-run validate."}}
-    return {"success": True, "data": {"anchors": len(rec["anchors"]), "path": args.anchors, "warnings": warnings}, "error": None}
+            "recoverable": True, "suggested_action": "Fix the listed problems and re-run validate."}})
+    return Ok({"success": True, "data": {"anchors": len(rec["anchors"]), "path": args.anchors, "warnings": warnings}, "error": None})
 
 
 def render_md(rec: dict) -> str:
@@ -776,18 +861,25 @@ def render_md(rec: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cmd_render(args) -> dict:
-    rec = load_record(args.anchors)
-    require_valid(rec)
+def cmd_render(args) -> Result[dict, JudgeError]:
+    loaded = load_record(args.anchors)
+    if isinstance(loaded, Err):
+        return loaded
+    rec = loaded.value
+    checked = require_valid(rec)
+    if isinstance(checked, Err):
+        return checked
     md = render_md(rec)
     out = args.out or str(pathlib.Path(args.anchors).with_name("anchors.md"))
     write_text_atomic(out, md)
-    return {"success": True, "data": {"path": out, "anchors": len(rec["anchors"])}, "error": None}
+    return Ok({"success": True, "data": {"path": out, "anchors": len(rec["anchors"])}, "error": None})
 
 
-def cmd_set_beads(args) -> dict:
-    rec = load_record(args.anchors)
-    a = find_anchor(rec, args.id)
+def cmd_set_beads(args) -> Result[dict, JudgeError]:
+    loaded = _record_and_anchor(args.anchors, args.id)
+    if isinstance(loaded, Err):
+        return loaded
+    rec, a = loaded.value
     beads = a.setdefault("beads", {})
     if not isinstance(beads, dict):
         beads = a["beads"] = {}
@@ -796,18 +888,20 @@ def cmd_set_beads(args) -> dict:
             beads[key] = val
     a.setdefault("history", []).append(history_event("beads_set", beads=beads))
     save_json(args.anchors, rec)
-    return {"success": True, "data": {"id": a["id"], "beads": beads}, "error": None}
+    return Ok({"success": True, "data": {"id": a["id"], "beads": beads}, "error": None})
 
 
-def cmd_promote(args) -> dict:
-    rec = load_record(args.anchors)
-    a = find_anchor(rec, args.id)
+def cmd_promote(args) -> Result[dict, JudgeError]:
+    loaded = _record_and_anchor(args.anchors, args.id)
+    if isinstance(loaded, Err):
+        return loaded
+    rec, a = loaded.value
     a["status"] = "promoted"
     a["promoted_to"] = args.adr
     a["version"] = int(a.get("version", 1)) + 1
     a.setdefault("history", []).append(history_event("promoted", to=args.adr))
     save_json(args.anchors, rec)
-    return {"success": True, "data": {"id": a["id"], "promoted_to": args.adr, "version": a["version"]}, "error": None}
+    return Ok({"success": True, "data": {"id": a["id"], "promoted_to": args.adr, "version": a["version"]}, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -833,19 +927,19 @@ def demote_headings(body: str) -> str:
     return "\n".join(out)
 
 
-def compose_item_text(show, children=None, sections=None) -> dict:
+def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeError]:
     """Markdown item from bd JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
     if sections is not None:
         bad = [s for s in sections if s not in SECTION_KEYS]
         if bad:
-            raise JudgeError("VALIDATION.INPUT", f"unknown section(s) {bad}; choose from {list(SECTION_KEYS)}")
+            return fail("VALIDATION.INPUT", f"unknown section(s) {bad}; choose from {list(SECTION_KEYS)}")
     if isinstance(show, list):
         if len(show) != 1 or not isinstance(show[0], dict):
-            raise JudgeError("INPUT.MALFORMED", "bd show --json output must be a one-element array holding the bead object",
-                             action="Pass the unmodified output of `bd show <id> --json`.")
+            return fail("INPUT.MALFORMED", "bd show --json output must be a one-element array holding the bead object",
+                        action="Pass the unmodified output of `bd show <id> --json`.")
         show = show[0]
     if not isinstance(show, dict):
-        raise JudgeError("INPUT.MALFORMED", "bead JSON must be an object or a one-element array")
+        return fail("INPUT.MALFORMED", "bead JSON must be an object or a one-element array")
     item_id = str(show.get("id") or "")
     title = str(show.get("title") or item_id or "untitled").strip()
     parts = [f"# {title}"]
@@ -859,32 +953,43 @@ def compose_item_text(show, children=None, sections=None) -> dict:
             sections_used.append(heading)
     if children is not None:
         if not isinstance(children, list):
-            raise JudgeError("INPUT.MALFORMED", "bd children --json output must be an array", action="Pass the unmodified output of `bd children <id> --json`.")
+            return fail("INPUT.MALFORMED", "bd children --json output must be an array", action="Pass the unmodified output of `bd children <id> --json`.")
         closed = [c for c in children if isinstance(c, dict) and c.get("status") == "closed"]
         if closed:
             rows = [f"- {c.get('id', '?')} {str(c.get('title') or '').strip()}: {str(c.get('close_reason') or '').strip()}".rstrip() for c in closed]
             parts.append("## Closed beads\n\n" + "\n".join(rows))
             sections_used.append("Closed beads")
     text = "\n\n".join(parts) + "\n"
-    return {"item_id": item_id, "title": title, "text": text, "sections": sections_used, "chars": len(text)}
+    return Ok({"item_id": item_id, "title": title, "text": text, "sections": sections_used, "chars": len(text)})
 
 
-def cmd_compose_item(args) -> dict:
-    show = load_json(args.show_json, "bd show output")
-    children = load_json(args.children_json, "bd children output") if args.children_json else None
+def cmd_compose_item(args) -> Result[dict, JudgeError]:
+    loaded = load_json(args.show_json, "bd show output")
+    if isinstance(loaded, Err):
+        return loaded
+    show = loaded.value
+    children = None
+    if args.children_json:
+        loaded = load_json(args.children_json, "bd children output")
+        if isinstance(loaded, Err):
+            return loaded
+        children = loaded.value
     gate_for = getattr(args, "for_gate", "") or ""
     sections = None
     if getattr(args, "sections", ""):
         if gate_for:
-            raise JudgeError("VALIDATION.INPUT", "pass --sections or --for, not both")
+            return fail("VALIDATION.INPUT", "pass --sections or --for, not both")
         sections = [s.strip() for s in args.sections.split(",") if s.strip()]
         if not sections:
-            raise JudgeError("VALIDATION.INPUT", f"--sections needs at least one of {list(SECTION_KEYS)}")
+            return fail("VALIDATION.INPUT", f"--sections needs at least one of {list(SECTION_KEYS)}")
     elif gate_for:
         sections = list(COMPOSE_FOR[gate_for])
         if gate_for == "plan":
             children = None  # closed children are development-gate evidence
-    composed = compose_item_text(show, children, sections)
+    built = compose_item_text(show, children, sections)
+    if isinstance(built, Err):
+        return built
+    composed = built.value
     data = {"path": None, "item_id": composed["item_id"], "title": composed["title"], "sections": composed["sections"], "chars": composed["chars"],
             "composition": {"for": gate_for or None, "sections_requested": sections if sections is not None else "all",
                             "children": children is not None}}
@@ -893,7 +998,7 @@ def cmd_compose_item(args) -> dict:
         data["path"] = args.out
     else:
         data["text"] = composed["text"]
-    return {"success": True, "data": data, "error": None}
+    return Ok({"success": True, "data": data, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -1117,13 +1222,21 @@ def fit_plan_item(item: dict, misfit, max_code_lines: int) -> dict:
     return item
 
 
-def beads_from_json(obj, what: str) -> list:
+def beads_from_json(obj, what: str) -> Result[list, JudgeError]:
     """bd JSON in any of its shapes: one bead object, `bd show --json` (one-element array) or `bd children --json` (array)."""
     if isinstance(obj, dict):
-        return [obj]
+        return Ok([obj])
     if isinstance(obj, list) and all(isinstance(b, dict) for b in obj):
-        return obj
-    raise JudgeError("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified `bd show --json` / `bd children --json` output.")
+        return Ok(obj)
+    return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified `bd show --json` / `bd children --json` output.")
+
+
+def load_beads(path: str, what: str) -> Result[list, JudgeError]:
+    """Read one bd JSON file and return its beads."""
+    loaded = load_json(path, what)
+    if isinstance(loaded, Err):
+        return loaded
+    return beads_from_json(loaded.value, what)
 
 
 SPRINT_TITLE_RE = re.compile(r"^[A-Za-z]+-\d+\b")   # "h-3: ..." style sprint titles
@@ -1138,19 +1251,27 @@ def is_sprint_bead(show: dict, item_id: str, title: str) -> bool:
             or re.search(r"\bsprint\b", title, re.IGNORECASE) is not None)
 
 
-def bead_shape(show: dict, max_code_lines: int) -> dict:
-    composed = compose_item_text(show)
+def bead_shape(show: dict, max_code_lines: int) -> Result[dict, JudgeError]:
+    built = compose_item_text(show)
+    if isinstance(built, Err):
+        return built
+    composed = built.value
     shape = shape_text(composed["text"], max_code_lines)
     kind = str(show.get("issue_type") or show.get("type") or "")
     sections = shape["sections"]
-    return {"id": composed["item_id"], "title": composed["title"], "type": kind or None,
-            "is_sprint": is_sprint_bead(show, composed["item_id"], composed["title"]),
-            "description_chars": sections.get("description", 0), "acceptance_chars": sections.get("acceptance_criteria", 0),
-            "design_ratio": round(sections.get("design", 0) / shape["chars"], 2) if shape["chars"] else 0.0, **shape}
+    return Ok({"id": composed["item_id"], "title": composed["title"], "type": kind or None,
+               "is_sprint": is_sprint_bead(show, composed["item_id"], composed["title"]),
+               "description_chars": sections.get("description", 0), "acceptance_chars": sections.get("acceptance_criteria", 0),
+               "design_ratio": round(sections.get("design", 0) / shape["chars"], 2) if shape["chars"] else 0.0, **shape})
 
 
-def shape_beads(beads: list, max_code_lines: int, rec=None) -> dict:
-    rows = [bead_shape(b, max_code_lines) for b in beads]
+def shape_beads(beads: list, max_code_lines: int, rec=None) -> Result[dict, JudgeError]:
+    rows = []
+    for b in beads:
+        row = bead_shape(b, max_code_lines)
+        if isinstance(row, Err):
+            return row
+        rows.append(row.value)
     seen = {}
     for r in rows:
         for p in r.pop("paragraphs"):
@@ -1169,14 +1290,17 @@ def shape_beads(beads: list, max_code_lines: int, rec=None) -> dict:
               "duplicated_paragraphs": len(duplicated)}
     data = {"max_code_lines": max_code_lines, "beads": rows, "duplicated_paragraphs": duplicated, "totals": totals}
     if rec is not None:
-        known = {a.get("id") for a in anchor_list(rec) if isinstance(a, dict)}
-        active = {a.get("id") for a in anchor_list(rec) if isinstance(a, dict) and a.get("status") != "retired"}
+        listed = anchor_list(rec)
+        if isinstance(listed, Err):
+            return listed
+        known = {a.get("id") for a in listed.value if isinstance(a, dict)}
+        active = {a.get("id") for a in listed.value if isinstance(a, dict) and a.get("status") != "retired"}
         referenced = set()
         for r in rows:
             r["unknown_anchor_references"] = [x for x in r["references"]["anc"] if x not in known]
             referenced.update(r["references"]["anc"])
         data["anchors_not_referenced"] = sorted(a for a in active if a not in referenced)
-    return data
+    return Ok(data)
 
 
 def shape_md(data: dict) -> str:
@@ -1201,27 +1325,39 @@ def shape_md(data: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cmd_shape(args) -> dict:
+def cmd_shape(args) -> Result[Any, JudgeError]:
     if args.max_code_lines < 1:
-        raise JudgeError("VALIDATION.INPUT", f"--max-code-lines must be a positive integer, got {args.max_code_lines}")
-    beads = []
+        return fail("VALIDATION.INPUT", f"--max-code-lines must be a positive integer, got {args.max_code_lines}")
+    sources = []
     if args.beads:
         d = pathlib.Path(args.beads)
         if not d.is_dir():
-            raise JudgeError("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `bd show --json` files.")
-        for f in sorted(d.glob("*.json")):
-            beads += beads_from_json(load_json(str(f), f"bead file {f.name}"), f"bead file {f.name}")
+            return fail("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `bd show --json` files.")
+        sources += [(str(f), f"bead file {f.name}") for f in sorted(d.glob("*.json"))]
     if args.children_json:
-        beads += beads_from_json(load_json(args.children_json, "bd children output"), "bd children output")
-    for path in args.show_json or []:
-        beads += beads_from_json(load_json(path, "bd show output"), "bd show output")
+        sources.append((args.children_json, "bd children output"))
+    sources += [(path, "bd show output") for path in args.show_json or []]
+    beads = []
+    for path, what in sources:
+        loaded = load_beads(path, what)
+        if isinstance(loaded, Err):
+            return loaded
+        beads += loaded.value
     if not beads:
-        raise JudgeError("INPUT.EMPTY", "no beads to shape", action="Pass --beads <dir>, --children-json <file> or --show-json <file>.")
-    rec = load_record(args.anchors) if args.anchors else None
-    data = shape_beads(beads, args.max_code_lines, rec)
+        return fail("INPUT.EMPTY", "no beads to shape", action="Pass --beads <dir>, --children-json <file> or --show-json <file>.")
+    rec = None
+    if args.anchors:
+        loaded = load_record(args.anchors)
+        if isinstance(loaded, Err):
+            return loaded
+        rec = loaded.value
+    shaped = shape_beads(beads, args.max_code_lines, rec)
+    if isinstance(shaped, Err):
+        return shaped
+    data = shaped.value
     if args.format == "md":
-        return shape_md(data)
-    return {"success": True, "data": data, "error": None}
+        return Ok(shape_md(data))
+    return Ok({"success": True, "data": data, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -1249,7 +1385,7 @@ def check_roles(qs: dict, where: str) -> None:
 
 def load_question_set(gate: str, override_path: str = "") -> dict:
     path = override_path or str(QUESTIONS_DIR / f"{gate}.json")
-    qs = load_json(path, f"question set for gate '{gate}'")
+    qs = _unwrap(load_json(path, f"question set for gate '{gate}'"))
     if not isinstance(qs, dict):
         raise JudgeError("INPUT.MALFORMED", f"question set {path} must be a JSON object")
     check_roles(qs, f"question set {path}")
@@ -1678,7 +1814,7 @@ def judge_context(args, rec: dict) -> dict:
     ctx["base_qs"] = load_question_set(args.gate, getattr(args, "questions", ""))
     ctx["answers_fixture"] = load_answers_fixture(getattr(args, "answers_file", ""), "anchor id")
     overrides_file = getattr(args, "overrides_file", "")
-    ctx["bead_overrides"] = load_json(overrides_file, "overrides file") if overrides_file else {}
+    ctx["bead_overrides"] = _unwrap(load_json(overrides_file, "overrides file")) if overrides_file else {}
     if not isinstance(ctx["bead_overrides"], dict):
         raise JudgeError("INPUT.MALFORMED", "overrides file must be an object keyed by anchor id")
     ctx["live"] = not ctx["dry_run"] and ctx["answers_fixture"] is None
@@ -1711,7 +1847,7 @@ def load_answers_fixture(path: str, keyed_by: str):
     """A fixture of Jev answers keyed by id (or '*'); None when no path is given."""
     if not path:
         return None
-    fixture = load_json(path, "answers fixture")
+    fixture = _unwrap(load_json(path, "answers fixture"))
     if not isinstance(fixture, dict):
         raise JudgeError("INPUT.MALFORMED", f"answers fixture must be an object keyed by {keyed_by} (or '*')")
     return fixture
@@ -1720,7 +1856,7 @@ def load_answers_fixture(path: str, keyed_by: str):
 def load_simple_question_set(name: str, required: tuple) -> dict:
     """A question set without roles (dedupe, testability): every named question must be present."""
     path = str(QUESTIONS_DIR / f"{name}.json")
-    qs = load_json(path, f"question set '{name}'")
+    qs = _unwrap(load_json(path, f"question set '{name}'"))
     questions = qs.get("questions") if isinstance(qs, dict) else None
     if not isinstance(questions, dict) or any(q not in questions for q in required):
         raise JudgeError("INPUT.MALFORMED", f"question set {path} must hold the questions {list(required)}",
@@ -1901,14 +2037,14 @@ def default_run_dir(args) -> pathlib.Path:
 
 
 def cmd_judge(args) -> dict:
-    rec = load_record(args.anchors)
-    require_valid(rec)
+    rec = _unwrap(load_record(args.anchors))
+    _unwrap(require_valid(rec))
     if args.all:
         anchors = [a for a in rec["anchors"] if a["status"] in JUDGED_STATUSES]
     else:
         if not args.anchor:
             raise JudgeError("VALIDATION.INPUT", "pass --anchor ID (repeatable) or --all")
-        anchors = [find_anchor(rec, aid) for aid in dict.fromkeys(args.anchor)]
+        anchors = [_unwrap(find_anchor(rec, aid)) for aid in dict.fromkeys(args.anchor)]
         if not args.include_unlocked:
             unlocked = [a["id"] for a in anchors if a.get("status") not in JUDGED_STATUSES]
             if unlocked:
@@ -1938,12 +2074,12 @@ def cmd_judge(args) -> dict:
 
 
 def cmd_check_fixtures(args) -> dict:
-    rec = load_record(args.anchors)
-    require_valid(rec)
+    rec = _unwrap(load_record(args.anchors))
+    _unwrap(require_valid(rec))
     if args.all:
         anchors = [a for a in rec["anchors"] if a.get("status") != "retired"]
     elif args.id:
-        anchors = [find_anchor(rec, args.id)]
+        anchors = [_unwrap(find_anchor(rec, args.id))]
     else:
         raise JudgeError("VALIDATION.INPUT", "pass --id ANC-NNN or --all")
     ctx = judge_context(args, rec)
@@ -1994,12 +2130,12 @@ def select_anchors(rec: dict, anchor_id: str, all_: bool, what: str) -> list:
     if anchor_id and all_:
         raise JudgeError("VALIDATION.INPUT", f"pass --id or --all to {what}, not both")
     if anchor_id:
-        return [find_anchor(rec, anchor_id)]
-    return [a for a in anchor_list(rec) if isinstance(a, dict) and a.get("status") != "retired"]
+        return [_unwrap(find_anchor(rec, anchor_id))]
+    return [a for a in _unwrap(anchor_list(rec)) if isinstance(a, dict) and a.get("status") != "retired"]
 
 
 def cmd_lint(args) -> dict:
-    rec = load_record(args.anchors)
+    rec = _unwrap(load_record(args.anchors))
     anchors = select_anchors(rec, args.id, args.all, "lint")
     rows = [{"id": a.get("id"), "warnings": lint_statement(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC")} for a in anchors]
     count = sum(len(r["warnings"]) for r in rows)
@@ -2013,8 +2149,8 @@ def check_threshold(value: float, name: str = "--threshold") -> float:
 
 
 def cmd_dedupe(args) -> dict:
-    rec = load_record(args.anchors)
-    anchors = [a for a in anchor_list(rec) if isinstance(a, dict) and a.get("status") != "retired"]
+    rec = _unwrap(load_record(args.anchors))
+    anchors = [a for a in _unwrap(anchor_list(rec)) if isinstance(a, dict) and a.get("status") != "retired"]
     threshold = check_threshold(args.threshold)
     pairs = []
     for i, a in enumerate(anchors):
@@ -2242,7 +2378,7 @@ def cmd_rubric(args) -> dict:
     else:
         if not args.anchors:
             raise JudgeError("VALIDATION.INPUT", "pass --anchors with --id/--all, or --statement/--quote/--scope for a candidate")
-        rec = load_record(args.anchors)
+        rec = _unwrap(load_record(args.anchors))
         anchors = select_anchors(rec, args.id, args.all, "run the rubric")
         candidates = [{"id": a.get("id"), "statement": a.get("statement") or "", "quote": anchor_quote(a), "scope": a.get("scope") or "",
                        "source_type": a.get("source_type") or "ANC"} for a in anchors]
@@ -2327,7 +2463,7 @@ def report_lines(run: dict, include_passing: bool = False) -> list:
 
 
 def cmd_report(args) -> dict:
-    run = load_run(args.run, "run file")
+    run = _unwrap(load_run(args.run, "run file"))
     s = run["summary"]
     head = [f"## Anchor gate: {run['gate']} · {run['item']['id']}" + (f" - {run['item']['title']}" if run['item'].get('title') else ""), "",
             f"Run `{run['run_id']}`, model `{run.get('model_answered') or run.get('model_requested')}`, threshold {run['threshold']}. "
@@ -2402,8 +2538,8 @@ def diff_rank(verdict) -> int:
 
 
 def cmd_diff(args) -> dict:
-    prev = load_run(args.prev, "previous run")
-    nxt = load_run(args.next, "next run")
+    prev = _unwrap(load_run(args.prev, "previous run"))
+    nxt = _unwrap(load_run(args.next, "next run"))
     if prev["gate"] != nxt["gate"]:
         raise JudgeError("RUNS.MISMATCH", "runs are for different gates")
     if prev["item"]["id"] != nxt["item"]["id"]:
@@ -2441,7 +2577,7 @@ def cmd_diff(args) -> dict:
                           "delta_chars": after_chars - before_chars, "grew": after_chars > before_chars},
             "pass_before": prev["summary"].get("pass"), "pass_after": nxt["summary"].get("pass")}
     if getattr(args, "expected", ""):
-        expected = load_json(args.expected, "expected verdicts")
+        expected = _unwrap(load_json(args.expected, "expected verdicts"))
         if not isinstance(expected, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in expected.items()):
             raise JudgeError("INPUT.MALFORMED", "expected verdicts must be a JSON object {anchor_id: verdict}", action="Write the verdict a human reading gives each anchor.")
         cells = []
@@ -2694,7 +2830,10 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     fmt = getattr(args, "format", "json")
     try:
-        out = args.func(args)
+        outcome = args.func(args)
+        if isinstance(outcome, Err):
+            raise outcome.error
+        out = outcome.value if isinstance(outcome, Ok) else outcome
     except JudgeError as exc:
         emit(exc.to_json())
         return 2

@@ -90,6 +90,20 @@ def env(**values):
     return mock.patch.dict(os.environ, values, clear=True)
 
 
+def ok(result):
+    """The value of an Ok result; any Err fails the test with the error it carries."""
+    if not isinstance(result, jj.Ok):
+        raise AssertionError(f"expected Ok, got {result!r}")
+    return result.value
+
+
+def failure(result):
+    """The JudgeError of an Err result; an Ok fails the test."""
+    if not isinstance(result, jj.Err) or not isinstance(result.error, jj.JudgeError):
+        raise AssertionError(f"expected Err(JudgeError), got {result!r}")
+    return result.error
+
+
 class Transport:
     """Stub for jev_judge.call_jev: a queue of responses (dicts) or JudgeErrors, recorded per call."""
 
@@ -132,10 +146,11 @@ class Judged:
 # --------------------------------------------------------------------------- #
 class AddTests(unittest.TestCase):
     def test_next_anc_id_allocation(self):
-        self.assertEqual(jj.next_anc_id(record()), "ANC-001")
+        self.assertEqual(ok(jj.next_anc_id(record())), "ANC-001")
         rec = record(anchor("ANC-003"), anchor("ANC-010"), anchor("REQ-014", source_type="REQ", source_ref="REQ-014"), {"id": 7})
-        self.assertEqual(jj.next_anc_id(rec), "ANC-011")
-        self.assertEqual(jj.next_anc_id(record(anchor("ANC-1000"))), "ANC-1001")
+        self.assertEqual(ok(jj.next_anc_id(rec)), "ANC-011")
+        self.assertEqual(ok(jj.next_anc_id(record(anchor("ANC-1000")))), "ANC-1001")
+        self.assertEqual(failure(jj.next_anc_id({"anchors": {}})).code, "INPUT.MALFORMED")
 
     def test_add_creates_file_and_allocates_ids(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1776,7 +1791,7 @@ class ShapeTests(unittest.TestCase):
         self.d.cleanup()
 
     def test_shape_text_metrics(self):
-        text = jj.compose_item_text(json.loads(Path(self.b1).read_text()))["text"]
+        text = ok(jj.compose_item_text(json.loads(Path(self.b1).read_text())))["text"]
         s = jj.shape_text(text, 8)
         self.assertEqual(set(s["sections"]), {"title", "description", "design", "acceptance_criteria"})
         self.assertEqual((s["fenced_blocks"], s["code_lines"], s["bullets"], s["table_rows"]), (1, 14, 3, 3))
@@ -2015,22 +2030,21 @@ class ComposeItemTests(unittest.TestCase):
     SHOW = [{"id": "bd-42", "title": "Sprint 2 runtime", "description": "Copy the legacy crates.", "acceptance_criteria": "- builds\n- tests pass", "notes": ""}]
 
     def test_sections_in_order_and_empty_omitted(self):
-        composed = jj.compose_item_text(self.SHOW)
+        composed = ok(jj.compose_item_text(self.SHOW))
         self.assertEqual(composed["sections"], ["Description", "Acceptance criteria"])
         self.assertEqual(composed["text"], "# Sprint 2 runtime\n\n## Description\n\nCopy the legacy crates.\n\n## Acceptance criteria\n\n- builds\n- tests pass\n")
         self.assertEqual((composed["item_id"], composed["chars"]), ("bd-42", len(composed["text"])))
-        self.assertEqual(jj.compose_item_text(self.SHOW[0])["title"], "Sprint 2 runtime")  # bare object accepted
+        self.assertEqual(ok(jj.compose_item_text(self.SHOW[0]))["title"], "Sprint 2 runtime")  # bare object accepted
         with_design = dict(self.SHOW[0], design="Keep the trait object-safe.")
-        self.assertEqual(jj.compose_item_text(with_design)["sections"], ["Description", "Design", "Acceptance criteria"])
+        self.assertEqual(ok(jj.compose_item_text(with_design))["sections"], ["Description", "Design", "Acceptance criteria"])
 
     def test_sections_and_for_gate(self):
         full = dict(self.SHOW[0], design="Keep the trait object-safe.", notes="Ask the lead about naming.")
-        self.assertEqual(jj.compose_item_text(full, sections=["description", "acceptance_criteria"])["sections"], ["Description", "Acceptance criteria"])
-        self.assertEqual(jj.compose_item_text(full, sections=["notes"])["text"], "# Sprint 2 runtime\n\n## Notes\n\nAsk the lead about naming.\n")
-        self.assertEqual(jj.compose_item_text(full, sections=[])["text"], "# Sprint 2 runtime\n")
-        with self.assertRaises(jj.JudgeError) as cm:
-            jj.compose_item_text(full, sections=["design", "closing"])
-        self.assertEqual(cm.exception.code, "VALIDATION.INPUT")
+        self.assertEqual(ok(jj.compose_item_text(full, sections=["description", "acceptance_criteria"]))["sections"], ["Description", "Acceptance criteria"])
+        self.assertEqual(ok(jj.compose_item_text(full, sections=["notes"]))["text"], "# Sprint 2 runtime\n\n## Notes\n\nAsk the lead about naming.\n")
+        self.assertEqual(ok(jj.compose_item_text(full, sections=[]))["text"], "# Sprint 2 runtime\n")
+        caught = failure(jj.compose_item_text(full, sections=["design", "closing"]))
+        self.assertEqual(caught.code, "VALIDATION.INPUT")
         with tempfile.TemporaryDirectory() as d:
             show = write(d, "show.json", [full])
             children = write(d, "children.json", [{"id": "bd-43", "title": "t", "status": "closed", "close_reason": "r"}])
@@ -2056,11 +2070,11 @@ class ComposeItemTests(unittest.TestCase):
         children = [{"id": "bd-43", "title": "copy crates", "status": "closed", "close_reason": "done in 3f2a"},
                     {"id": "bd-44", "title": "open one", "status": "open"},
                     {"id": "bd-45", "title": "no reason", "status": "closed"}]
-        composed = jj.compose_item_text(self.SHOW, children)
+        composed = ok(jj.compose_item_text(self.SHOW, children))
         self.assertEqual(composed["sections"][-1], "Closed beads")
         self.assertIn("## Closed beads\n\n- bd-43 copy crates: done in 3f2a\n- bd-45 no reason:\n", composed["text"])
         self.assertNotIn("bd-44", composed["text"])
-        self.assertEqual(jj.compose_item_text(self.SHOW, [])["sections"], ["Description", "Acceptance criteria"])
+        self.assertEqual(ok(jj.compose_item_text(self.SHOW, []))["sections"], ["Description", "Acceptance criteria"])
 
     def test_cli_out_file_stdin_and_bad_shapes(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2070,7 +2084,7 @@ class ComposeItemTests(unittest.TestCase):
             code, out = run_cli(["compose-item", "--show-json", show, "--children-json", children, "--out", out_path])
             self.assertEqual((code, out["data"]["path"], out["data"]["item_id"], out["data"]["title"]), (0, out_path, "bd-42", "Sprint 2 runtime"))
             self.assertEqual(out["data"]["sections"], ["Description", "Acceptance criteria", "Closed beads"])
-            self.assertEqual(Path(out_path).read_text(), jj.compose_item_text(self.SHOW, json.loads(Path(children).read_text()))["text"])
+            self.assertEqual(Path(out_path).read_text(), ok(jj.compose_item_text(self.SHOW, json.loads(Path(children).read_text())))["text"])
             self.assertNotIn("text", out["data"])
             code, out = run_cli(["compose-item", "--show-json", show])
             self.assertIsNone(out["data"]["path"])
@@ -2276,13 +2290,11 @@ class ErrorHandlingTests(unittest.TestCase):
     def test_load_json_rejects_non_files(self):
         with tempfile.TemporaryDirectory() as d:
             for bad in ("", d, str(Path(d) / "missing.json")):
-                with self.assertRaises(jj.JudgeError) as cm:
-                    jj.load_json(bad, "thing")
-                self.assertEqual(cm.exception.code, "INPUT.MISSING", bad)
+                self.assertEqual(failure(jj.load_json(bad, "thing")).code, "INPUT.MISSING", bad)
             bad_json = write(d, "bad.json", "{")
-            with self.assertRaises(jj.JudgeError) as cm:
-                jj.load_json(bad_json, "thing")
-            self.assertEqual(cm.exception.code, "INPUT.MALFORMED")
+            self.assertEqual(failure(jj.load_json(bad_json, "thing")).code, "INPUT.MALFORMED")
+            good = write(d, "good.json", {"a": 1})
+            self.assertEqual(ok(jj.load_json(good, "thing")), {"a": 1})
 
     def test_every_file_argument_yields_json_errors(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2354,7 +2366,7 @@ if __name__ == "__main__":
 class ComposeHeadingTests(unittest.TestCase):
     def test_internal_headings_are_demoted_so_sections_count_whole_fields(self):
         show = [{"id": "x-1", "title": "x-1: t", "description": "## Goal\n\nbody " * 1 + "\n\n```\n## not a heading\n```\n\n# Deep\n\nmore", "acceptance_criteria": "### Must\n\nok"}]
-        text = jj.compose_item_text(show)["text"]
+        text = ok(jj.compose_item_text(show))["text"]
         self.assertIn("## Description", text)
         self.assertIn("### Goal", text)
         self.assertNotIn("\n## Deep", text)
