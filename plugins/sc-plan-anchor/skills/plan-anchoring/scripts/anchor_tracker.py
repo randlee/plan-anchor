@@ -24,13 +24,12 @@ Subcommands
 
 Output is the JSON envelope {success, data, error}.
 
-Exit codes
-  0  success
-  1  the repository's tracker configuration is not usable as it stands
-     (malformed settings or metadata, tracker/disk mismatch, CLI missing,
-     conflicting pin); the error says what to fix
-  2  fatal: PyYAML missing, no git repository, br init failed, settings could
-     not be written, or an internal error as SCRIPT.INTERNAL
+Exit codes (the plugin convention shared with jev_judge.py and plan_source.py)
+  0  success: stdout holds {success: true, data}
+  2  any error, including invalid arguments (VALIDATION.INPUT) and an internal
+     error (SCRIPT.INTERNAL): stdout holds {success: false, error}; the error
+     code says what to fix. Exit 1 is not used: in this plugin it means a
+     completed run with a negative result, and selection has none.
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -63,14 +63,7 @@ Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
-FATAL_CODES = frozenset({
-    "DEPENDENCY.PYYAML",
-    "REPO.NOT_FOUND",
-    "TRACKER.INIT_FAILED",
-    "TRACKER.INIT_REFUSED",
-    "SETTINGS.WRITE_FAILED",
-    "SCRIPT.INTERNAL",
-})
+ERROR_EXIT = 2
 DOLT_OUT_OF_SCOPE = (
     "bd is supported only where a Dolt-backed .beads/ already exists; "
     "provisioning Dolt (DoltHub or a Dolt server) is outside this skill."
@@ -173,7 +166,10 @@ def locate_cli(tracker: str, which: Which) -> Result[str, ToolError]:
     if not path:
         return err("TRACKER.CLI_MISSING", f"the selected anchor tracker {tracker!r} is not on PATH",
                    INSTALL_HINT[tracker], data={"tracker": tracker})
-    return Ok(path)
+    # which() can answer relative to the working directory (a relative PATH
+    # entry, or Windows searching the current directory first). Pin it to an
+    # absolute path so a later run with another cwd starts the same file.
+    return Ok(os.path.abspath(path))
 
 
 def _choose(settings: Optional[Settings], pinned: Optional[str], beads: BeadsState) -> Result[tuple, ToolError]:
@@ -242,13 +238,17 @@ def init_br(tracker: str, cli_path: str, root: Path, run: Runner) -> Result[Bead
     return after
 
 
-def _git_ignored(root: Path, rel: str) -> Optional[bool]:
+def _git_ignored(root: Path, rel: str) -> Result[bool, str]:
+    """Whether git ignores ``rel``; ``Err(reason)`` when git cannot say (reported, not fatal)."""
     try:
         proc = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", rel],
                               capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    except OSError:
-        return None
-    return {0: True, 1: False}.get(proc.returncode)
+    except OSError as exc:
+        return Err(f"git could not start: {type(exc).__name__}: {exc}")
+    if proc.returncode in (0, 1):
+        return Ok(proc.returncode == 0)
+    stderr = (proc.stderr or "").strip()[-500:]
+    return Err(f"git check-ignore exited {proc.returncode}: {stderr or '(no stderr)'}")
 
 
 def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
@@ -274,7 +274,8 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     commit = [SETTINGS_RELPATH] if written else []
     if initialized:
         commit.append(".beads/")
-    ignored = _git_ignored(sel.root, SETTINGS_RELPATH)
+    checked = _git_ignored(sel.root, SETTINGS_RELPATH)
+    ignored = checked.value if isinstance(checked, Ok) else None
     actions = []
     if written:
         actions.append(f"Commit {SETTINGS_RELPATH} so every clone selects {sel.tracker}.")
@@ -284,6 +285,9 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
         actions.append("No .beads/ yet: rerun with --init to run 'br init' (the only bootstrap this skill performs).")
     if ignored:
         actions.append(f"{SETTINGS_RELPATH} is gitignored; un-ignore it so the selection is committed.")
+    elif isinstance(checked, Err):
+        actions.append(f"Could not check whether {SETTINGS_RELPATH} is gitignored ({checked.error}); "
+                       "confirm with 'git check-ignore -v' before committing.")
     data = sel.to_json()
     data.update({
         "written": written,
@@ -292,6 +296,7 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
         "initialized_now": initialized,
         "evidence": beads.to_json(),
         "settings_ignored_by_git": ignored,
+        "settings_ignored_check_error": checked.error if isinstance(checked, Err) else None,
         "commit_paths": commit,
         "next_actions": actions,
     })
@@ -305,12 +310,23 @@ def _envelope(result: Result[Any, ToolError]) -> tuple:
         return {"success": True, "data": data, "error": None}, 0
     error: ToolError = result.error
     data = dict(error.data) if error.data is not None else None
-    return {"success": False, "data": data, "error": error.to_json()}, (2 if error.code in FATAL_CODES else 1)
+    return {"success": False, "data": data, "error": error.to_json()}, ERROR_EXIT
+
+
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors become a VALIDATION.INPUT envelope instead of argparse's text on stderr."""
+
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = _JsonArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
     res = sub.add_parser("resolve", help="read-only: report the selected anchor tracker")
     res.add_argument("--repository-root", default=".", help="any path inside the repository (default: .)")
     wr = sub.add_parser("write", help=f"persist the selection to {SETTINGS_RELPATH}")
@@ -321,7 +337,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list] = None, *, which: Which = shutil.which, run: Runner = subprocess.run) -> int:
-    args = _parser().parse_args(argv)
+    try:
+        args = _parser().parse_args(argv)
+    except _UsageError as exc:
+        envelope = {"success": False, "data": None, "error": ToolError(
+            "VALIDATION.INPUT", str(exc), "Run 'anchor_tracker.py --help' for the accepted arguments.").to_json()}
+        print(json.dumps(envelope, indent=2, sort_keys=True, ensure_ascii=False))
+        return ERROR_EXIT
     try:
         start = Path(args.repository_root)
         if args.command == "resolve":
@@ -333,7 +355,7 @@ def main(argv: Optional[list] = None, *, which: Which = shutil.which, run: Runne
         envelope = {"success": False, "data": None, "error": ToolError(
             "SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
             "Report this with the command line that produced it.").to_json()}
-        code = 2
+        code = ERROR_EXIT
     print(json.dumps(envelope, indent=2, sort_keys=True, ensure_ascii=False))
     return code
 

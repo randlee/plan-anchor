@@ -1,6 +1,6 @@
 ---
 name: installation-and-troubleshooting
-version: 0.5.1
+version: 0.5.2
 description: Installing and locating the CLIs and credentials plan-anchoring depends on (python3, PyYAML, br or bd, sc-compose, jq, TypeSafe API key), how the anchor tracker is selected, minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
 ---
 
@@ -56,10 +56,10 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 - bd is supported only where a Dolt-backed `.beads/` already exists (`.beads/metadata.json` has `"backend": "dolt"`). On these systems bd needs an upstream Dolt (DoltHub or a Dolt server); provisioning one is outside this skill, so never run `bd init` for plan anchoring. Without such a workspace, use br.
 - Install: `brew install steveyegge/beads/bd` (or your team's tap), or with Go `go install github.com/steveyegge/beads/cmd/bd@latest` and `$HOME/go/bin` on PATH.
 
-**sc-compose** (1.6.0 or newer)
+**sc-compose** (1.7.0 or newer)
 
 - Install it from the Synaptic Canvas `sc-compose` release or team package
-  source, then confirm `sc-compose --version` reports at least 1.6.0.
+  source, then confirm `sc-compose --version` reports at least 1.7.0.
 - The skill uses strict checked-in Jinja2 templates for every anchor-tuning
   request/result. Do not continue with hand-built JSON when this CLI is absent.
 
@@ -90,7 +90,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 
 `resolve` is read-only and never initializes. `write` records the result in the settings file (`--tracker br|bd` pins a choice, checked the same way; an existing setting is never rewritten, and a different pin is `SETTINGS.CONFLICT`). `write --init` also runs `br init` when br is selected and there is no `.beads/`. Commit what `write` reports in `commit_paths`.
 
-Exit codes: 0 selected; 1 the repository's configuration needs fixing (settings, metadata, mismatch, missing CLI, conflict); 2 fatal (`DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `TRACKER.INIT_FAILED`, `SETTINGS.WRITE_FAILED`, `SCRIPT.INTERNAL`). Output is the JSON envelope `{success, data, error}`.
+Exit codes follow the plugin convention shared with `jev_judge.py` and `plan_source.py`: 0 selected; 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
 
 **Settings file.** Synaptic Canvas packages keep repository settings at `<repository root>/.sc/<package>/settings.yaml`: YAML, snake_case keys, committed to git, never secrets. The repository root is `git rev-parse --show-toplevel` (falling back to the nearest ancestor with `.git`), never the working directory. For this package:
 
@@ -110,17 +110,17 @@ This version wires the selection into the planning gate only. The development ga
 | Tool | Minimum | Why |
 | --- | --- | --- |
 | python3 | 3.9 | tested floor; standard library only, except `anchor_tracker.py` |
-| PyYAML | 5.1 | `yaml.safe_load`-based strict reading of `.sc/plan-anchor/settings.yaml`; tested with 6.0.x |
+| PyYAML | 5.1 | `SafeLoader`-based strict reading of `.sc/plan-anchor/settings.yaml`; CI tests 5.1 and the latest release |
 | br | 0.7.x | `init`, `show --json`, `sync --flush-only`; tested with 0.7.4 |
 | bd | 1.x, Dolt-backed `.beads/` only | `--parent`, `--labels`, `--silent`, `--body-file`, `show --json`, `children --json`, `comment --file`, `ready --exclude-label` |
-| sc-compose | 1.6.0 | strict render, declared-variable validation, and `--check-render` |
+| sc-compose | 1.7.0 | strict render, declared-variable validation, and `--check-render` |
 | jq | any current release | gate agents read question-override beads |
 | Jev | `jev-latest` | pin a version once thresholds are tuned |
 
 ## PATH troubleshooting
 
 - A tool works in your terminal but not in the skill: Claude Code's bash did not source the shell init that added it to PATH. Export the directory in the session or use the full path.
-- `sc-compose` is missing: install 1.6.0 or newer and rerun the dependency
+- `sc-compose` is missing: install 1.7.0 or newer and rerun the dependency
   gate; do not hand-assemble the fenced tuning payload.
 - `br show --json` or `bd show --json` errors with "no database": run from the repo root that has `.beads/`, or pass `--db <path>` (bd also accepts `-C <repo root>`). In a fresh clone br imports `issues.jsonl` into its gitignored database automatically; `br sync --import-only` does it explicitly.
 - The key works in your terminal but the skill says it is missing: it was exported after Claude Code started, or only in an interactive rc file. Put it in `~/.zshenv`; restart Claude Code.
