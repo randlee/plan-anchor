@@ -567,18 +567,30 @@ class TuningContractCli(unittest.TestCase):
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 
-    def test_cli_reports_contract_key_and_json_errors_with_exit_one(self):
+    def test_cli_reports_every_error_as_an_envelope_with_exit_two(self):
         cases = (
-            ("result", {"x": [{"desired_verdict": 1}]}, '{"error": "VALIDATION.FORBIDDEN_FIELD: $.x[0].desired_verdict", "valid": false}\n'),
-            ("result", {"success": True, "data": {"operation": "x"}}, '{"error": "VALIDATION.OPERATION: unknown result operation", "valid": false}\n'),
-            ("request", {"runtime": {"harness": "codex", "model": "opus"}}, '{"error": "VALIDATION.MODEL: codex anchor-tuning requires sol", "valid": false}\n'),
-            ("request", {"runtime": {}}, '{"error": "\'harness\'", "valid": false}\n'),
-            ("request", "{", '{"error": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)", "valid": false}\n'),
+            ("result", {"x": [{"desired_verdict": 1}]}, "VALIDATION.FORBIDDEN_FIELD", "$.x[0].desired_verdict"),
+            ("result", {"success": True, "data": {"operation": "x"}}, "VALIDATION.OPERATION", "unknown result operation"),
+            ("request", {"runtime": {"harness": "codex", "model": "opus"}}, "VALIDATION.MODEL", "codex anchor-tuning requires sol"),
+            ("request", {"runtime": {}}, "VALIDATION.MISSING_FIELD", "required field is missing: harness"),
+            ("request", "{", "VALIDATION.JSON", "input is not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
+            ("result", [1], "VALIDATION.SHAPE", "result must be a JSON object"),
+            ("request", b"\xff", "SCRIPT.IO", "input could not be read"),
         )
-        for kind, value, expected in cases:
-            with self.subTest(expected=expected):
-                self.assertEqual(self.run_cli(kind, value), (1, expected))
-        self.assertEqual(self.run_cli("result", {"success": False}), (0, '{"sha256": "%s", "valid": true}\n' % hashlib.sha256(b'{"success":false}').hexdigest()))
+        for kind, value, code, message in cases:
+            with self.subTest(code=code):
+                rc_, out = self.run_cli(kind, value)
+                self.assertEqual((rc_, json.loads(out)), (2, contract_error(code, message)))
+                self.assertEqual(out, json.dumps(contract_error(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+        rc_, out = self.run_cli("result", {"success": False})
+        self.assertEqual((rc_, json.loads(out)), (0, {"success": True, "error": None, "data": {
+            "valid": True, "sha256": hashlib.sha256(b'{"success":false}').hexdigest()}}))
+
+    def test_unexpected_failure_is_script_internal(self):
+        rc_, out = self.run_cli("request", {"runtime": []})
+        error = json.loads(out)["error"]
+        self.assertEqual((rc_, error["code"], error["message"].split(":")[0]), (2, "SCRIPT.INTERNAL", "TypeError"))
+        self.assertEqual(error["suggested_action"], "Validate the object against its JSON schema first, then report this with the input.")
 
 
 if __name__ == "__main__":
