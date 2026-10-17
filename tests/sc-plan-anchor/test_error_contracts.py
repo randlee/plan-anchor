@@ -375,6 +375,8 @@ def phase(rows):
 
 ROWS = "| A1 | [One](sprint-a1.md) | `p.1` | root | done |\n| A2 | [Two](sprint-a2.md) | `p.2` | `must_follow` A1 | done |"
 PLAN = {"plan/sprint-a1.md": sprint("A1"), "plan/sprint-a2.md": sprint("A2"), "plan/plan-phase-a.md": phase(ROWS)}
+# An absolute path on this platform: "/x" is drive-relative (not absolute) on Windows.
+ABSOLUTE = Path(Path.cwd().anchor, "tmp", "x.md").as_posix()
 
 
 def plan_with(**files):
@@ -403,7 +405,7 @@ class PlanSourceErrorContracts(unittest.TestCase):
             ({index: phase(ROWS.replace("| A2 |", "| A1 |"))}, "SOURCE.DUPLICATE_ID", "phase sprint identifiers must be unique"),
             ({index: phase(ROWS.replace("sprint-a2.md", "sprint-a1.md"))}, "SOURCE.DUPLICATE_PATH", "phase sprint paths must be unique"),
             ({index: phase(ROWS.replace("(sprint-a2.md)", "(./sprint-a1.md)"))}, "SOURCE.DUPLICATE_PATH", "multiple sprint links resolve to the same file"),
-            ({index: phase(ROWS.replace("sprint-a2.md", "/tmp/x.md"))}, "SOURCE.PATH", "source path must be repository-relative"),
+            ({index: phase(ROWS.replace("sprint-a2.md", ABSOLUTE))}, "SOURCE.PATH", "source path must be repository-relative"),
             ({index: phase(ROWS.replace("sprint-a2.md", "missing.md"))}, "SOURCE.PATH", "source path is missing or escapes the repository"),
             ({index: phase(ROWS.replace("sprint-a2.md", "sub")), "plan__sub__x": "1"}, "SOURCE.PATH", "source path must resolve to a non-symlink regular file"),
             ({index: phase(ROWS).replace("# Phase A", "# Fase A")}, "SOURCE.PHASE_ID", "phase index must contain exactly one Phase title"),
@@ -417,7 +419,7 @@ class PlanSourceErrorContracts(unittest.TestCase):
             with self.subTest(code=code, message=message):
                 exit_code, out = self.discover(plan_with(**files))
                 self.assertEqual((exit_code, out), (2, source_error(code, message)))
-        self.assertEqual(self.discover(PLAN, "/abs"), (2, source_error("SOURCE.PATH", "phase target must be repository-relative")))
+        self.assertEqual(self.discover(PLAN, ABSOLUTE), (2, source_error("SOURCE.PATH", "phase target must be repository-relative")))
         self.assertEqual(self.discover(PLAN, "nope"), (2, source_error("SOURCE.PATH", "phase target is missing or escapes the repository")))
 
     def test_too_large_carries_shape_evidence(self):
