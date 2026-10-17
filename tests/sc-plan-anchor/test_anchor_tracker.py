@@ -40,6 +40,20 @@ EXPECTED_FILE = (
     "anchor_tracker: {tracker}\n"
 )
 GIT = shutil.which("git")
+HAS_YAML = importlib.util.find_spec("yaml") is not None
+NO_YAML_REASON = ("PyYAML is not installed (python3 -m pip install pyyaml); settings-backed tests need it. "
+                  "Tests marked without_yaml still run and prove DEPENDENCY.PYYAML is returned.")
+
+
+def without_yaml(test):
+    """Mark a test that does not need PyYAML installed (it simulates its absence)."""
+    test.runs_without_yaml = True
+    return test
+
+
+def skip_unless_yaml(case):
+    if not HAS_YAML and not getattr(getattr(case, case._testMethodName), "runs_without_yaml", False):
+        case.skipTest(NO_YAML_REASON)
 
 
 def fake_which(*available):
@@ -70,6 +84,7 @@ class Recorder:
 
 class RepoCase(unittest.TestCase):
     def setUp(self):
+        skip_unless_yaml(self)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve() / "repo"
@@ -208,7 +223,7 @@ class SelectionRuleTests(RepoCase):
         self.assertIn("'bd'", error.message)
         self.assertEqual(error.data, {"tracker": "bd"})
         sel = self.assertOk(self.resolve(which=fake_which("bd")))
-        self.assertEqual(sel.cli_path, "/fake/bin/bd")
+        self.assertEqual(sel.cli_path, os.path.abspath("/fake/bin/bd"))
 
     def test_selection_never_switches_to_the_other_cli(self):
         self.dolt()
@@ -274,6 +289,7 @@ class MalformedInputTests(RepoCase):
                 self.setting(f"schema_version: 1\nanchor_tracker: {value}\n")
                 self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
 
+    @without_yaml
     def test_missing_pyyaml_is_a_typed_error_not_a_fallback(self):
         self.pin("br")
         with mock.patch.dict(sys.modules, {"yaml": None}):
@@ -385,7 +401,7 @@ class WriteAndInitTests(RepoCase):
         data = self.assertOk(self.write(init=True, run=run))
         self.assertEqual(len(run.calls), 1)
         argv, kwargs = run.calls[0]
-        self.assertEqual(argv, ["/fake/bin/br", "init"])
+        self.assertEqual(argv, [os.path.abspath("/fake/bin/br"), "init"])
         self.assertEqual(Path(kwargs["cwd"]), self.root)
         self.assertFalse(kwargs.get("shell", False))
         self.assertTrue(data["initialized_now"])
@@ -436,7 +452,7 @@ class WriteAndInitTests(RepoCase):
                 tracker.write(self.root, init=True, which=fake_which("bd", "br"), run=run)
                 for argv, _ in run.calls:
                     self.assertNotIn("bd", [Path(argv[0]).stem] + argv[1:])
-                    self.assertEqual(argv, ["/fake/bin/br", "init"])
+                    self.assertEqual(argv, [os.path.abspath("/fake/bin/br"), "init"])
 
 
 class CliTests(RepoCase):
@@ -461,7 +477,7 @@ class CliTests(RepoCase):
         self.dolt()
         self.pin("br")
         code, env = self.main("resolve")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py and plan_source.py
         self.assertFalse(env["success"])
         self.assertEqual(env["error"]["code"], "TRACKER.MISMATCH")
         self.assertEqual(set(env["error"]), {"code", "message", "recoverable", "suggested_action"})
@@ -470,9 +486,43 @@ class CliTests(RepoCase):
         code, env = self.main("write", "--init", run=Recorder(returncode=9, stderr="nope"))
         self.assertEqual((code, env["error"]["code"]), (2, "TRACKER.INIT_FAILED"))
         self.assertEqual(env["data"]["returncode"], 9)
+        code, env = self.main("resolve", which=fake_which("bd"))
+        self.assertEqual((code, env["error"]["code"]), (2, "TRACKER.CLI_MISSING"))
+
+    @without_yaml
+    def test_missing_pyyaml_exits_two(self):
         with mock.patch.dict(sys.modules, {"yaml": None}):
             code, env = self.main("resolve")
         self.assertEqual((code, env["error"]["code"]), (2, "DEPENDENCY.PYYAML"))
+
+    @without_yaml
+    def test_usage_errors_are_json(self):
+        import contextlib
+        import io
+        for argv in ([], ["bogus"], ["write", "--tracker", "bx"], ["resolve", "--nope"]):
+            with self.subTest(argv=argv):
+                out, err_out = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err_out):
+                    code = tracker.main(argv, which=fake_which("br"), run=Recorder())
+                env = json.loads(out.getvalue())
+                self.assertEqual((code, env["success"], env["error"]["code"]), (2, False, "VALIDATION.INPUT"))
+                self.assertTrue(env["error"]["suggested_action"])
+                self.assertEqual(err_out.getvalue(), "")
+
+    def test_cli_path_is_absolute_even_when_which_answers_relative(self):
+        code, env = self.main("resolve", which=lambda name: os.path.join(".", f"{name}.CMD"))
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isabs(env["data"]["cli_path"]), env["data"]["cli_path"])
+
+    def test_unanswerable_gitignore_check_is_reported(self):
+        def fail_git(argv, **kwargs):
+            raise FileNotFoundError("git")
+        with mock.patch.object(tracker.subprocess, "run", fail_git):
+            code, env = self.main("write")
+        self.assertEqual(code, 0)
+        self.assertIsNone(env["data"]["settings_ignored_by_git"])
+        self.assertIn("git could not start", env["data"]["settings_ignored_check_error"])
+        self.assertTrue(any("git check-ignore -v" in a for a in env["data"]["next_actions"]))
 
     def test_unexpected_exception_becomes_script_internal(self):
         def broken(name):
@@ -519,6 +569,7 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
     """The real CLI as a subprocess, with fake br/bd first on PATH."""
 
     def setUp(self):
+        skip_unless_yaml(self)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         base = Path(self._tmp.name).resolve()
@@ -573,6 +624,17 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         self.assertEqual((code, env["data"]["tracker"]), (0, "bd"))
         self.assertEqual(self.calls(), [])
 
+    def test_relative_path_entry_still_runs_br_init(self):
+        # A relative PATH entry (and Windows' implicit current-directory search)
+        # makes which() answer relative to the caller's cwd; br init runs in the
+        # repository root, so the CLI path must be absolute (Windows CI regression).
+        env = dict(self.env, PATH="." + os.pathsep + os.environ.get("PATH", ""))
+        code, out, proc = self.run_cli("write", "--init", env=env)
+        self.assertEqual(code, 0, proc.stdout + proc.stderr)
+        self.assertTrue(os.path.isabs(out["data"]["cli_path"]))
+        self.assertEqual(self.calls(), [["br", "init"]])
+
+    @without_yaml
     def test_pyyaml_missing_through_the_cli(self):
         code, env, _ = self.run_cli("resolve", prelude="\nsys.modules['yaml'] = None")
         self.assertEqual((code, env["error"]["code"]), (2, "DEPENDENCY.PYYAML"))
@@ -580,6 +642,7 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
 
 
 class RepositoryContractTests(unittest.TestCase):
+    @unittest.skipUnless(HAS_YAML, NO_YAML_REASON)
     def test_this_repository_pins_br(self):
         path = ROOT / ".sc" / "plan-anchor" / "settings.yaml"
         text = path.read_text(encoding="utf-8")
