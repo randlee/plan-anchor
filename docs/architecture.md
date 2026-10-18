@@ -8,9 +8,10 @@ the record schema, verdict table and anchor lifecycle are in
 records only the decisions and why; requirements are in
 [requirements.md](requirements.md).
 
-Status is `accepted` (in force on `main`), `planned` (decided, not built), or
-`partial` (decided, built in some modules only). Dates are when the decision
-first landed or was made.
+Statuses describe the system at the top of the 0.7.0 stack: `accepted` (built
+and in force), `partial` (built, with the named deviations), `planned`
+(decided, not built), or `superseded`. Dates are when the decision first
+landed or was made.
 
 ## ADR-001 Exact work in the script, judgment in the session and Jev
 
@@ -80,11 +81,11 @@ Decision: `anchor_tracker.py resolve` selects once per repository. An explicit
 checked against disk. Otherwise a Dolt-backed `.beads/` selects `bd`, any other
 `.beads/` selects `br`, and none selects `br` (`write --init` may run
 `br init`). The skill never runs or recommends `bd init`. A mismatch is a typed
-error; there is no fallback to the other CLI. The planning reviewer re-resolves
-and rejects a mismatch. plan-anchor itself pins `br`.
+error; there is no fallback to the other CLI. Both gate reviewers re-resolve
+and reject a mismatch. plan-anchor itself pins `br`. The installer (ADR-015)
+applies the same rules when it renders and writes the setting.
 
-Consequences: Anchor storage and the planning gate are tracker-neutral. The
-development gate's `bd`-only carve-out is reversed by ADR-014. REQ-021 to
+Consequences: Anchor storage and both gates are tracker-neutral. REQ-021 to
 REQ-025.
 
 ## ADR-005 Plan sources: Markdown authoritative, tracker copy equivalent
@@ -100,9 +101,8 @@ byte-identical Jev request bodies. Markdown is authoritative when both exist.
 Markdown review needs tracker records only for anchor roots and their question
 children. Structural defects and copy drift fail before delegation.
 
-Consequences: Differing answers to identical requests are model instability,
-not adapter drift. A single unstructured Markdown plan is not accepted.
-REQ-027 to REQ-029.
+Consequences: `plan_source.py` and its contract are no longer shipped, and the
+installer removes them from earlier installs. REQ-027 to REQ-029 are retired.
 
 ## ADR-006 Python: stdlib, 3.9 floor, Result for expected failures
 
@@ -116,15 +116,15 @@ imported lazily. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and a `ToolError {code, message, action, data}`. Exceptions are
 for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
-unit-tested; CI runs ubuntu, macOS and Windows on 3.9 and 3.x, plus a no-PyYAML
-and PyYAML-floor job.
+unit-tested; CI runs ubuntu, macOS and Windows on 3.9 and 3.x, a no-PyYAML
+and PyYAML-floor job, and a 3.11 installer job. The installer alone runs on a
+3.11 pin (ADR-015).
 
-Consequences: `plan_anchor_settings.py` and `anchor_tracker.py` follow it.
-`jev_judge.py` (`JudgeError`), `plan_source.py` (`SourceError`),
-`anchor_runner_contract.py` (`RunnerContractError`) and
-`anchor_tuning_contract.py` (`ContractError`) still raise; their conversion is
-stack layer 2 of the stand-ins plan, with no behavior change. REQ-047,
-REQ-048, REQ-052.
+Consequences: Every skill script and the installer return `Result` for
+expected failures and share `result.py`; `JudgeError` is a value, not an
+exception. Deviation: `anchor_runner_contract.py` converts only `OSError` and
+`UnicodeError` at its CLI boundary (`SCRIPT.IO`); any other unexpected
+exception is a traceback, not `SCRIPT.INTERNAL`. REQ-047, REQ-048, REQ-052.
 
 ## ADR-007 CLI contract: JSON envelope, exit 2 for errors
 
@@ -136,15 +136,22 @@ a negative answer, or a non-JSON error, sends them down the wrong path.
 Decision: Every command prints `{success, data, error}`; errors carry
 `{code, message, recoverable, suggested_action}`. Exit 0 is success, exit 1 is
 only a completed run whose answer is negative (failing gate, lint warnings,
-fixture mismatch), and exit 2 is any error. Agent launches report a typed
-failure reason.
+fixture mismatch), and exit 2 is any error. A `judge` run in which some cells
+end as `verdict: error` (transport failures after the retries, a missing
+fixture entry, per-cell `PLAN.TOO_LARGE`) is a completed run with a negative
+result: the run file is written, the other cells keep their verdicts (ADR-001,
+REQ-011), each errored cell carries its typed `error`, and the gate does not
+pass, so it exits 1. Errors that stop the run (401, missing opt-in, invalid
+record, an oversize item refused before sending) exit 2. Agent launches report
+a typed failure reason.
 
-Consequences: `anchor_tracker.py`, `plan_source.py` and
-`anchor_runner_contract.py` comply. `jev_judge.py` exits 2 for raised errors
-but 1 for a `judge` run containing per-anchor `error` verdicts (transport
-failures after retries) and for any returned `success: false` envelope.
-`anchor_tuning_contract.py` exits 1 on invalid input and prints
-`{valid, error}`. Both are to be aligned. REQ-049 to REQ-051.
+Consequences: `anchor_tracker.py`, `anchor_tuning_contract.py`,
+`anchor_runner_contract.py`, `jev_judge.py` and `install.py` print the
+envelope and exit 2 on errors. Deviations: argparse usage errors in
+`jev_judge.py`, `anchor_runner_contract.py` and `anchor_tuning_contract.py`
+are plain text on stderr (exit 2, no envelope); `jev_judge.py validate` with
+problems prints a `success: false` envelope with `VALIDATION.ANCHORS` and
+exits 1. REQ-049 to REQ-051.
 
 ## ADR-008 Harness-specific agents behind one trusted runner
 
@@ -169,12 +176,13 @@ installation search. REQ-030 to REQ-034.
 
 Status: planned. Date: 2026-10-17.
 
-Context: Both gates run today through `jev_judge.py judge --gate plan|dev` and
-share code paths, so a change for one can move the other. Plan review is in
-production use; code review is not.
+Context: The gates already have separate agents (`anchor-plan-review`,
+`anchor-sprint-review`), but both run through `jev_judge.py judge --gate
+plan|dev` and share code paths, so a change for one can move the other. Plan
+review is in production use; code review is not.
 
-Decision: The planning gate and the code-review gate become separate agents
-with separate Python entry points.
+Decision: The planning gate and the code-review gate keep separate agents and
+get separate Python entry points. Not built: there is one entry point.
 
 Consequences: The production plan-review path can be hardened and released
 without carrying development-gate changes. The shared judge core stays in one
@@ -217,26 +225,30 @@ divergence from Jev is a signal that the question and the text are misaligned.
 neutral, always runs the follow-up turns, makes one small edit (usually the
 sprint's `Prerequisites` or `Additional context`) and re-runs. The ledger is
 one commit per edit, a notes table row per iteration and `jev_judge.py diff`;
-no ledger CLI. Source: `design/anchor-tuning-stand-ins.md` (draft).
+no ledger CLI. A stand-in launch failure is an error: exit 2 with a typed
+error envelope (ADR-007). Source: `design/anchor-tuning-stand-ins.md` (draft).
 
 Consequences: Tuning gains an explanation channel without a second verdict.
-Settings validation must accept `fast_agents`. The draft's "a stand-in error
-makes the run exit 1" conflicts with ADR-007 and must be settled before
-layer 3. REQ-020, REQ-043 to REQ-046.
+Settings validation must accept `fast_agents`; it rejects the key now. Only
+`diff` exists; `--stand-ins`, `follow-up`, `fast_agents` and the tuning-loop
+prompt are not built. REQ-020, REQ-043 to REQ-046.
 
 ## ADR-012 Anchor exclusions as a plain skip
 
-Status: planned. Date: 2026-10-17.
+Status: accepted. Date: 2026-10-17.
 
 Context: An anchor that plainly does not apply to an unrelated sprint can still
 fail as `underspecified` when relevance wavers near 0.6 (ADR-003).
 
-Decision: An anchor may carry `exclude: [{item, reason}]`. `judge` skips those
-cells and reports them as `excluded` with the reason in the run summary and in
-`anchors.md`. There is no approval workflow and no other new verdict state.
+Decision: An anchor may carry `exclude: [{item, reason}]`, set with
+`jev_judge.py exclude`. `judge` makes no Jev call for those cells and reports
+them as `excluded` (which passes) with the reason in the run summary,
+`report`, `coverage`, `diff` and `anchors.md`. An exclusion records a history
+event but does not bump `version`. There is no approval workflow and no other
+new verdict state.
 
 Consequences: Exclusions are visible and retrievable, and the threshold is
-unchanged. REQ-006.
+unchanged. An anchor excluded everywhere is still uncovered. REQ-006.
 
 ## ADR-013 Repository settings convention
 
@@ -251,13 +263,15 @@ validation (unknown and duplicate keys and wrong types rejected), modeled on
 pydantic strictness but implemented with the standard library.
 
 Consequences: A typo never falls back to a default. `TYPESAFE_API_KEY` stays an
-environment variable because it is a secret. Several `PLAN_ANCHOR_*`
-environment variables are still read by `jev_judge.py`, contrary to ANC-005;
-they are candidates to move to CLI flags or settings. REQ-018, REQ-019.
+environment variable because it is a secret. `install.py` writes
+`anchor_tracker` and keeps `install-lock.json` beside the settings. Several
+`PLAN_ANCHOR_*` environment variables are still read by `jev_judge.py`,
+contrary to ANC-005; ADR-016 moves the remote-judge opt-in, and the rest are
+candidates for CLI flags or settings. REQ-018, REQ-019.
 
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
-Status: planned. Date: 2026-10-17. Supersedes ADR-005.
+Status: accepted. Date: 2026-10-17. Supersedes ADR-005.
 
 Context: The skill anchors Markdown plans and `bd`/`br` plans alike. ADR-005
 put `plan_source.py` between the plan and the gates: it accepts only a
@@ -279,5 +293,55 @@ text names only that tracker's commands.
 Consequences: Any plan format works, and the plan's format and the anchor
 tracker are independent choices. `judge` keeps its size cap
 (`PLAN.TOO_LARGE`). Markdown-versus-tracker-copy parity is no longer checked by
-the skill; the plan's author owns it. `plan_source.py` and its contract stop
-shipping unless something else still needs them. REQ-021, REQ-027, REQ-057.
+the skill; the plan's author owns it. `plan_source.py` and its contract are
+not shipped. REQ-021, REQ-057.
+
+## ADR-015 Installer: tracker-rendered copies with lock-file ownership
+
+Status: accepted. Date: 2026-10-17.
+
+Context: Consumers vendored the skill by copying files, so upgrades left
+retired files behind, local edits were overwritten silently, and installed
+text named both trackers.
+
+Decision: `uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker
+br|bd] [--target claude,codex,cursor] [--init-br] [--overwrite] [--dry-run]`.
+PEP 723 metadata supplies PyYAML and `sc-compose`; it pins Python 3.11
+because `sc-compose` 1.7.0 publishes 3.11 wheels only (the code runs on 3.9+).
+Tracker-naming files are `sc-compose` templates under `install/templates/`,
+rendered strictly as `br` or `bd`; the committed plugin tree is the `neutral`
+render, read by marketplace installs. `.sc/plan-anchor/install-lock.json`
+records version, tracker, targets and a sha256 per file. A rerun replaces or
+removes a file only when its bytes match the lock; files this version no
+longer ships are removed when unchanged; a modified, foreign or unowned file
+fails the whole install (`INSTALL.CONFLICT`) unless `--overwrite` moves it to
+`.backup/<UTC>/<path>`. A repository vendored before the lock is adopted once:
+a file is owned when its bytes match something an earlier version shipped
+(`install/legacy-owned.json`, generated from git history). Tracker choice uses
+ADR-004's rules; `bd` needs a Dolt-backed `.beads/`, a missing `.beads/` needs
+`--init-br`, and `bd init` is never run. Rerunning with another `--tracker`
+re-renders every locked target and updates the setting; it never migrates
+issue data. Every check runs before anything is written; `--dry-run` stops
+there.
+
+Consequences: Upgrades are safe to rerun and remove `plan_source.py` and other
+retired files. A drifted committed file or stale `manifest.json` fails CI.
+REQ-059 to REQ-064.
+
+## ADR-016 Remote-judge consent is a committed setting
+
+Status: planned. Date: 2026-10-17.
+
+Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it is
+the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
+`--allow-remote`, which is per machine, invisible in review and contrary to
+ANC-005.
+
+Decision: Consent is `allow_remote_judge: true|false` in the committed
+`.sc/plan-anchor/settings.yaml`. When the key is absent, `judge` refuses; the
+user is asked once and the answer is recorded. Consent is never inferred from
+past runs. The installer takes `--allow-remote-judge` / `--no-remote-judge`.
+The environment variable and `--allow-remote` are removed.
+
+Consequences: Consent is per repository and visible in review. Fail-closed
+behavior (REQ-015) is unchanged. REQ-018, REQ-065, REQ-066.

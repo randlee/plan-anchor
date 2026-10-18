@@ -1,7 +1,7 @@
 # Anchor tuning with fast-agent stand-ins (design draft)
 
-Status: draft. Lands with the fast-agent layers of stack #28
-(randlee/plan-anchor#25, #26, #27).
+Status: draft. Anchor exclusions and the `Result` conversion are built
+(0.7.0); stand-ins, `follow-up` and the tuning prompt are not (ADR-011).
 
 ## Goal
 
@@ -87,7 +87,8 @@ The case: a sprint with unrelated work, where an anchor simply does not
 apply. Today that cell can still fail as `underspecified` when Jev wavers
 near 0.6, as bi-2 did.
 
-The anchor record (`anchors.json`) gets an optional list on the anchor:
+Built in 0.7.0 (ADR-012, REQ-006). The anchor record (`anchors.json`) has an
+optional list on the anchor, set with `jev_judge.py exclude`:
 
 ```json
 "exclude": [{"item": "atm-bi-2", "reason": "data-only sprint; the skill CLI options belong to bi-3"}]
@@ -122,7 +123,8 @@ reports a typed reason.
   - Each result entry gains
     `stand_ins: [{profile, ok, session_id, cwd, answers, agrees_with_jev} | {profile, ok: false, error}]`.
   - Gating is unchanged.
-  - A stand-in error makes the run exit 1 and is listed in the summary.
+  - A stand-in error is an error, not a negative result: the run exits 2
+    with a typed error envelope (ADR-007).
 - **`follow-up --run <file> --cell <anchor>:<item> --profile <name> --question <text> [--attach-item <file>]`**
   - Resumes that cell's own session.
   - Appends the turn to the run's transcript file.
@@ -131,9 +133,10 @@ reports a typed reason.
 
 ## Stack plan
 
+Done: `Result<T,E>` conversion and the `exclude` field (0.7.0). What is left,
+as the next layers:
+
 | Layer | Content |
 | --- | --- |
-| 0, 1, 1r | #25, #26, #27 (stack #28) |
-| 2 | Result<T,E> conversion, no behavior change |
-| 3 | `exclude` field and `judge --stand-ins` |
-| 4 | `follow-up`, tuning-agent prompt and the worktree preflight fix |
+| next | `fast_agents` settings and `judge --stand-ins` |
+| after | `follow-up`, the tuning-agent prompt and the worktree preflight fix |
