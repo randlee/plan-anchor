@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from test_jev_judge import (  # noqa: F401 - shared helpers
-    Judged, Transport, anchor, env, jj, plan_answers, record, run_cli, write,
+    Judged, Transport, anchor, env, jj, live, plan_answers, record, run_cli, write,
 )
 
 REASON = "Data-only sprint; the skill CLI options belong to bi-3."
@@ -25,7 +25,7 @@ def cli_anchor(aid="ANC-011", **extra):
     return anchor(aid, statement=CLI_STATEMENT, quote=CLI_QUOTE, scope="any sprint that adds or changes a skill CLI option", **extra)
 
 
-def excluded(item="bd-42", reason=REASON):
+def excluded(item="ex-42", reason=REASON):
     return [{"item": item, "reason": reason}]
 
 
@@ -43,7 +43,7 @@ class JudgeExclusionTests(unittest.TestCase):
             self.assertEqual(j.code, 0, j.out)
             r = j.result
             self.assertEqual((r["anchor_id"], r["verdict"], r["answers"], r["attempts"]), ("ANC-011", "excluded", None, 0))
-            self.assertEqual(r["exclusion"], {"item": "bd-42", "reason": REASON})
+            self.assertEqual(r["exclusion"], {"item": "ex-42", "reason": REASON})
             self.assertIn(REASON, r["explanation"])
             s = j.run["summary"]
             self.assertEqual((s["counts"], s["failing"], s["excluded"], s["pass"]),
@@ -74,18 +74,18 @@ class JudgeExclusionTests(unittest.TestCase):
 
     def test_planted_negative_other_item_or_near_miss_is_judged(self):
         """An exclusion for another item, or one differing only in case or whitespace, never applies."""
-        for item in ("bd-41", "BD-42", " bd-42", "bd-42 "):
+        for item in ("ex-41", "BD-42", " ex-42", "ex-42 "):
             with self.subTest(item=item), tempfile.TemporaryDirectory() as d:
                 t = Transport(FAILING)
                 j = Judged(d, t, anchors=[cli_anchor(exclude=excluded(item=item))])
                 self.assertEqual(sent_anchor_ids(t), ["ANC-011"])
-                self.assertEqual((j.code, j.result["verdict"], j.run["summary"]["excluded"]), (1, "not_addressed", []))
+                self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.run["summary"]["excluded"]), (0, False, "not_addressed", []))
 
     def test_excluding_one_anchor_does_not_pass_a_failing_one(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(FAILING)
             j = Judged(d, t, anchors=[anchor("ANC-001"), cli_anchor(exclude=excluded())])
-            self.assertEqual((j.code, j.run["summary"]["failing"], j.run["summary"]["pass"]), (1, ["ANC-001"], False))
+            self.assertEqual((j.code, j.run["summary"]["failing"], j.run["summary"]["pass"]), (0, ["ANC-001"], False))
 
     def test_all_excluded_needs_no_key_or_opt_in(self):
         with tempfile.TemporaryDirectory() as d:
@@ -114,16 +114,16 @@ class JudgeExclusionTests(unittest.TestCase):
             anchors_path = write(d, "a2.json", record(cli_anchor(exclude=excluded())))
             item = write(d, "i.txt", "Sprint bi-2 migrates the data tables.")
             t = Transport(FAILING)
-            with env(**{"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}), \
+            with live(), \
                     mock.patch.object(jj, "call_jev", t):
-                code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--anchor", "ANC-011", "--item-id", "bd-42",
+                code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--anchor", "ANC-011", "--item-id", "ex-42",
                                      "--item-file", item, "--run-dir", str(Path(d) / "runs")])
             self.assertEqual((code, out["data"]["results"][0]["verdict"], t.bodies), (0, "excluded", []))
 
 
 class OutputTests(unittest.TestCase):
     def two_runs(self, d):
-        """bd-42 judged before and after ANC-011 is excluded from it."""
+        """ex-42 judged before and after ANC-011 is excluded from it."""
         runs = Path(d) / "runs"
         before = Judged(d, Transport({"model": "m", "answers": plan_answers(rel_p=0.55)}), anchors=[cli_anchor()],
                         extra_args=["--no-confirm", "--out", str(runs / "before.json")])
@@ -137,7 +137,7 @@ class OutputTests(unittest.TestCase):
             runs, _, after = self.two_runs(d)
             code, md = run_cli(["report", "--run", after.run["run_path"], "--format", "md"])
             self.assertEqual(code, 0)
-            self.assertIn("> **bd-42 · ANC-011 · excluded** Anchor: " + CLI_STATEMENT, md)
+            self.assertIn("> **ex-42 · ANC-011 · excluded** Anchor: " + CLI_STATEMENT, md)
             self.assertIn("Not judged: " + REASON, md)
             self.assertIn("Counts: excluded 1.", md)
             self.assertIn("All judged anchors are satisfied or not applicable.", md)
@@ -152,19 +152,19 @@ class OutputTests(unittest.TestCase):
             item = write(d, "item43.txt", "Sprint bi-3 adds the --format option.")
             path = write(d, "anchors.json", record(cli_anchor(exclude=excluded())))
             t = Transport()
-            with env(**{"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}), \
+            with live(), \
                     mock.patch.object(jj, "call_jev", t):
-                code, _ = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-43",
+                code, _ = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "ex-43",
                                    "--item-file", item, "--out", str(runs / "b.json")])
             self.assertEqual((code, sent_anchor_ids(t)), (0, ["ANC-011"]))
             code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan"])
             data = out["data"]
-            self.assertEqual(data["matrix"], {"ANC-011": {"bd-42": "excluded", "bd-43": "satisfied"}})
-            self.assertEqual(data["excluded"], {"ANC-011": {"bd-42": REASON}})
+            self.assertEqual(data["matrix"], {"ANC-011": {"ex-42": "excluded", "ex-43": "satisfied"}})
+            self.assertEqual(data["excluded"], {"ANC-011": {"ex-42": REASON}})
             self.assertEqual(data["uncovered_anchors"], [])
             code, md = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--format", "md"])
             self.assertIn("| ANC-011 | excluded | satisfied | yes |", md)
-            self.assertIn(f"- ANC-011 x bd-42: {REASON}", md)
+            self.assertIn(f"- ANC-011 x ex-42: {REASON}", md)
 
     def test_excluded_everywhere_is_still_uncovered(self):
         with tempfile.TemporaryDirectory() as d:
@@ -208,17 +208,17 @@ class SchemaTests(unittest.TestCase):
     def test_empty_reason_is_rejected(self):
         for reason in ("", "   ", None, 7):
             with self.subTest(reason=reason):
-                problems = self.problems([{"item": "bd-42", "reason": reason}])
+                problems = self.problems([{"item": "ex-42", "reason": reason}])
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn("exclude[0].reason is empty", problems[0])
-        self.assertTrue(any("reason is empty" in p for p in self.problems([{"item": "bd-42"}])))
+        self.assertTrue(any("reason is empty" in p for p in self.problems([{"item": "ex-42"}])))
 
     def test_malformed_exclusions_are_rejected(self):
         cases = {
-            "not a list": ({"item": "bd-42", "reason": REASON}, "exclude must be a list"),
-            "not an object": (["bd-42"], "must be an object"),
+            "not a list": ({"item": "ex-42", "reason": REASON}, "exclude must be a list"),
+            "not an object": (["ex-42"], "must be an object"),
             "empty item": ([{"item": " ", "reason": REASON}], "item must be a non-empty"),
-            "unknown key": ([{"item": "bd-42", "reason": REASON, "approved_by": "x"}], "unknown keys"),
+            "unknown key": ([{"item": "ex-42", "reason": REASON, "approved_by": "x"}], "unknown keys"),
             "duplicate item": (excluded() + excluded(reason="again"), "duplicate exclusion"),
         }
         for label, (exclude, expected) in cases.items():
@@ -229,10 +229,10 @@ class SchemaTests(unittest.TestCase):
     def test_judge_refuses_a_record_with_an_empty_reason(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport()
-            j = Judged(d, t, anchors=[cli_anchor(exclude=[{"item": "bd-42", "reason": " "}])])
+            j = Judged(d, t, anchors=[cli_anchor(exclude=[{"item": "ex-42", "reason": " "}])])
             self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "VALIDATION.ANCHORS", []))
             code, out = run_cli(["validate", "--anchors", j.anchors_path])
-            self.assertEqual(code, 1)
+            self.assertEqual((code, out["success"], out["data"]["valid"]), (0, True, False))
             self.assertTrue(any("reason is empty" in p for p in out["data"]["problems"]))
 
 
@@ -259,11 +259,11 @@ class ExcludeCommandTests(unittest.TestCase):
             path = write(d, "anchors.json", record(cli_anchor()))
             before = Path(path).read_text()
             for argv, code_expected in (
-                (["--id", "ANC-011", "--item", "bd-42", "--reason", "   "], "VALIDATION.INPUT"),
-                (["--id", "ANC-011", "--item", "bd-42"], "VALIDATION.INPUT"),
+                (["--id", "ANC-011", "--item", "ex-42", "--reason", "   "], "VALIDATION.INPUT"),
+                (["--id", "ANC-011", "--item", "ex-42"], "VALIDATION.INPUT"),
                 (["--id", "ANC-011", "--item", " ", "--reason", REASON], "VALIDATION.INPUT"),
-                (["--id", "ANC-099", "--item", "bd-42", "--reason", REASON], "ANCHOR.UNKNOWN"),
-                (["--id", "ANC-011", "--item", "bd-42", "--remove"], "VALIDATION.INPUT"),
+                (["--id", "ANC-099", "--item", "ex-42", "--reason", REASON], "ANCHOR.UNKNOWN"),
+                (["--id", "ANC-011", "--item", "ex-42", "--remove"], "VALIDATION.INPUT"),
             ):
                 with self.subTest(argv=argv):
                     code, out = run_cli(["exclude", "--anchors", path, *argv])
@@ -319,7 +319,7 @@ class ExampleTests(unittest.TestCase):
         example = json.loads((jj.HERE.parent / "assets" / "examples" / "anchors.example.json").read_text())
         self.assertEqual(jj.validate_record(copy.deepcopy(example)), [])
         req = jj.find_anchor(example, "REQ-014").value
-        self.assertEqual(jj.exclusion_for(req, "bd-41")["item"], "bd-41")
+        self.assertEqual(jj.exclusion_for(req, "ex-41")["item"], "ex-41")
         self.assertIsNone(jj.exclusion_for(req, "smoke"))
 
 

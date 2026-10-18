@@ -21,8 +21,9 @@ from unittest import mock
 import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 SCRIPTS = SKILL / "scripts"
+SCRIPT_IN_WORKSPACE = ".claude/skills/plan-anchoring/scripts/jev_judge.py"  # installed by PreflightContracts
 sys.path.insert(0, str(SCRIPTS))
 import anchor_runner_contract as rc  # noqa: E402
 import jev_judge as jj  # noqa: E402
@@ -59,7 +60,7 @@ def record(*anchors):
     return {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "intent.md", "anchors": list(anchors)}
 
 
-def run_file(gate="plan", item="bd-42", results=None):
+def run_file(gate="plan", item="ex-42", results=None):
     return {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-x", "gate": gate, "created_at": "2026-10-10T00:00:00+00:00",
             "item": {"id": item, "title": "", "chars": 1}, "threshold": 0.6, "dry_run": False,
             "results": results if results is not None else [{"anchor_id": "ANC-001", "verdict": "satisfied"}],
@@ -119,10 +120,10 @@ def http_error(status, body=b"", headers=None):
     return urllib.error.HTTPError("http://jev", status, "x", headers or {}, io.BytesIO(body))
 
 
-LIVE = {"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}
+LIVE = {"TYPESAFE_API_KEY": "sk-test-0001"}
 LOCKED = record(anchor())
 ITEM = "Sprint 2 copies the legacy runtime crates.\n"
-JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "bd-42", "--item-file", "item.txt", "--run-dir", "runs"]
+JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", "item.txt", "--run-dir", "runs"]
 ADD = ["add", "--anchors", "anchors.json", "--stated-at", "2026-10-09"]
 
 # name: (argv, files, env, stdin, exit code, expected error object or None, expected data)
@@ -133,11 +134,32 @@ JEV_CASES = {
     "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
                         {"code": "AUTH.CREDENTIALS", "message": "TYPESAFE_API_KEY has invalid formatting (whitespace, control or non-ASCII characters)",
                          "recoverable": False, "suggested_action": "Re-export TYPESAFE_API_KEY with the key exactly as issued."}, None),
-    "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "sk"}, None, 2,
+    # A repository (".git") whose settings file does not record allow_remote_judge. The workspace is cwd. The key must
+    # not be a substring of the message: output redacts it.
+    "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,
                         {"code": "POLICY.REMOTE_JUDGE_DISABLED",
-                         "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine.",
+                         "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                                    ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
                          "recoverable": False,
-                         "suggested_action": "Set PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1 (or pass --allow-remote) once the data-retention question is settled for this plan; use --dry-run to inspect the request instead."}, None),
+                         "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                                             "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
+                                             ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                                             "Use --dry-run to inspect the request instead."}, None),
+    # The variable that used to opt in has no effect any more.
+    "policy_env_var_ignored": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"},
+                               dict(LIVE, PLAN_ANCHOR_ALLOW_REMOTE_JUDGE="1"), None, 2,
+                               {"code": "POLICY.REMOTE_JUDGE_DISABLED",
+                                "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                                           ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
+                                "recoverable": False,
+                                "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                                                    "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
+                                                    ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                                                    "Use --dry-run to inspect the request instead."}, None),
+    "allow_remote_flag_removed": (JUDGE + ["--allow-remote"], {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "sk"}, None, 2,
+                                  {"code": "VALIDATION.INPUT", "message": "jev_judge.py: unrecognized arguments: --allow-remote",
+                                   "recoverable": False,
+                                   "suggested_action": "Run 'jev_judge.py <subcommand> --help' for the accepted arguments."}, None),
     "validation_anchors": (JUDGE + ["--dry-run"], {"anchors.json": record(anchor(statement="")), "item.txt": ITEM}, {}, None, 2,
                            {"code": "VALIDATION.ANCHORS", "message": "anchors.json has problems: ANC-001: statement is empty", "recoverable": True,
                             "suggested_action": "Run `jev_judge.py validate` and fix the record first."}, None),
@@ -164,21 +186,6 @@ JEV_CASES = {
                           {"anchors.json": record(anchor(status="proposed")), "item.txt": ITEM}, {}, None, 2,
                           {"code": "ANCHOR.NOT_LOCKED", "message": "anchors not locked or promoted: ANC-001", "recoverable": False,
                            "suggested_action": "Lock the anchor first, or pass --include-unlocked to judge a proposed or retired anchor deliberately."}, None),
-    "anchor_duplicate_candidate": (ADD + ["--statement", STATEMENT, "--quote", "other words"], {"anchors.json": LOCKED}, {}, None, 2,
-                                   {"code": "ANCHOR.DUPLICATE_CANDIDATE", "message": "the new anchor looks like an existing one: ANC-001 (jaccard 1.0, statement/statement)",
-                                    "recoverable": True,
-                                    "suggested_action": "Update ANC-001 instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint."}, None),
-    "anchor_not_testable": (ADD + ["--statement", "Every command must emit JSON.", "--quote", "json", "--rubric", "--answers-file", "a.json"],
-                            {"a.json": {"*": rubric_answers("no")}}, {}, None, 2,
-                            {"code": "ANCHOR.NOT_TESTABLE",
-                             "message": "the statement did not pass the testability rubric (needs_work): single_constraint, observable, faithful, scoped, self_contained",
-                             "recoverable": True,
-                             "suggested_action": "Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, or pass --allow-untestable to record it anyway."}, None),
-    "anchor_lint": (ADD + ["--statement", "We should keep things clean.", "--quote", "x y z", "--strict"], {}, {}, None, 2,
-                    {"code": "ANCHOR.LINT",
-                     "message": "statement has testability warnings: hedged wording; state the requirement; written as speech, not as a requirement; not phrased as a testable requirement; vague term; name the observable outcome",
-                     "recoverable": True,
-                     "suggested_action": "Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway."}, None),
     "verbatim_statement": (ADD + ["--statement", "Copy it must.", "--quote", "copy it must"], {}, {}, None, 2,
                            {"code": "VALIDATION.INPUT", "message": "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)",
                             "recoverable": True,
@@ -201,7 +208,7 @@ JEV_CASES = {
     "input_empty": (JUDGE + ["--dry-run"], {"anchors.json": LOCKED, "item.txt": " \n"}, {}, None, 2,
                     {"code": "INPUT.EMPTY", "message": "item text is empty", "recoverable": False,
                      "suggested_action": "Pass the bead or work description via --item-file."}, None),
-    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 1,
+    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 0,
                         None, None),
     "fixture_none": (["check-fixtures", "--anchors", "anchors.json", "--gate", "plan", "--all", "--dry-run"], {"anchors.json": LOCKED}, {}, None, 2,
                      {"code": "FIXTURE.NONE", "message": "no fixture sentences recorded on the selected anchors", "recoverable": False,
@@ -211,30 +218,54 @@ JEV_CASES = {
                    "suggested_action": "Run `judge` first, or check the --runs path."}, None),
     "runs_mismatch_gate": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(gate="dev")}, {}, None, 2,
                            {"code": "RUNS.MISMATCH", "message": "runs are for different gates", "recoverable": False, "suggested_action": ""}, None),
-    "runs_mismatch_item": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(item="bd-9")}, {}, None, 2,
-                           {"code": "RUNS.MISMATCH", "message": "runs are for different items (bd-42 vs bd-9)", "recoverable": False,
+    "runs_mismatch_item": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(item="ex-9")}, {}, None, 2,
+                           {"code": "RUNS.MISMATCH", "message": "runs are for different items (ex-42 vs ex-9)", "recoverable": False,
                             "suggested_action": "Diff two runs of the same bead or sprint."}, None),
     "script_internal": (["coverage", "--runs", "runs"], {"runs/a.json": run_file(results=[{"verdict": "x"}])}, {}, None, 2,
                         {"code": "SCRIPT.INTERNAL", "message": "KeyError: 'anchor_id'", "recoverable": False,
                          "suggested_action": "Report this with the command line; check the JSON inputs against references/anchor-document.md."}, None),
     "plan_too_large": (JUDGE + ["--dry-run", "--max-item-chars", "100"], {"anchors.json": LOCKED, "item.txt": "# T\n\n## Description\n\n" + "prose " * 40}, {}, None, 2,
                        {"code": "PLAN.TOO_LARGE",
-                        "message": "plan bead bd-42 is 261 characters after long code was reduced to signatures (261 prose, 0 code; by section: Description 257, (title) 5); the plan-gate item budget is --max-item-chars 100. A reasonable plan bead fits in one Jev request; this one is asking too much",
+                        "message": "plan bead ex-42 is 261 characters after long code was reduced to signatures (261 prose, 0 code; by section: Description 257, (title) 5); the plan-gate item budget is --max-item-chars 100. A reasonable plan bead fits in one Jev request; this one is asking too much",
                         "recoverable": False,
                         "suggested_action": "Oversize is a symptom; judge its cause before changing the bead. First remove work that no anchor, requirement or user-approved issue asks for and the change does not need. Then cut prose and process ceremony that does not serve a deliverable. Split only approved work that is still too large after that. Never split, trim or raise a limit just to pass the gate. See references/plan-size-and-shape.md"},
-                       {"item_id": "bd-42", "size": {"sections": {"(title)": 5, "Description": 257}, "code_chars": 0, "prose_chars": 261},
+                       {"item_id": "ex-42", "size": {"sections": {"(title)": 5, "Description": 257}, "code_chars": 0, "prose_chars": 261},
                         "shape": {"chars": 261, "chars_after_reduction": 261, "code_reduced": {"blocks": 0, "lines": 0},
                                   "sections": {"title": 5, "description": 257}, "code_chars": 0, "prose_chars": 261, "code_lines": 0,
                                   "prose_lines": 2, "fenced_blocks": 0, "bullets": 0, "table_rows": 0,
                                   "references": {"github": [], "req": [], "adr": [], "anc": []}, "no_issue_reference": True,
                                   "chars_before_reduction": 261}}),
-    "validation_path": (["agent-preflight", "--workspace-root", ".", "--script", str(SCRIPTS / "jev_judge.py"), "--anchors", ""], {}, {}, None, 2,
+}
+
+
+# agent-preflight trusts only the nearest per-folder install, so its envelopes are pinned through an
+# installed copy run as a process from the workspace (the source tree's copy is refused first).
+PREFLIGHT_CASES = {
+    "validation_path": (["agent-preflight", "--workspace-root", ".", "--script", SCRIPT_IN_WORKSPACE, "--anchors", ""], {}, {}, None, 2,
                         {"code": "VALIDATION.PATH", "message": "anchors file is empty", "recoverable": False,
                          "suggested_action": "Pass a anchors file inside the repository."}, None),
-    "validation_id": (["agent-preflight", "--workspace-root", ".", "--script", str(SCRIPTS / "jev_judge.py"), "--anchors", "anchors.json", "--identifier", "../x"],
+    "validation_id": (["agent-preflight", "--workspace-root", ".", "--script", SCRIPT_IN_WORKSPACE, "--anchors", "anchors.json", "--identifier", "../x"],
                       {"anchors.json": LOCKED}, {}, None, 2,
                       {"code": "VALIDATION.ID", "message": "unsafe agent identifier: '../x'", "recoverable": False,
                        "suggested_action": "Use 1-128 letters, digits, dots, underscores, colons or hyphens; do not use paths or whitespace."}, None),
+}
+
+
+# A quality gate saying no to `add` is a completed negative answer: exit 0, success, data.added false,
+# and data.refused carries the code, message and suggested action the refusal used to carry as an error.
+REFUSAL_CASES = {
+    "anchor_duplicate_candidate": (ADD + ["--statement", STATEMENT, "--quote", "other words"], {"anchors.json": LOCKED}, {}, None, 0,
+                                   {"code": "ANCHOR.DUPLICATE_CANDIDATE", "message": "the new anchor looks like an existing one: ANC-001 (jaccard 1.0, statement/statement)",
+                                    "suggested_action": "Update ANC-001 instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint."}, None),
+    "anchor_not_testable": (ADD + ["--statement", "Every command must emit JSON.", "--quote", "json", "--rubric", "--answers-file", "a.json"],
+                            {"a.json": {"*": rubric_answers("no")}}, {}, None, 0,
+                            {"code": "ANCHOR.NOT_TESTABLE",
+                             "message": "the statement did not pass the testability rubric (needs_work): single_constraint, observable, faithful, scoped, self_contained",
+                             "suggested_action": "Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, or pass --allow-untestable to record it anyway."}, None),
+    "anchor_lint": (ADD + ["--statement", "We should keep things clean.", "--quote", "x y z", "--strict"], {}, {}, None, 0,
+                    {"code": "ANCHOR.LINT",
+                     "message": "statement has testability warnings: hedged wording; state the requirement; written as speech, not as a requirement; not phrased as a testable requirement; vague term; name the observable outcome",
+                     "suggested_action": "Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway."}, None),
 }
 
 
@@ -248,30 +279,55 @@ class JevJudgeErrorContracts(unittest.TestCase):
                     continue
                 self.assertEqual(out, {"success": False, "data": data, "error": error})
 
+    def test_preflight_error_envelopes_from_an_installed_copy(self):
+        from layout_support import installed_scripts
+        for name, (argv, files, env, stdin, exit_code, error, data) in PREFLIGHT_CASES.items():
+            with self.subTest(name), Workspace(files) as ws:
+                installed_scripts(ws.path)
+                environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+                proc = subprocess.run([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
+                                      capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(proc.returncode, exit_code, proc.stdout + proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), {"success": False, "data": data, "error": error})
+
+    def test_add_refusals_are_negative_answers_with_exit_zero(self):
+        for name, (argv, files, env, stdin, exit_code, refused, _) in REFUSAL_CASES.items():
+            with self.subTest(name), Workspace(files):
+                code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
+                self.assertEqual((code, out["success"], out["error"]), (exit_code, True, None))
+                self.assertEqual((out["data"]["added"], out["data"]["refused"]), (False, refused))
+                self.assertNotIn("anchor", out["data"])
+                saved = json.loads(Path("anchors.json").read_text()) if Path("anchors.json").exists() else {"anchors": []}
+                self.assertEqual([a["id"] for a in saved["anchors"]], [a["id"] for a in files.get("anchors.json", {"anchors": []})["anchors"]])
+
     def test_fixture_missing_is_a_per_anchor_error_verdict(self):
         argv, files, env, stdin, _, _, _ = JEV_CASES["fixture_missing"]
         with Workspace(files):
             code, out = call_main(jj.main, list(argv), env=env)
         result = out["data"]["results"][0]
-        self.assertEqual((code, result["verdict"], result["attempts"]), (1, "error", 0))
+        self.assertEqual((code, out["success"], out["data"]["summary"]["pass"], result["verdict"], result["attempts"]), (0, True, False, "error", 0))
         self.assertEqual(result["error"], {"code": "FIXTURE.MISSING", "message": "answers fixture has no entry for ANC-001 (or '*')",
                                            "recoverable": False, "suggested_action": ""})
 
-    def test_validate_problems_and_lint_warnings_exit_one(self):
+    def test_validate_problems_and_lint_warnings_exit_zero(self):
         with Workspace({"anchors.json": record(anchor(statement=""))}):
             code, out = call_main(jj.main, ["validate", "--anchors", "anchors.json"])
-            self.assertEqual(code, 1)
-            self.assertEqual(out["error"], {"code": "VALIDATION.ANCHORS", "message": "1 problem(s) in anchors.json", "recoverable": True,
-                                            "suggested_action": "Fix the listed problems and re-run validate."})
+            self.assertEqual(code, 0)
+            self.assertEqual(out, {"success": True, "error": None, "data": {
+                "valid": False, "path": "anchors.json", "problems": ["ANC-001: statement is empty"], "warnings": ["intent_ref file not found: intent.md"],
+                "suggested_action": "Fix the listed problems and re-run validate."}})
+            code, out = call_main(jj.main, ["lint", "--anchors", "anchors.json"])
+            self.assertEqual((code, out["success"], out["data"]["clean"]), (0, True, False))
 
-    def test_non_numeric_environment_number_exits_two_with_json(self):
-        env = dict(os.environ, PLAN_ANCHOR_MAX_ITEM_CHARS="lots")
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "validate", "--anchors", "x"], env=env,
-                              capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(proc.returncode, 2)
-        self.assertEqual(proc.stdout, json.dumps({"success": False, "data": None, "error": {
-            "code": "VALIDATION.INPUT", "message": "PLAN_ANCHOR_MAX_ITEM_CHARS='lots' is not a number", "recoverable": False,
-            "suggested_action": "Unset PLAN_ANCHOR_MAX_ITEM_CHARS or give it a numeric value."}}, indent=2) + "\n")
+    def test_non_numeric_flag_exits_two_with_json(self):
+        for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
+                                   "--item-id", "ex-1", "--item-text", "t", "--dry-run", flag, value],
+                                  capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(proc.returncode, 2, flag)
+            self.assertEqual(json.loads(proc.stdout), {"success": False, "data": None, "error": {
+                "code": "VALIDATION.INPUT", "message": f"jev_judge.py judge: argument {flag}: invalid {kind} value: {value!r}",
+                "recoverable": False, "suggested_action": "Run 'jev_judge.py <subcommand> --help' for the accepted arguments."}})
 
 
 class JevTransportErrorContracts(unittest.TestCase):
@@ -281,8 +337,9 @@ class JevTransportErrorContracts(unittest.TestCase):
         sleeps = []
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
                 mock.patch.object(jj.urllib.request, "urlopen", side_effect=list(responses)) as opened, \
-                mock.patch.object(jj, "_sleep", sleeps.append):
-            argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "bd-42", "--item-file", "item.txt",
+                mock.patch.object(jj, "_sleep", sleeps.append), \
+                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)):
+            argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
             code, out = call_main(jj.main, argv, env=LIVE)
         return code, out, opened.call_count, sleeps
@@ -314,7 +371,7 @@ class JevTransportErrorContracts(unittest.TestCase):
             with self.subTest(error_code=error_code, message=message):
                 code, out, calls, sleeps = self.judge([failure, failure, failure])
                 result = out["data"]["results"][0]
-                self.assertEqual((code, calls, sleeps, result["verdict"], result["attempts"]), (1, 3, delays, "error", 3))
+                self.assertEqual((code, out["data"]["summary"]["pass"], calls, sleeps, result["verdict"], result["attempts"]), (0, False, 3, delays, "error", 3))
                 self.assertEqual((result["error"]["code"], result["error"]["message"], result["error"]["recoverable"]), (error_code, message, True))
 
     def test_transient_failure_then_success_passes(self):
@@ -323,25 +380,25 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def test_non_transient_http_errors_are_recorded_without_retry(self):
         code, out, calls, _ = self.judge([http_error(422, b"questions.addressed is invalid")])
-        self.assertEqual((code, calls), (1, 1))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.VALIDATION", "message": "Jev HTTP 422: questions.addressed is invalid",
                                                                "recoverable": False, "suggested_action": "Fix the named field; usually a malformed question override."})
         code, out, calls, _ = self.judge([http_error(418, b"teapot")])
-        self.assertEqual((code, calls), (1, 1))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.HTTP", "message": "Jev HTTP 418; response body withheld",
-                                                               "recoverable": False, "suggested_action": "Check the request body and PLAN_ANCHOR_JEV_URL."})
+                                                               "recoverable": False, "suggested_action": "Check the request body."})
 
     def test_plan_gate_context_overflow_is_plan_too_large_and_dev_gate_shortens(self):
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens exceeded")])
         error = out["data"]["results"][0]["error"]
-        self.assertEqual((code, calls, error["code"], error["recoverable"]), (1, 1, "PLAN.TOO_LARGE", False))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, error["code"], error["recoverable"]), (0, False, 1, "PLAN.TOO_LARGE", False))
         self.assertIn("Jev rejected it for context size (Jev HTTP 400: request exceeds the model's context window)", error["message"])
-        self.assertEqual(error["data"]["item_id"], "bd-42")
+        self.assertEqual(error["data"]["item_id"], "ex-42")
 
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens"), http_error(400, b"max_tokens")], gate="dev",
                                          extra=("--min-item-chars", "1000"), item="evidence " * 200)
         result = out["data"]["results"][0]
-        self.assertEqual((code, calls, result["item_shortened"], result["attempts"]), (1, 2, True, 2))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, result["item_shortened"], result["attempts"]), (0, False, 2, True, 2))
         self.assertEqual(result["error"], {
             "code": "JEV.CONTEXT_EXCEEDED",
             "message": "Jev rejected the request for context size with the item at 1055 chars (floor --min-item-chars 1000): "
@@ -351,7 +408,7 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def test_dry_run_request_that_cannot_fit_reports_context_exceeded(self):
         with Workspace({"anchors.json": LOCKED, "item.txt": "evidence " * 1000}):
-            code, out = call_main(jj.main, ["judge", "--anchors", "anchors.json", "--gate", "dev", "--all", "--item-id", "bd-42", "--item-file", "item.txt",
+            code, out = call_main(jj.main, ["judge", "--anchors", "anchors.json", "--gate", "dev", "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                                             "--run-dir", "runs", "--dry-run", "--max-request-bytes", "1000", "--min-item-chars", "2000"])
         result = out["data"]["results"][0]
         self.assertEqual((code, result["explanation"]), (0, "dry run; request does not fit"))
@@ -364,6 +421,11 @@ class JevTransportErrorContracts(unittest.TestCase):
 
 def contract_error(code, message):
     return {"success": False, "data": None, "error": {"code": code, "message": message, "recoverable": False, "suggested_action": None}}
+
+
+def contract_invalid(code, message):
+    """A completed contract check that found a violation: exit 0, success, data.valid false."""
+    return {"success": True, "error": None, "data": {"valid": False, "violation": {"code": code, "message": message}}}
 
 
 class RunnerContractErrorContracts(unittest.TestCase):
@@ -380,24 +442,27 @@ class RunnerContractErrorContracts(unittest.TestCase):
             return "```json\n" + (value if isinstance(value, str) else json.dumps(value)) + "\n```"
 
         cases = (
-            (fenced(request) + "\n" + fenced(request), contract_error("ENVELOPE.REQUEST_FENCE", "request must be exactly one fenced JSON object")),
-            (fenced("{bad"), contract_error("ENVELOPE.REQUEST_JSON", "request JSON is malformed")),
-            (fenced("[1]"), contract_error("ENVELOPE.REQUEST_JSON", "request JSON must be an object")),
-            (fenced('{"x": {"a": 1, "a": 2}, bad}'), contract_error("ENVELOPE.DUPLICATE_KEY", "JSON object contains a duplicate key")),
-            (fenced(dict(request, extra=1)), contract_error("ENVELOPE.REQUEST", "request must contain only the required top-level fields")),
-            (fenced(dict(request, schema_version="2")), contract_error("ENVELOPE.VERSION", "request schema_version is unsupported")),
-            (fenced(dict(request, operation="x")), contract_error("ENVELOPE.OPERATION", "request operation is unsupported")),
-            (fenced(dict(request, correlation_id="../x")), contract_error("ENVELOPE.CORRELATION", "request correlation_id is invalid")),
-            (fenced(dict(request, params=[])), contract_error("ENVELOPE.PARAMS", "request params must be an object")),
-            (fenced(dict(request, runtime=dict(runtime, sha256="x"))), contract_error("ENVELOPE.RUNTIME", "runtime sha256 is invalid")),
-            (fenced(dict(request, runtime=dict(runtime, path="a/../b"))), contract_error("ENVELOPE.RUNTIME", "runtime path must not traverse its plugin root")),
+            (fenced(request) + "\n" + fenced(request), contract_invalid("ENVELOPE.REQUEST_FENCE", "request must be exactly one fenced JSON object")),
+            (fenced("{bad"), contract_invalid("ENVELOPE.REQUEST_JSON", "request JSON is malformed")),
+            (fenced("[1]"), contract_invalid("ENVELOPE.REQUEST_JSON", "request JSON must be an object")),
+            (fenced('{"x": {"a": 1, "a": 2}, bad}'), contract_invalid("ENVELOPE.DUPLICATE_KEY", "JSON object contains a duplicate key")),
+            (fenced(dict(request, extra=1)), contract_invalid("ENVELOPE.REQUEST", "request must contain only the required top-level fields")),
+            (fenced(dict(request, schema_version="2")), contract_invalid("ENVELOPE.VERSION", "request schema_version is unsupported")),
+            (fenced(dict(request, operation="x")), contract_invalid("ENVELOPE.OPERATION", "request operation is unsupported")),
+            (fenced(dict(request, correlation_id="../x")), contract_invalid("ENVELOPE.CORRELATION", "request correlation_id is invalid")),
+            (fenced(dict(request, params=[])), contract_invalid("ENVELOPE.PARAMS", "request params must be an object")),
+            (fenced(dict(request, runtime=dict(runtime, sha256="x"))), contract_invalid("ENVELOPE.RUNTIME", "runtime sha256 is invalid")),
+            (fenced(dict(request, runtime=dict(runtime, path="a/../b"))), contract_invalid("ENVELOPE.RUNTIME", "runtime path must not traverse its plugin root")),
             (b"\xff", contract_error("SCRIPT.IO", "input could not be read")),
         )
         for text, expected in cases:
-            with self.subTest(expected=expected["error"]["message"]):
-                self.assertEqual(self.fence({"f.md": text}), (2, expected))
+            message = (expected["error"] or expected["data"]["violation"])["message"]
+            with self.subTest(expected=message):
+                self.assertEqual(self.fence({"f.md": text}), (0 if expected["success"] else 2, expected))
+        # a missing argument is bad input, not an invalid record
         self.assertEqual(self.fence({"f.md": fenced(request)}, kind="result"),
                          (2, contract_error("ENVELOPE.CORRELATION", "result validation requires correlation_id")))
+        self.assertEqual(self.fence({"f.md": fenced(request)}), (0, {"success": True, "error": None, "data": {"valid": True, "value": request}}))
 
     def test_resolve_error_envelopes(self):
         registry = 'agents:\n  anchor-tuning:\n    version: "0.5.0"\n    path: .codex/agents/anchor-tuning.md\n'
@@ -416,13 +481,14 @@ class RunnerContractErrorContracts(unittest.TestCase):
             (registry, b"\xff", contract_error("RUNTIME.PATH", "registered agent definition is not readable UTF-8")),
         )
         for reg, definition, expected in cases:
-            files = {"plug/.codex/agents/registry.yaml": reg, "plug/.codex/agents/anchor-tuning.md": definition}
+            files = {"plug/.codex/skills/plan-anchoring/registry.yaml": reg, "plug/.codex/agents/anchor-tuning.md": definition}
             with self.subTest(expected=expected["error"]["message"]), Workspace(files) as ws:
-                argv = ["resolve", "--plugin-root", str(ws.path / "plug"), "--harness", "codex", "--agent", "anchor-tuning"]
+                argv = ["resolve", "--install-root", str(ws.path / "plug"), "--harness", "codex", "--agent", "anchor-tuning"]
                 self.assertEqual(call_main(rc.main, argv), (2, expected))
         with Workspace({}) as ws:
-            self.assertEqual(call_main(rc.main, ["resolve", "--plugin-root", str(ws.path / "nope"), "--harness", "codex", "--agent", "anchor-tuning"]),
-                             (2, contract_error("RUNTIME.PATH", "plugin root does not resolve")))
+            self.assertEqual(call_main(rc.main, ["resolve", "--install-root", str(ws.path / "nope"), "--harness", "codex", "--agent", "anchor-tuning"]),
+                             (2, contract_error("RUNTIME.PATH", "install root does not resolve")))
+            # --plugin-root is kept as an alias of --install-root
             self.assertEqual(call_main(rc.main, ["resolve", "--plugin-root", str(ws.path), "--harness", "codex", "--agent", "anchor-tuning"]),
                              (2, contract_error("RUNTIME.REGISTRY", "agent registry is missing or not a regular file")))
 
@@ -434,7 +500,7 @@ class TuningContractCli(unittest.TestCase):
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 
-    def test_cli_reports_every_error_as_an_envelope_with_exit_two(self):
+    def test_cli_reports_violations_as_valid_false_with_exit_zero(self):
         cases = (
             ("result", {"x": [{"desired_verdict": 1}]}, "VALIDATION.FORBIDDEN_FIELD", "$.x[0].desired_verdict"),
             ("result", {"success": True, "data": {"operation": "x"}}, "VALIDATION.OPERATION", "unknown result operation"),
@@ -442,13 +508,16 @@ class TuningContractCli(unittest.TestCase):
             ("request", {"runtime": {}}, "VALIDATION.MISSING_FIELD", "required field is missing: harness"),
             ("request", "{", "VALIDATION.JSON", "input is not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
             ("result", [1], "VALIDATION.SHAPE", "result must be a JSON object"),
-            ("request", b"\xff", "SCRIPT.IO", "input could not be read"),
         )
         for kind, value, code, message in cases:
             with self.subTest(code=code):
                 rc_, out = self.run_cli(kind, value)
-                self.assertEqual((rc_, json.loads(out)), (2, contract_error(code, message)))
-                self.assertEqual(out, json.dumps(contract_error(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+                self.assertEqual((rc_, json.loads(out)), (0, contract_invalid(code, message)))
+                self.assertEqual(out, json.dumps(contract_invalid(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+
+    def test_cli_reports_an_unreadable_file_as_an_error_with_exit_two(self):
+        rc_, out = self.run_cli("request", b"\xff")
+        self.assertEqual((rc_, json.loads(out)), (2, contract_error("SCRIPT.IO", "input could not be read")))
         rc_, out = self.run_cli("result", {"success": False})
         self.assertEqual((rc_, json.loads(out)), (0, {"success": True, "error": None, "data": {
             "valid": True, "sha256": hashlib.sha256(b'{"success":false}').hexdigest()}}))

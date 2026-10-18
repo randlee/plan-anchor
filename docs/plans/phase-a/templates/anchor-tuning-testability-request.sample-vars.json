@@ -5,10 +5,10 @@
   "correlation_id": "phase-a:A0:testability",
   "runtime": {
     "workspace": "/workspace/plan-anchor",
-    "script": "/workspace/plan-anchor/plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py",
+    "script": "/workspace/plan-anchor/.claude/skills/plan-anchoring/scripts/jev_judge.py",
     "version": "0.4.1",
     "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    "contract_script": "/workspace/plan-anchor/plugins/sc-plan-anchor/skills/plan-anchoring/scripts/anchor_tuning_contract.py",
+    "contract_script": "/workspace/plan-anchor/.claude/skills/plan-anchoring/scripts/anchor_tuning_contract.py",
     "contract_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "agent": "anchor-tuning",
     "harness": "codex",
@@ -29,7 +29,7 @@
   "calibration_corpus": {
     "schema": "plan-anchor/testability-calibration/2",
     "version": 2,
-    "path": "plugins/sc-plan-anchor/skills/plan-anchoring/assets/fixtures/testability-calibration.v2.json",
+    "path": "plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/assets/fixtures/testability-calibration.v2.json",
     "sha256": "ce5f4efcfee74ecc767bb8c140bf749ef2e33c779f82397d5c42d96698a7b1bc",
     "case_count": 17,
     "frozen_before_live": true

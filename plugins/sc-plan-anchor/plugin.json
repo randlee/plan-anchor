@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "sc-plan-anchor",
-  "version": "0.7.0",
-  "description": "Keep plans and delivered work aligned with user-approved anchors using Jev-backed gates.",
+  "version": "0.8.1",
+  "description": "Install plan-anchor (Jev-backed anchors and gates that keep plans and delivered work aligned) into a repository or a parent folder, rendered for br or bd.",
   "author": {
     "name": "randlee",
     "url": "https://github.com/randlee"
@@ -21,8 +21,8 @@
     "com.openai": {
       "interface": {
         "displayName": "Plan Anchor",
-        "shortDescription": "Keep plans tied to approved intent.",
-        "longDescription": "Capture user-approved planning anchors, independently tune Jev questions, and enforce the anchors at planning and delivery gates.",
+        "shortDescription": "Install plan-anchor into a folder.",
+        "longDescription": "Installs the plan-anchoring skill and its gate and tuning agents into a repository or a parent folder of repositories, rendered for one anchor tracker (br or bd), and upgrades it by rerunning.",
         "developerName": "randlee",
         "category": "Developer Tools",
         "capabilities": [
@@ -30,9 +30,9 @@
         ],
         "websiteURL": "https://github.com/randlee/plan-anchor",
         "defaultPrompt": [
-          "Anchor this planning constraint.",
-          "Run the planning gate on these beads.",
-          "Review this sprint against its anchors."
+          "Install plan-anchor into this repository.",
+          "Upgrade plan-anchor in this folder.",
+          "Switch plan-anchor to the bd tracker."
         ],
         "brandColor": "#4F7CAC"
       }

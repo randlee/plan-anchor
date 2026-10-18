@@ -3,13 +3,16 @@
 
 Default (consistency):
   VERSION holds X.Y.Z. Every version declared in shipped metadata equals it
-  exactly: plugin manifests, marketplace manifests, SKILL.md, every
-  references/*.md, every harness agent, every registry.yaml entry, and any
-  other `version:` in a shipped .md frontmatter, .yaml/.yml or .json manifest.
+  exactly: plugin manifests, marketplace manifests, the installer skill's
+  SKILL.md, every harness agent header and registry.yaml entry under
+  install/harness/, and any other `version:` in a shipped .md frontmatter,
+  .yaml/.yml or .json manifest. The installed skill and references take their
+  version from plugin.json when install.py renders them, so every install-time
+  template must declare `{{ version }}` instead of a literal.
   Files are discovered by globbing (see version_declarations), so a new agent
   or reference cannot escape. CHANGELOG.md has a "## X.Y.Z" entry. Agent
   model pins, registry paths, manifest identities and marketplace sources are
-  checked too.
+  checked too, and the plugin must expose only the plan-anchor-installer skill.
 
 --base <ref> (pull-request rule):
   A PR that changes shipped content (plugins/ or a marketplace manifest) must
@@ -22,7 +25,9 @@ Not release metadata, so not checked: `schema_version` fields and the
 JSON schemas' `const`), and integer document versions (question sets,
 anchors, examples).
 
-Exit 0 in sync, 1 drift (each on its own line), 2 missing files or bad input.
+Exit 0 in sync; 2 when the check fails: drift (each on its own line on stdout)
+or missing files and bad input (on stderr). A check script's job is to fail
+CI, so drift is nonzero; like every plan-anchor CLI it never exits 1.
 """
 from __future__ import annotations
 
@@ -35,12 +40,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
-AGENT_DIRS = {
-    "claude": PLUGIN / ".claude" / "agents",
-    "codex": PLUGIN / ".codex" / "agents",
-    "cursor": PLUGIN / ".cursor" / "agents",
-}
+INSTALLER_SKILL = "plan-anchor-installer"
+HARNESS = PLUGIN / "install" / "harness"
+TEMPLATES = PLUGIN / "install" / "templates"
+HARNESSES = ("claude", "codex", "cursor")
+AGENT_DIRS = {h: HARNESS / h / "agents" for h in HARNESSES}
 FRONT_RE = re.compile(r"^---\n(.*?)\n---", re.S)
 VER_RE = re.compile(r'^\s*version:\s*["\']?([0-9]+\.[0-9]+\.[0-9]+)["\']?\s*$', re.M)
 MODEL_RE = re.compile(r"^model:\s*(\S+)\s*$", re.M)
@@ -55,13 +59,12 @@ REQUIRED_GLOBS = (
     "plugins/*/.codex-plugin/plugin.json",
     "plugins/*/.cursor-plugin/plugin.json",
     "plugins/*/skills/*/SKILL.md",
-    "plugins/*/skills/*/references/*.md",
-    "plugins/*/.claude/agents/*.md",
-    "plugins/*/.codex/agents/*.md",
-    "plugins/*/.cursor/agents/*.md",
-    "plugins/*/.claude/agents/registry.yaml",
-    "plugins/*/.codex/agents/registry.yaml",
-    "plugins/*/.cursor/agents/registry.yaml",
+    "plugins/*/install/harness/claude/agents/*.md",
+    "plugins/*/install/harness/codex/agents/*.md",
+    "plugins/*/install/harness/cursor/agents/*.md",
+    "plugins/*/install/harness/claude/registry.yaml",
+    "plugins/*/install/harness/codex/registry.yaml",
+    "plugins/*/install/harness/cursor/registry.yaml",
 )
 # Any version these declare must equal VERSION (catch-all for new metadata).
 SCANNED_GLOBS = (
@@ -108,6 +111,21 @@ def version_declarations(root: pathlib.Path) -> list:
     return sorted(found.items())
 
 
+def template_drift(root: pathlib.Path) -> list:
+    """Install-time templates whose rendered frontmatter pins a literal version instead of {{ version }}."""
+    drift = []
+    for template in sorted((root / "plugins" / "sc-plan-anchor" / "install" / "templates").rglob("*.j2")):
+        text = template.read_text(encoding="utf-8")
+        lines = text.split("\n", 2)
+        if len(lines) < 2 or not lines[1].startswith("name: sc-plan-anchor-"):
+            continue  # a runtime template, copied verbatim
+        body = text.split("\n---\n", 1)[1] if "\n---\n" in text else ""
+        inner = FRONT_RE.match(body)
+        if inner and VER_RE.search(inner.group(1)):
+            drift.append(f"{template.relative_to(root).as_posix()}: rendered version must be {{{{ version }}}}, not a literal")
+    return drift
+
+
 def ssot_drift(root: pathlib.Path, want: str) -> list:
     """Every version declaration that does not equal VERSION, plus a missing CHANGELOG entry."""
     drift = []
@@ -120,10 +138,25 @@ def ssot_drift(root: pathlib.Path, want: str) -> list:
         for v in versions:
             if v != want:
                 drift.append(f"{rel}: {v} != VERSION {want}")
+    drift.extend(template_drift(root))
     changelog = root / "CHANGELOG.md"
     if not changelog.exists() or not re.search(rf"^## {re.escape(want)}\b", changelog.read_text(encoding="utf-8"), re.M):
         drift.append(f"CHANGELOG.md has no '## {want}' entry")
     return drift
+
+
+def registry_source(harness: str, path: str):
+    """The plugin source of an installed path a registry names (relative to the install root), or None."""
+    prefix = f".{harness}/"
+    if not path.startswith(prefix):
+        return None
+    rel = path[len(prefix):]
+    if rel.startswith("agents/") and rel.count("/") == 1:
+        return AGENT_DIRS[harness] / rel.split("/", 1)[1]
+    if rel.startswith("skills/plan-anchoring/"):
+        source = TEMPLATES / rel
+        return source if source.exists() else source.with_name(source.name + ".j2")
+    return None
 
 
 def parse(v: str):
@@ -160,7 +193,7 @@ def release_checks(want: str, drift: list) -> int:
         actual_agents = {f.stem for f in agent_dir.glob("*.md")}
         if actual_agents != expected_agents:
             drift.append(f"{agent_dir.relative_to(ROOT)}: agent files {sorted(actual_agents)} != {sorted(expected_agents)}")
-        reg = agent_dir / "registry.yaml"
+        reg = HARNESS / harness / "registry.yaml"
         if not reg.exists():
             drift.append(f"{reg.relative_to(ROOT)}: missing")
             continue
@@ -170,8 +203,10 @@ def release_checks(want: str, drift: list) -> int:
             name, _, path = m.groups()
             if name.startswith("anchor-"):
                 registered.add(name)
-            if not (PLUGIN / path.lstrip("/")).exists():
-                drift.append(f"registry.yaml {name}: path {path} not found")
+            source = registry_source(harness, path)
+            if source is None or not source.exists():
+                drift.append(f"{reg.relative_to(ROOT)} {name}: path {path} is not an installed .{harness}/ path "
+                             "this plugin ships")
         if registered != expected_agents:
             drift.append(f"{reg.relative_to(ROOT)}: agents {sorted(registered)} != {sorted(expected_agents)}")
         dependencies = set()
@@ -194,20 +229,20 @@ def release_checks(want: str, drift: list) -> int:
         data = json.loads(manifest.read_text())
         if data.get("name") != "sc-plan-anchor":
             drift.append(f"{manifest.relative_to(ROOT)}: name must be sc-plan-anchor")
-    claude_manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-    expected_claude_agents = {f"./.claude/agents/{name}.md" for name in expected_agents}
-    if set(claude_manifest.get("agents", [])) != expected_claude_agents:
-        drift.append("Claude manifest agents do not match .claude/agents")
+    for manifest in plugin_manifests[1:]:
+        data = json.loads(manifest.read_text()) if manifest.exists() else {}
+        if "agents" in data:
+            drift.append(f"{manifest.relative_to(ROOT)}: must not register agents (they are installed per folder)")
+        if data and data.get("skills") != "./skills/":
+            drift.append(f"{manifest.relative_to(ROOT)}: skills must be ./skills/")
+    exposed = sorted(p.name for p in (PLUGIN / "skills").iterdir() if p.is_dir()) if (PLUGIN / "skills").is_dir() else []
+    if exposed != [INSTALLER_SKILL]:
+        drift.append(f"plugins/sc-plan-anchor/skills: exposes {exposed}; must be exactly [{INSTALLER_SKILL!r}]")
     catalogs = [
         ROOT / ".claude-plugin" / "marketplace.json",
         ROOT / ".agents" / "plugins" / "marketplace.json",
         ROOT / ".cursor-plugin" / "marketplace.json",
     ]
-    cursor_manifest = json.loads((PLUGIN / ".cursor-plugin" / "plugin.json").read_text())
-    if cursor_manifest.get("skills") != "./skills/":
-        drift.append("Cursor manifest skills must be ./skills/")
-    if cursor_manifest.get("agents") != "./.cursor/agents":
-        drift.append("Cursor manifest agents must be ./.cursor/agents")
     for catalog in catalogs:
         if not catalog.exists():
             drift.append(f"{catalog.relative_to(ROOT)}: missing")
@@ -264,7 +299,7 @@ def main() -> int:
         print(f"check-version-sync [{mode}]: {len(drift)} drift(s) from VERSION {want}:")
         for d in drift:
             print(f"  {d}")
-        return 1
+        return 2
     print(f"check-version-sync [{mode}]: {checked} version declarations equal {want}, CHANGELOG entry present")
     return 0
 

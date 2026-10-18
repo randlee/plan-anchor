@@ -2,7 +2,7 @@
 name: sc-plan-anchor-question-tuning
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -95,7 +95,6 @@ An override has the shape of the default set and contains only the questions to 
   (`bead-layout.md`). Use the tracker selected at the orchestration boundary:
 {% if tracker == "br" %}  `br update <id> --description-file <file>`.
 {% elif tracker == "bd" %}  `bd update <id> --body-file <file>`.
-{% else %}  `bd update <id> --body-file <file>` or the equivalent `br update` operation.
 {% endif %}- **In the record**: `question_overrides.plan` / `.dev` in `anchors.json`, for a plan with no beads. The bead wins if both exist.
 - **For a whole plan**: a complete alternative set passed with `--questions <file>`. Rare.
 
@@ -197,7 +196,7 @@ contract reports `HISTORY.PREDECESSOR` when that object is absent.
 Authority record `id` and history `anchor_id` preserve nonempty evaluator IDs,
 including REQ/ADR source references and ANC IDs above 999. Source-specific
 record validation remains the evaluator's responsibility.
-{% if tracker == "br" %}Markdown and `br` copies{% elif tracker == "bd" %}Markdown and `bd` copies{% else %}Markdown and `bd`/`br` copies{% endif %} store byte-identical canonical JSON and SHA-256;
+{% if tracker == "br" %}Markdown and `br` copies{% elif tracker == "bd" %}Markdown and `bd` copies{% endif %} store byte-identical canonical JSON and SHA-256;
 paths, tracker IDs/revisions, timestamps that differ by source, credentials, and
 source kind remain outside it as local bindings. A v1 result can become a v2
 seal only through digest-verified offline re-evaluation that preserves the
