@@ -2,7 +2,7 @@
 
 Design document for the `plan-anchoring` skill. Companion to the [PRD](../plan-anchor-prd.md) and to [data model, gating and lifecycle](data-model-and-gating.md). Diagrams are Mermaid.
 
-Status: describes `main` at 0.8.1. The anchor tracker is selected by `anchor_tracker.py` (`br` or `bd`), both gates judge the sprint text the caller supplies (no plan parsing), anchors can exclude items, remote-judge consent is a committed setting (§6), and the marketplace plugin only installs plan-anchor into a folder, rendered for one tracker (§7). Every CLI exits 0 when it ran and 2 when it could not (ADR-007). The live verification against Jev `jev-1.13.0` predates these changes. Not built: fast-model stand-ins (`design/anchor-tuning-stand-ins.md`) and separate gate entry points (ADR-009).
+Status: describes the code at 0.8.3 (`fix/0.8.3-errors`). The anchor tracker is selected by `anchor_tracker.py` (`br` or `bd`), both gates judge the sprint text the caller supplies (no plan parsing), anchors can exclude items, remote-judge consent is a committed setting (§6), and the marketplace plugin only installs plan-anchor into a folder, rendered for one tracker (§7). Every CLI exits 0 when it ran, 2 when it could not (a Jev call with no answer included, since 0.8.3) and 130 on interrupt (ADR-007). The live verification against Jev `jev-1.13.0` predates these changes. Not built: fast-model stand-ins (`design/anchor-tuning-stand-ins.md`) and separate gate entry points (ADR-009).
 
 ## 1. Components
 
@@ -20,9 +20,9 @@ flowchart LR
         Tuner["anchor-tuning (independent Opus/Sol)<br/>candidate tournament and evidence triage"]
     end
 
-    Tracker["scripts/anchor_tracker.py resolve<br/>sets $ANCHOR_TRACKER (br or bd)"]
+    Tracker["scripts/anchor_tracker.py resolve<br/>prints the tracker (br or bd); the caller sets $ANCHOR_TRACKER"]
 
-    subgraph Script["scripts/jev_judge.py (stdlib Python)"]
+    subgraph Script["scripts/jev_judge.py (stdlib Python; PyYAML for a live call's settings read)"]
         Compose["compose-item"]
         Judge["judge"]
         Gate["decide(): gating in code"]
@@ -113,7 +113,7 @@ flowchart TD
     Act -- "no" --> Pass["planning gate passes"]
 ```
 
-Request count is deterministic: locked anchors × sprint items, less excluded cells. Twenty anchors across fifteen beads is 300 Jev requests, each about 100 ms and priced on input tokens only, so re-running after every plan edit is the intended cadence. The third identical failing run on one bead is a hard stop that escalates to the user instead of editing again.
+Request count is locked and promoted anchors × sprint items, less excluded cells and, at the planning gate, structural anchors (`deterministic_only`), plus one repeat for each answer within 0.10 of the threshold (`--no-confirm` turns repeats off). Twenty anchors across fifteen beads is 300 Jev requests, each about 100 ms and priced on input tokens only, so re-running after every plan edit is the intended cadence. The third identical failing run on one bead is a hard stop that escalates to the user instead of editing again.
 
 ## 3. Development gate (sprint review) call graph
 
@@ -124,7 +124,7 @@ flowchart TD
     QM["Quality manager<br/>(QA side of the dev/QA matrix)"]
     QM -- "item_file (the sprint text), evidence paths or pr_number" --> SA["anchor-sprint-review"]
 
-    subgraph Assemble["assemble the account (priority order; 64,000-byte request cap)"]
+    subgraph Assemble["assemble the account (priority order; item cut to 24,000 chars, 64,000-byte request cap)"]
         E1["1. sprint report / completion summary"]
         E2["2. PR title and body<br/>(gh pr view --json)"]
         E3["3. git diff --stat base..head<br/>(file names and counts only)"]
@@ -174,7 +174,7 @@ sequenceDiagram
     S->>S: fail closed unless TYPESAFE_API_KEY and allow_remote_judge: true in the nearest settings.yaml
 
     loop for each locked or promoted anchor not excluding this item
-        S->>S: build state {anchor, item}; plan: fit whole/reduce code or refuse; dev: shorten evidence to ≤64,000 bytes
+        S->>S: build state {anchor, item}; plan: fit whole/reduce code or refuse; structural at plan: deterministic_only, no request<br/>dev: item already cut to 24,000 chars; halve to ≤64,000 bytes
         loop up to 3 attempts
             S->>J: POST /v1/systemone {model, state, questions}
             alt 200 and response validates
@@ -182,21 +182,22 @@ sequenceDiagram
                 S->>S: decide() → verdict, min_confidence
             else context window exceeded
                 J-->>S: max_tokens_exceeded
-                S->>S: plan: verdict error PLAN.TOO_LARGE<br/>dev: halve evidence (keep head, mark truncation), retry; below 2,000 chars → JEV.CONTEXT_EXCEEDED
+                S->>S: plan: cell error PLAN.TOO_LARGE<br/>dev: halve evidence (keep head, mark truncation), retry; below 2,000 chars → JEV.CONTEXT_EXCEEDED
             else 429 / 529 / 5xx / network / invalid response
                 J-->>S: transient failure
-                S->>S: wait Retry-After or 1 s, then 2 s, next attempt<br/>after 3 attempts → verdict error (JEV.*)
+                S->>S: wait Retry-After or 1 s, then 2 s, next attempt<br/>after 3 attempts → cell error (JEV.*)
             else 401
                 J-->>S: unauthorized
                 S-->>Ag: abort run, AUTH.CREDENTIALS (never retried)
             end
         end
+        S->>S: within 0.10 of the threshold: send the identical request again; disagreement → underspecified (unstable)
         S->>S: record answers, attempts, item_chars_sent, questions_sha256
     end
 
     S->>S: sort by severity, summary {counts, failing, pass}
     S->>S: write anchor-runs/<gate>-<stamp>-<item>.json
-    S-->>Ag: JSON {success, data: {run_path, results, summary}}, exit 0 when it ran (summary.pass true or false), 2 fatal
+    S-->>Ag: exit 0: {success, data: {run_path, results, summary}} (summary.pass true or false)<br/>exit 2: error envelope; on a Jev failure data is the written run plus failures[]; 130 on interrupt
     Ag->>S: report --run <run_path> --format md
     S-->>Ag: markdown with each failing anchor's statement and verbatim quote
     Ag-->>Ag: return fenced JSON envelope to the skill
@@ -206,10 +207,12 @@ Policy summary:
 
 | Situation | Behaviour | Where |
 | --- | --- | --- |
-| Planning request too large before sending | Keep prose intact; reduce the fewest eligible long code blocks, longest first; return `PLAN.TOO_LARGE` if it still does not fit | script pre-flight |
-| Development request too large before sending | Shorten the evidence account from the tail to fit 64,000 bytes, keep the head, mark truncation | script pre-flight |
-| Jev reports the context window exceeded | Planning: `PLAN.TOO_LARGE`; development: halve evidence and retry, stopping below 2,000 characters with `JEV.CONTEXT_EXCEEDED` | script, per anchor |
-| 429, 529, 5xx, timeout, network error, malformed response | At least two more attempts (three total) with `Retry-After` or 1 s then 2 s backoff; then `verdict: error` for that anchor only | script, per anchor |
+| Planning request too large before sending | Keep prose intact; reduce the fewest eligible long code blocks, longest first; return `PLAN.TOO_LARGE` if it still does not fit (24,000 request bytes and `--max-item-chars` 24,000 characters) | script pre-flight |
+| Development request too large before sending | Cut the item to `--max-item-chars` (24,000 characters), then halve it from the tail to fit 64,000 bytes, keep the head, mark truncation | script pre-flight |
+| Jev reports the context window exceeded | Planning: `PLAN.TOO_LARGE` for that cell; development: halve evidence and retry, stopping below 2,000 characters with `JEV.CONTEXT_EXCEEDED`; either way the run exits 2 | script, per anchor |
+| An answer within 0.10 of the threshold | Send the identical request once more; disagreement is `underspecified` with `unstable`; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 | script, per anchor |
+| Interrupt | `CANCELED` envelope, exit 130 | script |
+| 429, 529, 5xx, timeout, network error, malformed response | At least two more attempts (three total) with `Retry-After` or 1 s then 2 s backoff; then `verdict: error` for that anchor, the other anchors are still judged, and the run exits 2 with the first failure's code and `data.failures` | script, per anchor |
 | 401, or `allow_remote_judge` absent or `false` (`POLICY.REMOTE_JUDGE_DISABLED`) | Abort the whole run immediately with exit 2; never retried; never bypassed by an agent | script pre-flight |
 | Anchor's `exclude` names the item | No Jev request; the cell is `excluded` with its reason and passes | script, per anchor |
 | Agent sees `success: false` | Return the script's error object in the fenced envelope; no second judge call | agent |
@@ -228,18 +231,18 @@ flowchart LR
         S2["skill"] -- "Agent tool, model: luna" --> A2[".codex/agents/anchor-plan-review"] --> J2["jev_judge.py"]
     end
     subgraph CU["Cursor"]
-        S3["skill"] -- "Task tool, model: composer" --> A3[".cursor/agents/anchor-plan-review"] --> J3["jev_judge.py"]
+        S3["skill"] -- "Task tool, no model argument (agent pins composer)" --> A3[".cursor/agents/anchor-plan-review"] --> J3["jev_judge.py"]
     end
     J1 --> Jev[("Jev")]
     J2 --> Jev
     J3 --> Jev
 ```
 
-Before execution, each agent canonicalizes the supplied script path and accepts it only when it is the canonical `<D>/<H>/skills/plan-anchoring/scripts/jev_judge.py` of the nearest install: `<H>` is `.claude`, `.codex`, `.cursor` or `.agents`, and `<D>` is the nearest directory holding such a copy, walking up from the working directory (from the repository root when the working directory is outside it) and stopping before the home directory. `<D>` may be the repository or a parent folder of it. A copy in a global location (the home directory, `~/.claude`, `~/.codex`, `~/.cursor`, `~/.agents`, plugin caches, `/etc/codex`, Claude Code's managed-settings directories), a farther install or the source tree is `VALIDATION.PATH`; there is no plugin-root or manifest fallback (ADR-015). `agent-preflight` applies the same rule (`plan_anchor_paths.trusted_script`), then confines anchors, run directories, and evidence to the Git workspace, rejects unsafe identifiers and PR numbers, and returns canonical paths. The runner reads each target's registry from `<D>/.<target>/skills/plan-anchoring/registry.yaml` (`anchor_runner_contract.py resolve --install-root <D>`).
+Before execution, each agent canonicalizes the supplied script path and accepts it only when it is the canonical `<D>/<H>/skills/plan-anchoring/scripts/jev_judge.py` of the nearest install: `<H>` is `.claude`, `.codex` or `.cursor`, and `<D>` is the nearest directory holding such a copy and an `.sc/plan-anchor/install-lock.json` that lists it (0.8.3), walking up from the working directory (from the repository root when the working directory is outside it) and stopping before the home directory. `<D>` may be the repository or a parent folder of it. A copy in a global location (the home directory, `~/.claude`, `~/.codex`, `~/.cursor`, `~/.agents`, plugin caches, `/etc/codex`, Claude Code's managed-settings directories), a farther install, a copy the lock does not list, a copy under `.agents/` or the source tree is `VALIDATION.PATH`; there is no plugin-root or manifest fallback (ADR-015). `agent-preflight` applies the same rule (`plan_anchor_paths.trusted_script`), then confines anchors, run directories, and evidence to the Git workspace, rejects unsafe identifiers and PR numbers, and returns canonical paths. The runner reads each target's registry from `<D>/.<target>/skills/plan-anchoring/registry.yaml` (`anchor_runner_contract.py resolve --install-root <D>`).
 
 ## 6. What leaves the machine
 
-Live `rubric` (and `add --rubric`), `dedupe --jev`, `check-fixtures`, and `judge` calls contact TypeSafe only with `TYPESAFE_API_KEY` set and `allow_remote_judge: true` in the nearest committed `.sc/plan-anchor/settings.yaml` (ADR-016); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED` and nothing is sent. `TYPESAFE_API_KEY` is the only configuration read from the environment (`USER` only defaults `add --stated-by`). Gate requests carry one anchor's testable statement and scope plus one item's ID, title, composed text, and question set; `rubric` also carries the verbatim quote, and Jev dedupe carries one candidate pair. The whole plan, full diffs, source files, and external evidence are never uploaded. The key travels only as a bearer header; the script recursively redacts the exact key and bearer tokens from every emitted value and never writes them to a run file. `--dry-run` writes exact request bodies and totals without sending; `--answers-file` exercises the pipeline with fixture answers for tests and CI.
+Live `rubric` (and `add --rubric`), `dedupe --jev`, `check-fixtures`, and `judge` calls contact TypeSafe only with `TYPESAFE_API_KEY` set and `allow_remote_judge: true` in the nearest `.sc/plan-anchor/settings.yaml` (ADR-016; "committed" is checked only as not git-ignored); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED` and nothing is sent. `TYPESAFE_API_KEY` is the only configuration read from the environment (`USER` only defaults `add --stated-by`; the home directory only ends the install and settings walks). Gate requests carry one anchor's testable statement and scope plus one item's ID, title, composed text, and question set; `rubric` also carries the verbatim quote, and Jev dedupe carries one candidate pair. The whole plan, full diffs, source files, and external evidence are never uploaded. The key travels only as a bearer header; the script recursively redacts the exact key and bearer tokens from every emitted value and never writes them to a run file. `--dry-run` writes exact request bodies and totals without sending; `--answers-file` exercises the pipeline with fixture answers for tests and CI.
 
 ## 7. Installation
 
@@ -257,16 +260,17 @@ flowchart TD
     Sel -- "not a repo, no .beads/, no tracker" --> E4["TRACKER.REQUIRED"]
     Sel -- "bd without Dolt" --> E1["TRACKER.DOLT_REQUIRED (never bd init)"]
     Sel -- "repo, no .beads/, no --init-br" --> E2["TRACKER.NOT_INITIALIZED"]
+    Sel -- "detected tracker differs from the lock, no --tracker" --> E5["TRACKER.MISMATCH"]
     Sel --> Plan["plan against install-lock.json<br/>(or legacy-owned.json when no lock)"]
     Plan -- "modified / unowned / foreign file" --> C{"--overwrite?"}
     C -- "no" --> E3["INSTALL.CONFLICT, nothing written"]
-    C -- "yes" --> B["move to .backup/UTC/path"]
+    C -- "yes" --> B["move to .backup/UTC/path<br/>(.backup/.gitignore ignores it)"]
     Plan --> Dry{"--dry-run?"}
     B --> Dry
     Dry -- "yes" --> Out["print the plan, write nothing"]
-    Dry -- "no" --> W["br init if asked; sc-compose render br|bd;<br/>copy scripts and runtime templates verbatim;<br/>create / replace / remove retired files;<br/>write .&lt;target&gt;/skills/plan-anchoring (with registry.yaml), .&lt;target&gt;/agents,<br/>settings.yaml and install-lock.json"]
+    Dry -- "no" --> W["br init if asked; sc-compose render every .md.j2 and .py.j2 for br|bd;<br/>copy schemas, JSON assets, registry.yaml and runtime templates verbatim;<br/>create / replace / remove retired files;<br/>write .&lt;target&gt;/skills/plan-anchoring (with registry.yaml), .&lt;target&gt;/agents,<br/>settings.yaml and install-lock.json"]
 ```
 
-A switch (`--tracker` differing from the lock) re-renders every locked target and updates `anchor_tracker`; issue data stays in the old tracker. An upgrade is the same command rerun in each install folder. A parent-folder install covers the repositories below it: the gates trust the nearest install (§5) and use the nearest settings file, which wins whole; each repository keeps its own `.beads/`, anchors and runs, and its `.beads/` is still checked against an inherited `anchor_tracker` (`TRACKER.MISMATCH` names the inherited file). The SessionStart hook prints one line when the nearest lock is older than the plugin and is otherwise silent; it writes nothing and uses no network.
+A switch (`--tracker` differing from the lock) re-renders every locked target and updates `anchor_tracker`; issue data stays in the old tracker. An upgrade is the same command rerun in each install folder. A parent-folder install covers the repositories below it: the gates trust the nearest install (§5) and use the nearest settings file, which wins whole; each repository keeps its own `.beads/`, anchors and runs, and its `.beads/` is still checked against an inherited `anchor_tracker` (`TRACKER.MISMATCH` names the inherited file). A rerun keeps every locked target. The installer reads only its package files and, at the destination and above it, the settings file, the lock, `.beads/` and whether `.git` exists; it never runs git and runs only `br init`. The SessionStart hook (Claude Code only) prints one line when the nearest lock is older than the plugin and is otherwise silent; it writes nothing and uses no network.
 
 Known limitations: Claude Code and Codex document skill discovery only up to the git root, so a parent-folder install may not be visible from a session started in a child repository (not verified in a harness). A `bd` repository under a `br` parent install needs its own install. Codex documents `.agents/skills` while `--target codex` installs `.codex/skills`; this is an open decision (ADR-015).

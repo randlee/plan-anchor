@@ -1,6 +1,6 @@
 # Plan anchoring: data model, verdict gating and lifecycle
 
-Companion to [architecture and call graphs](architecture-and-call-graphs.md). Covers what is stored, how independent Jev answers become one verdict, and how an anchor moves through its life.
+Companion to [architecture and call graphs](architecture-and-call-graphs.md). Covers what is stored, how independent Jev answers become one verdict, and how an anchor moves through its life. Describes the code at 0.8.3 (`fix/0.8.3-errors`).
 
 ## 1. Artifacts
 
@@ -59,9 +59,10 @@ classDiagram
         context
         summary : table label, never judged
         scope : feeds the relevance question
+        kind : directive | prohibition | structural
         deterministic_check
         fixtures : pass[], fail[]
-        question_overrides : plan?, dev?
+        question_overrides : plan?, dev? (read, never written by a command)
         exclude : item, reason []
         version : int
         status : proposed | locked | promoted | retired
@@ -79,16 +80,19 @@ classDiagram
         threshold
         dry_run, fixture
         results : Result[]
-        summary : counts, failing, errors, excluded, shortened, pass
+        summary : counts, failing, leaning_counts, unstable, errors, excluded, shortened, pass
     }
     class Result {
         anchor_id
+        kind
         statement, stated_by, stated_at, context
         question_set : gate, version, overridden
         questions_sha256
         answers : per question choice, probabilities, confidence
         verdict
-        leaning, confirmed, unstable
+        leaning, near_threshold, confirmed, unstable, confirm_error
+        low_questions
+        error
         exclusion : item, reason
         min_confidence
         attempts, item_chars_sent, item_shortened
@@ -103,7 +107,8 @@ classDiagram
 Rules that follow from the model:
 
 - `quote` is immutable: the user's words. `statement` is the instrument Jev judges; it may be reworded for testability (`update --statement`), and every run file copies the statement it judged, so past verdicts keep their meaning. A changed directive is a new anchor; the old one is retired with `replaced_by` in its history.
-- `version` bumps on statement, scope, summary, fixtures, overrides or status changes. `exclude` (items the anchor does not apply to, each with a reason) never bumps it: `judge` skips the cell with no Jev call and reports `excluded`, which passes.
+- `version` bumps on every `update` that changes something (statement, kind, scope, summary, deterministic check, fixtures), on `retire` and on `promote`. `exclude` (items the anchor does not apply to, each with a reason) and `set-beads` never bump it: `judge` skips an excluded cell with no Jev call and reports `excluded`, which passes. No command writes `question_overrides`; `judge` reads them from the record and then merges `--overrides-file` (from the question beads) over them.
+- `kind` defaults to `directive` (a record without it is one). It changes the gating (§4).
 - `ANC-NNN` is allocated by the script as max plus one and never reused. REQ and ADR anchors use their register ID so a report line points at the register directly.
 - `summary` exists for tables; Jev never sees it. `scope` is sent, because it drives the relevance question.
 
@@ -135,7 +140,7 @@ Each question isolates one failure mode and says explicitly what it does not jud
 
 ## 4. Verdict gating
 
-Jev returns a `choice` and a `confidence` per question. The script combines them with threshold `t` (default 0.6), evaluated top to bottom, first match wins.
+Jev returns a `choice` and a `confidence` per question. The script combines them with threshold `t` (default 0.6), evaluated top to bottom, first match wins. The chart is a directive (and a structural anchor at the development gate).
 
 ```mermaid
 flowchart TD
@@ -147,7 +152,9 @@ flowchart TD
     U -- "yes" --> US["underspecified"]
     U -- "no" --> A{"compliance?"}
     A -- "no" --> NAd["not_addressed"]
-    A -- "yes" --> E{"evidence role exists and<br/>evidence = no with confidence ≥ t?"}
+    A -- "yes" --> K{"conflict = no<br/>and confidence ≥ t?"}
+    K -- "no" --> US
+    K -- "yes" --> E{"evidence role exists and<br/>evidence = no with confidence ≥ t?"}
     E -- "yes" --> AO["asserted_only"]
     E -- "no" --> SAT["satisfied"]
 
@@ -159,7 +166,14 @@ flowchart TD
     class NA na
 ```
 
-Severity order for sorting and reports: `contradicted` > `not_addressed` > `asserted_only` > `underspecified` > `satisfied` > `not_applicable`. A run passes when no result is in the failing set or `error`. Contradiction outranks underspecification because a confident conflict is actionable even when relevance was shaky. `min_confidence` is reported so an anchor that is `underspecified` across many beads can be recognised as badly worded rather than the beads being vague.
+Other kinds:
+
+- A `prohibition` ignores compliance: `not_applicable` on a confident relevance `no`, `contradicted` on a confident conflict `yes`, `underspecified` when relevance is unclear or below `t` or conflict is not a confident `no`, `asserted_only` when the evidence is a confident `no`, else `satisfied`.
+- A `structural` anchor is not sent to Jev at the planning gate: its verdict is `deterministic_only`, which passes, and its deterministic check is what verifies it.
+
+A live answer to a gating role within 0.10 of `t` is asked again with the identical request (`--no-confirm` turns this off; fixture answers are never re-asked). Agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable` and both verdicts. Every result carries `leaning`, the verdict at `t = 0`, and an `underspecified` one lists its `low_questions`.
+
+Severity order for sorting and reports: `contradicted` > `not_addressed` > `asserted_only` > `underspecified` > `satisfied` > `not_applicable` > `deterministic_only` > `excluded` > `error`. The failing set is the first four. A run passes when no result is in the failing set or `error`, and it is not a dry run; a cell with `error` also makes `judge` exit 2. Contradiction outranks underspecification because a confident conflict is actionable even when relevance was shaky. `min_confidence` is reported so an anchor that is `underspecified` across many beads can be recognised as badly worded rather than the beads being vague.
 
 What each verdict means for the caller:
 
@@ -172,6 +186,8 @@ What each verdict means for the caller:
 | `satisfied` | Nothing | Run the paired deterministic check |
 | `not_applicable` | Nothing, unless the anchor should have applied (scope too narrow) | Same |
 | `excluded` | Nothing; Jev was not asked, the anchor's `exclude` names this item with a reason | Same |
+| `deterministic_only` | Nothing from Jev; run the structural anchor's deterministic check | n/a (judged as a directive) |
+| `error` | Jev gave no answer; the run exits 2 and `data.failures` names the cell | Same |
 
 Before editing on any failing verdict, the caller re-reads the exact text that was sent (the item file) at the point the anchor governs. If Jev looks wrong, the posted report says so with the reason and the user is asked, rather than rewording the bead until Jev agrees.
 
@@ -193,9 +209,9 @@ Jev cannot count or compare across beads, so "is ANC-012 satisfied anywhere" and
 
 ```mermaid
 stateDiagram-v2
-    [*] --> proposed : detected and quoted, not yet confirmed
-    proposed --> locked : user confirms or says lock this
-    proposed --> retired : never confirmed
+    [*] --> proposed : add (default status proposed)
+    [*] --> locked : add with status locked, after the user confirms
+    proposed --> retired : retire
     locked --> promoted : promote --adr ADR-NNNN (keeps ID, gains ADR ref)
     locked --> retired : directive changed or withdrawn; new anchor replaces it
     promoted --> retired : ADR superseded
@@ -212,7 +228,7 @@ stateDiagram-v2
     end note
 ```
 
-Only `locked` and `promoted` anchors are judged by `--all`; an explicit `--anchor` on a proposed or retired anchor is refused. Fixtures (`pass` and `fail` sentences) are drafted at lock time and approved by the user; `check-fixtures` judges them as items to confirm the question wording lands them where expected, and `--answers-file` fixtures exercise the gating offline in CI.
+No subcommand moves a `proposed` anchor to `locked` (`update` has no status flag); a confirmed anchor is added with `--status locked`. `promote` does not check the status, so it also accepts a proposed or retired anchor. Only `locked` and `promoted` anchors are judged by `--all`; an explicit `--anchor` on a proposed or retired anchor is refused (`ANCHOR.NOT_LOCKED`) unless `--include-unlocked` is given. Fixtures (`pass` and `fail` sentences) are drafted at lock time and approved by the user; `check-fixtures` judges them as items to confirm the question wording lands them where expected, and `--answers-file` fixtures exercise the gating offline in CI.
 
 ## 7. Capture, as a sequence
 

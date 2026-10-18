@@ -2,7 +2,7 @@
 
 Status: draft. Anchor exclusions and the `Result` conversion are built
 (0.7.0); stand-ins, `follow-up`, `fast_agents` and the tuning prompt are not
-built on `main` at 0.8.1 (ADR-011), and the settings schema still rejects a
+built at 0.8.3 (ADR-011), and the settings schema still rejects a
 `fast_agents` key.
 
 ## Goal
