@@ -59,7 +59,7 @@ def record(*anchors):
     return {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "intent.md", "anchors": list(anchors)}
 
 
-def run_file(gate="plan", item="bd-42", results=None):
+def run_file(gate="plan", item="ex-42", results=None):
     return {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-x", "gate": gate, "created_at": "2026-10-10T00:00:00+00:00",
             "item": {"id": item, "title": "", "chars": 1}, "threshold": 0.6, "dry_run": False,
             "results": results if results is not None else [{"anchor_id": "ANC-001", "verdict": "satisfied"}],
@@ -122,7 +122,7 @@ def http_error(status, body=b"", headers=None):
 LIVE = {"TYPESAFE_API_KEY": "sk-test-0001"}
 LOCKED = record(anchor())
 ITEM = "Sprint 2 copies the legacy runtime crates.\n"
-JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "bd-42", "--item-file", "item.txt", "--run-dir", "runs"]
+JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", "item.txt", "--run-dir", "runs"]
 ADD = ["add", "--anchors", "anchors.json", "--stated-at", "2026-10-09"]
 
 # name: (argv, files, env, stdin, exit code, expected error object or None, expected data)
@@ -232,18 +232,18 @@ JEV_CASES = {
                    "suggested_action": "Run `judge` first, or check the --runs path."}, None),
     "runs_mismatch_gate": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(gate="dev")}, {}, None, 2,
                            {"code": "RUNS.MISMATCH", "message": "runs are for different gates", "recoverable": False, "suggested_action": ""}, None),
-    "runs_mismatch_item": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(item="bd-9")}, {}, None, 2,
-                           {"code": "RUNS.MISMATCH", "message": "runs are for different items (bd-42 vs bd-9)", "recoverable": False,
+    "runs_mismatch_item": (["diff", "--prev", "p.json", "--next", "n.json"], {"p.json": run_file(), "n.json": run_file(item="ex-9")}, {}, None, 2,
+                           {"code": "RUNS.MISMATCH", "message": "runs are for different items (ex-42 vs ex-9)", "recoverable": False,
                             "suggested_action": "Diff two runs of the same bead or sprint."}, None),
     "script_internal": (["coverage", "--runs", "runs"], {"runs/a.json": run_file(results=[{"verdict": "x"}])}, {}, None, 2,
                         {"code": "SCRIPT.INTERNAL", "message": "KeyError: 'anchor_id'", "recoverable": False,
                          "suggested_action": "Report this with the command line; check the JSON inputs against references/anchor-document.md."}, None),
     "plan_too_large": (JUDGE + ["--dry-run", "--max-item-chars", "100"], {"anchors.json": LOCKED, "item.txt": "# T\n\n## Description\n\n" + "prose " * 40}, {}, None, 2,
                        {"code": "PLAN.TOO_LARGE",
-                        "message": "plan bead bd-42 is 261 characters after long code was reduced to signatures (261 prose, 0 code; by section: Description 257, (title) 5); the plan-gate item budget is --max-item-chars 100. A reasonable plan bead fits in one Jev request; this one is asking too much",
+                        "message": "plan bead ex-42 is 261 characters after long code was reduced to signatures (261 prose, 0 code; by section: Description 257, (title) 5); the plan-gate item budget is --max-item-chars 100. A reasonable plan bead fits in one Jev request; this one is asking too much",
                         "recoverable": False,
                         "suggested_action": "Oversize is a symptom; judge its cause before changing the bead. First remove work that no anchor, requirement or user-approved issue asks for and the change does not need. Then cut prose and process ceremony that does not serve a deliverable. Split only approved work that is still too large after that. Never split, trim or raise a limit just to pass the gate. See references/plan-size-and-shape.md"},
-                       {"item_id": "bd-42", "size": {"sections": {"(title)": 5, "Description": 257}, "code_chars": 0, "prose_chars": 261},
+                       {"item_id": "ex-42", "size": {"sections": {"(title)": 5, "Description": 257}, "code_chars": 0, "prose_chars": 261},
                         "shape": {"chars": 261, "chars_after_reduction": 261, "code_reduced": {"blocks": 0, "lines": 0},
                                   "sections": {"title": 5, "description": 257}, "code_chars": 0, "prose_chars": 261, "code_lines": 0,
                                   "prose_lines": 2, "fenced_blocks": 0, "bullets": 0, "table_rows": 0,
@@ -285,14 +285,15 @@ class JevJudgeErrorContracts(unittest.TestCase):
             self.assertEqual(out["error"], {"code": "VALIDATION.ANCHORS", "message": "1 problem(s) in anchors.json", "recoverable": True,
                                             "suggested_action": "Fix the listed problems and re-run validate."})
 
-    def test_non_numeric_environment_number_exits_two_with_json(self):
-        env = dict(os.environ, PLAN_ANCHOR_MAX_ITEM_CHARS="lots")
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "validate", "--anchors", "x"], env=env,
-                              capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(proc.returncode, 2)
-        self.assertEqual(proc.stdout, json.dumps({"success": False, "data": None, "error": {
-            "code": "VALIDATION.INPUT", "message": "PLAN_ANCHOR_MAX_ITEM_CHARS='lots' is not a number", "recoverable": False,
-            "suggested_action": "Unset PLAN_ANCHOR_MAX_ITEM_CHARS or give it a numeric value."}}, indent=2) + "\n")
+    def test_non_numeric_flag_exits_two_with_json(self):
+        for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
+                                   "--item-id", "ex-1", "--item-text", "t", "--dry-run", flag, value],
+                                  capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(proc.returncode, 2, flag)
+            self.assertEqual(json.loads(proc.stdout), {"success": False, "data": None, "error": {
+                "code": "VALIDATION.INPUT", "message": f"jev_judge.py judge: argument {flag}: invalid {kind} value: {value!r}",
+                "recoverable": False, "suggested_action": "Run 'jev_judge.py <subcommand> --help' for the accepted arguments."}})
 
 
 class JevTransportErrorContracts(unittest.TestCase):
@@ -304,7 +305,7 @@ class JevTransportErrorContracts(unittest.TestCase):
                 mock.patch.object(jj.urllib.request, "urlopen", side_effect=list(responses)) as opened, \
                 mock.patch.object(jj, "_sleep", sleeps.append), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)):
-            argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "bd-42", "--item-file", "item.txt",
+            argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
             code, out = call_main(jj.main, argv, env=LIVE)
         return code, out, opened.call_count, sleeps
@@ -351,14 +352,14 @@ class JevTransportErrorContracts(unittest.TestCase):
         code, out, calls, _ = self.judge([http_error(418, b"teapot")])
         self.assertEqual((code, calls), (1, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.HTTP", "message": "Jev HTTP 418; response body withheld",
-                                                               "recoverable": False, "suggested_action": "Check the request body and PLAN_ANCHOR_JEV_URL."})
+                                                               "recoverable": False, "suggested_action": "Check the request body."})
 
     def test_plan_gate_context_overflow_is_plan_too_large_and_dev_gate_shortens(self):
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens exceeded")])
         error = out["data"]["results"][0]["error"]
         self.assertEqual((code, calls, error["code"], error["recoverable"]), (1, 1, "PLAN.TOO_LARGE", False))
         self.assertIn("Jev rejected it for context size (Jev HTTP 400: request exceeds the model's context window)", error["message"])
-        self.assertEqual(error["data"]["item_id"], "bd-42")
+        self.assertEqual(error["data"]["item_id"], "ex-42")
 
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens"), http_error(400, b"max_tokens")], gate="dev",
                                          extra=("--min-item-chars", "1000"), item="evidence " * 200)
@@ -373,7 +374,7 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def test_dry_run_request_that_cannot_fit_reports_context_exceeded(self):
         with Workspace({"anchors.json": LOCKED, "item.txt": "evidence " * 1000}):
-            code, out = call_main(jj.main, ["judge", "--anchors", "anchors.json", "--gate", "dev", "--all", "--item-id", "bd-42", "--item-file", "item.txt",
+            code, out = call_main(jj.main, ["judge", "--anchors", "anchors.json", "--gate", "dev", "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                                             "--run-dir", "runs", "--dry-run", "--max-request-bytes", "1000", "--min-item-chars", "2000"])
         result = out["data"]["results"][0]
         self.assertEqual((code, result["explanation"]), (0, "dry run; request does not fit"))

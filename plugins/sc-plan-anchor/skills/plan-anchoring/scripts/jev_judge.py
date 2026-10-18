@@ -89,39 +89,18 @@ import urllib.request
 from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result  # noqa: E402
 
 
-def parse_env_number(name: str, default, cast) -> Result[Any, ToolError]:
-    """Read a numeric environment variable; Ok(default) when unset or blank, Err when it is not a number."""
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return Ok(default)
-    try:
-        return Ok(cast(raw))
-    except ValueError:
-        return err("VALIDATION.INPUT", f"{name}={raw!r} is not a number", f"Unset {name} or give it a numeric value.")
-
-
-def _env_number(name: str, default, cast):
-    """Module-load boundary for parse_env_number: a non-numeric value is a JSON error and exit 2, not a traceback."""
-    parsed = parse_env_number(name, default, cast)
-    if isinstance(parsed, Err):
-        print(json.dumps({"success": False, "data": None, "error": parsed.error.to_json()}, indent=2))
-        sys.exit(2)
-    return parsed.value
-
-
-JEV_URL = os.environ.get("PLAN_ANCHOR_JEV_URL", "https://api.typesafe.ai/v1/systemone")
-DEFAULT_MODEL = os.environ.get("PLAN_ANCHOR_JEV_MODEL", "jev-latest")
-DEFAULT_THRESHOLD = _env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float)
-DEFAULT_MAX_ITEM_CHARS = _env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int)
-DEFAULT_MAX_CODE_LINES = _env_number("PLAN_ANCHOR_MAX_CODE_LINES", 8, int)  # plan gate: shortest fenced block that may go to Jev as signatures when a bead does not fit
+JEV_URL = "https://api.typesafe.ai/v1/systemone"  # tests redirect by patching this constant in-process
+DEFAULT_MODEL = "jev-latest"
+DEFAULT_THRESHOLD = 0.6
+DEFAULT_MAX_ITEM_CHARS = 24000
+DEFAULT_MAX_CODE_LINES = 8  # plan gate: shortest fenced block that may go to Jev as signatures when a bead does not fit
 CODE_REDACTION_MARKER = "<redacted: {dropped} of {total} code lines are in the plan but were not sent to Jev>"
 DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a planted contradiction 28k deep scored 0.46 vs 0.79 near the top)
 DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
-DEFAULT_CONFIRM_NEAR = os.environ.get("PLAN_ANCHOR_CONFIRM_NEAR", "1") != "0"
 DEFAULT_MIN_ITEM_CHARS = 2000      # below this the item is not shortened further on a context overflow
 MAX_RESPONSE_BYTES = 1048576
 MAX_ATTEMPTS = 3                   # per anchor, for transport-level failures (429, 529, 5xx, network, bad response)
@@ -1560,7 +1539,7 @@ def http_error(status: int, text: str, retry_after=None) -> JudgeError:
     code = {429: "JEV.RATE_LIMITED", 529: "JEV.OVERLOADED"}.get(status, "JEV.HTTP")
     transient = status in (429, 529) or status >= 500
     return JudgeError(code, f"Jev HTTP {status}; response body withheld", recoverable=transient,
-                      action="Retry with backoff" if transient else "Check the request body and PLAN_ANCHOR_JEV_URL.",
+                      action="Retry with backoff" if transient else "Check the request body.",
                       status=status, retry_after=retry_after)
 
 
@@ -1583,13 +1562,13 @@ def call_jev(body: dict, api_key: str, timeout: float) -> Result[dict, JudgeErro
     except (OSError, http.client.HTTPException) as exc:
         return fail("JEV.NETWORK", f"Jev connection failed: {type(exc).__name__}: {exc}", recoverable=True, action="Check network access and retry.")
     if len(raw) > MAX_RESPONSE_BYTES:
-        return fail("JEV.RESPONSE_INVALID", "Jev response exceeded the size limit", recoverable=True, action="Retry once; if it repeats, check PLAN_ANCHOR_JEV_URL.")
+        return fail("JEV.RESPONSE_INVALID", "Jev response exceeded the size limit", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
     try:
         parsed = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeError):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not JSON", recoverable=True, action="Retry once; if it repeats, check PLAN_ANCHOR_JEV_URL.")
+        return fail("JEV.RESPONSE_INVALID", "Jev response was not JSON", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
     if not isinstance(parsed, dict):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not a JSON object", recoverable=True, action="Check PLAN_ANCHOR_JEV_URL points at the systemone endpoint.")
+        return fail("JEV.RESPONSE_INVALID", "Jev response was not a JSON object", recoverable=True, action="Check for a proxy rewriting the response.")
     return Ok(parsed)
 
 
@@ -1737,7 +1716,7 @@ def answer_problem(ans, question) -> str:
 def validate_response(resp: dict, questions: dict) -> Result[dict, JudgeError]:
     if not isinstance(resp, dict) or not isinstance(resp.get("answers"), dict):
         return fail("JEV.RESPONSE_INVALID", "Jev response has no 'answers' object", recoverable=True,
-                    action="Retry; if it repeats, check PLAN_ANCHOR_JEV_URL and the model name.")
+                    action="Retry; if it repeats, check the --model name.")
     answers = resp["answers"]
     if set(answers) != set(questions):
         missing, extra = sorted(set(questions) - set(answers)), sorted(set(answers) - set(questions))
@@ -1950,12 +1929,8 @@ def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeErr
 
 
 def confirm_enabled(args) -> bool:
-    """--no-confirm wins; --confirm-near-threshold forces on; otherwise PLAN_ANCHOR_CONFIRM_NEAR (default on)."""
-    if getattr(args, "no_confirm", False):
-        return False
-    if getattr(args, "confirm_near_threshold", False):
-        return True
-    return os.environ.get("PLAN_ANCHOR_CONFIRM_NEAR", "1") != "0"
+    """--no-confirm wins; otherwise on (the default; --confirm-near-threshold states it explicitly)."""
+    return not getattr(args, "no_confirm", False)
 
 
 REMOTE_JUDGE_SETTING = ".sc/plan-anchor/settings.yaml"
@@ -3047,7 +3022,7 @@ def add_judge_options(parser, with_item: bool) -> None:
                              "serialised request is under this; plan gate: refuse a bead that does not fit")
     parser.add_argument("--confirm-near-threshold", action="store_true", default=False,
                         help=f"re-judge once when a gating confidence is within {NEAR_THRESHOLD_BAND} of the threshold and require agreement "
-                             "(the default; PLAN_ANCHOR_CONFIRM_NEAR=0 turns it off)")
+                             "(the default; --no-confirm turns it off)")
     parser.add_argument("--no-confirm", action="store_true", help="never re-judge near the threshold")
     parser.add_argument("--min-item-chars", type=int, default=DEFAULT_MIN_ITEM_CHARS,
                         help="never shorten the item below this on a context overflow; record JEV.CONTEXT_EXCEEDED instead")

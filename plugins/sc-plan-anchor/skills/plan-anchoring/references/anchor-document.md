@@ -1,6 +1,6 @@
 ---
 name: anchor-document
-version: 0.7.1
+version: 0.7.3
 description: The intent document, the anchors.json record of truth and its rendered anchors.md, ID rules, provenance, versioning, promotion, and retirement.
 ---
 
@@ -67,7 +67,7 @@ Full example: `assets/examples/anchors.example.json`. Run `validate` after any c
 ## IDs
 
 - `ANC-NNN` is max existing plus one, zero-padded to three digits; never reused, even after retirement.
-- REQ and ADR anchors use their register ID, so `bd-42 · REQ-014 · not addressed` points at the register.
+- REQ and ADR anchors use their register ID, so `ex-42 · REQ-014 · not addressed` points at the register.
 - Bead IDs are recorded on the anchor, not the reverse; the record is the single place to look.
 
 ## Lifecycle

@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.7.1
+version: 0.7.3
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: grok[effort=high]
 is_background: true

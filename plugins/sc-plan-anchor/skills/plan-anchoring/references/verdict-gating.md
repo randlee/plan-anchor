@@ -1,6 +1,6 @@
 ---
 name: verdict-gating
-version: 0.7.1
+version: 0.7.3
 description: How jev_judge.py turns independent Jev answers into one verdict per anchor and item, the role contract, thresholds, severity order, pass criteria and exit codes, coverage, run diffs, and offline fixtures.
 ---
 
@@ -32,7 +32,7 @@ An anchor whose `exclude` list names the item (`--item-id`, exact match) is not 
 
 ## From answers to a verdict
 
-Each `choice` answer gives a `choice` and a `confidence` in [0, 1]. The threshold `t` defaults to 0.6 (`--threshold`, or `PLAN_ANCHOR_CONFIDENCE_THRESHOLD`). Evaluated in order; the first match wins:
+Each `choice` answer gives a `choice` and a `confidence` in [0, 1]. The threshold `t` defaults to 0.6 (`--threshold`). Evaluated in order; the first match wins:
 
 | # | Condition | Verdict |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ Takes the latest non-dry run per (gate, item), builds the anchor x item matrix, 
 ## Diffing runs
 
 ```bash
-python3 "$S" diff --prev anchor-runs/plan-<older>-bd-42.json --next anchor-runs/plan-<newer>-bd-42.json
+python3 "$S" diff --prev anchor-runs/plan-<older>-ex-42.json --next anchor-runs/plan-<newer>-ex-42.json
 ```
 
 Lists changed, added, and removed verdicts for the same gate and item (`RUNS.MISMATCH` otherwise), with `pass_to_fail` and `fail_to_pass` lists (`regressions` is `pass_to_fail`), and pass before and after. Movement is not correctness: on a measured tuning round every `satisfied` to `not_addressed` flip was a correction (measured-behaviour.md). `--expected <json {anchor_id: verdict}>` reports corrections and regressions relative to what is known to be right. Run it after every plan edit. Two runs of one item in the same second get distinct file names (`-2`, `-3`).

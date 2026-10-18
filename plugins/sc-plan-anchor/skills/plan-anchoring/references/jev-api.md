@@ -1,6 +1,6 @@
 ---
 name: jev-api
-version: 0.7.1
+version: 0.7.3
 description: How jev_judge.py talks to TypeSafe's Jev - endpoint, auth, request and response shape, validation, limits, the retry and context-shortening policy, every error code and flag, model pinning, and the committed allow_remote_judge setting that gates every call.
 ---
 
@@ -19,7 +19,7 @@ Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --
 
 ## Endpoint and auth
 
-- `POST https://api.typesafe.ai/v1/systemone` (override with `PLAN_ANCHOR_JEV_URL` for a proxy or mock)
+- `POST https://api.typesafe.ai/v1/systemone`
 - `Authorization: Bearer $TYPESAFE_API_KEY`, `Content-Type: application/json`
 
 ## Request
@@ -29,7 +29,7 @@ Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --
   "model": "jev-latest",
   "state": {
     "anchor": {"id": "ANC-012", "statement": "...", "scope": "..."},
-    "item": {"id": "bd-42", "title": "...", "text": "..."}
+    "item": {"id": "ex-42", "title": "...", "text": "..."}
   },
   "questions": {
     "relevant":     {"type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}},
@@ -82,7 +82,7 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 
 ## Models
 
-`jev-latest` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) via `PLAN_ANCHOR_JEV_MODEL=jev-1.13.0` or `--model`.
+`jev-latest` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) with `--model jev-1.13.0`.
 
 ## Error codes
 
@@ -138,7 +138,7 @@ Fatal codes abort with exit 2 and `success: false`. Transient codes land in `res
 | `--overrides-file` | none | Per-anchor overrides read from the question beads |
 | `--max-item-chars` | 24,000 | Development gate: truncate the evidence to this. Planning gate: refuse a larger bead with `PLAN.TOO_LARGE` |
 | `--max-request-bytes` | 24,000 plan / 64,000 dev | Pre-flight cap on the serialised request (planning gate: refuse; development gate: shorten) |
-| `--confirm-near-threshold` | on | Re-ask once when a required-role confidence is within 0.10 of the threshold; disagreement makes the cell `underspecified` with `unstable: true` (`--no-confirm`, `PLAN_ANCHOR_CONFIRM_NEAR=0`) |
+| `--confirm-near-threshold` | on | Re-ask once when a required-role confidence is within 0.10 of the threshold; disagreement makes the cell `underspecified` with `unstable: true` (`--no-confirm` turns it off) |
 | `--max-code-lines` | 8 | Planning gate: the shortest fenced block that may be sent as signatures plus a redaction marker, only when the bead would not otherwise fit (`plan-size-and-shape.md`) |
 | `--min-item-chars` | 2,000 | Development gate: floor for context shortening |
 | `--timeout` | 30 s | Per-request socket timeout |
@@ -155,10 +155,7 @@ TypeSafe prices input tokens only (output is free) at a fraction of a cent per m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TYPESAFE_API_KEY` | none | Required for live runs |
-| `PLAN_ANCHOR_JEV_MODEL` | `jev-latest` | Model alias or pinned version |
-| `PLAN_ANCHOR_JEV_URL` | TypeSafe endpoint | Proxy or mock server |
-| `PLAN_ANCHOR_CONFIDENCE_THRESHOLD` | `0.6` | Gating threshold |
-| `PLAN_ANCHOR_MAX_ITEM_CHARS` | `24000` | Evidence truncation (development gate) and bead size limit (planning gate) |
-| `PLAN_ANCHOR_MAX_CODE_LINES` | `8` | Default for `--max-code-lines` |
+
+It is the only environment variable the plugin reads. Model, threshold, size limits and near-threshold confirmation are the flags above, with checked-in defaults.
 
 Codex environment policy for `TYPESAFE_API_KEY`: `installation-and-troubleshooting.md`.

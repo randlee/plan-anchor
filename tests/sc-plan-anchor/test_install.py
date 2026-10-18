@@ -6,6 +6,7 @@ PLAN_ANCHOR_REQUIRE_SC_COMPOSE=1, which turns those skips into failures.
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import importlib
 import importlib.util
@@ -82,11 +83,20 @@ def sha(data):
 
 # ---------------------------------------------------------------- single-tracker text
 
-BD_WORD = re.compile(r"(?<![\w./<-])bd(?![\w-])")
-BR_WORD = re.compile(r"(?<![\w./<-])br(?![\w-])")
-# The install reference documents choosing and switching trackers, so every
-# rendering names both; it is the one file exempt from the single-tracker rule.
-MIXED_BY_DESIGN = {"references/installation-and-troubleshooting.md"}
+# Whole-word tracker names, including example ids such as bd-42; a path segment
+# (scripts/bd_x.py, .beads/) is not a mention.
+BD_WORD = re.compile(r"(?<![\w./<-])bd(?!\w)")
+BR_WORD = re.compile(r"(?<![\w./<-])br(?!\w)")
+# Installed files that may name both trackers, each with its reason. Every
+# other installed file (prompt text and data alike) names only the selected one.
+MIXED_BY_DESIGN = {
+    "references/installation-and-troubleshooting.md": "the install guide explains choosing and switching trackers",
+    "scripts/*.py": "code, not prompt text: the scripts support both trackers at run time",
+}
+
+
+def mixed_by_design(rel):
+    return any(fnmatch.fnmatchcase(rel, pattern) for pattern in MIXED_BY_DESIGN)
 
 
 def other_tracker_mentions(text, tracker):
@@ -187,7 +197,7 @@ class RenderingTests(unittest.TestCase):
         for tracker in inst.TRACKERS:
             for target in inst.TARGETS:
                 for rel in self.package.skill:
-                    if not rel.endswith(".md") or rel in MIXED_BY_DESIGN:
+                    if mixed_by_design(rel):
                         continue
                     text = self.renderer.skill_file(rel, tracker).value.decode("utf-8")
                     self.assertEqual(other_tracker_mentions(text, tracker), [], f"{tracker} render of {rel}")
@@ -221,7 +231,12 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(other_tracker_mentions("use bd here\n", "br"))
         self.assertTrue(other_tracker_mentions("run br ready\n", "bd"))
         self.assertTrue(other_tracker_mentions("the gate requires bd and a Dolt-backed `.beads/`\n", "br"))
-        self.assertEqual(other_tracker_mentions("IDs look like bd-42 in scripts/bd_x.py\n", "br"), [])
+        self.assertTrue(other_tracker_mentions("the item is bd-42\n", "br"))
+        self.assertTrue(other_tracker_mentions("the item is br-42\n", "bd"))
+        self.assertEqual(other_tracker_mentions("IDs look like ex-42 in scripts/bd_x.py and .beads/\n", "br"), [])
+        self.assertTrue(mixed_by_design("scripts/jev_judge.py"))
+        self.assertFalse(mixed_by_design("references/jev-api.md"))
+        self.assertFalse(mixed_by_design("assets/schemas/anchor-tuning-request.schema.json"))
         # A drifted committed file is caught by the neutral comparison.
         rel = "references/bead-layout.md"
         text = self.render(TEMPLATES / "skills" / "plan-anchoring" / f"{rel}.j2", "neutral")
