@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 PLAN = ROOT / "docs" / "plans" / "phase-a"
 
 
@@ -419,20 +419,16 @@ class AnchorTuningContractTests(unittest.TestCase):
                             self.validate(result, "anchor-tuning-result.schema.json")
 
     def test_harness_prompts_keep_tournament_and_production_separate(self):
-        for harness, model in ((".claude", "opus"), (".codex", "sol"), (".cursor", "grok[effort=high]")):
-            text = (
-                ROOT
-                / "plugins"
-                / "sc-plan-anchor"
-                / harness
-                / "agents"
-                / "anchor-tuning.md"
-            ).read_text(encoding="utf-8")
-            self.assertLess(len(text.encode("utf-8")), 10 * 1024)
-            self.assertIn(f"model: {model}", text)
-            self.assertIn("confidence threshold `0.0`", text)
-            self.assertIn("Never use threshold-free tournament semantics for production", text)
-            self.assertIn("production_confidence_threshold", text)
+        from layout_support import TRACKERS, rendered_agent
+        for tracker in TRACKERS:
+            for harness, model in (("claude", "opus"), ("codex", "sol"), ("cursor", "grok[effort=high]")):
+                text = rendered_agent(tracker, harness, "anchor-tuning.md").read_text(encoding="utf-8")
+                with self.subTest(tracker=tracker, harness=harness):
+                    self.assertLess(len(text.encode("utf-8")), 10 * 1024)
+                    self.assertIn(f"model: {model}", text)
+                    self.assertIn("confidence threshold `0.0`", text)
+                    self.assertIn("Never use threshold-free tournament semantics for production", text)
+                    self.assertIn("production_confidence_threshold", text)
 
 
 if __name__ == "__main__":

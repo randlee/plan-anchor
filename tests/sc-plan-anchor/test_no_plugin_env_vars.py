@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPTS = PLUGIN / "skills" / "plan-anchoring" / "scripts"
+SCRIPTS = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
 JUDGE_SCRIPT = SCRIPTS / "jev_judge.py"
 
 # Each would change behaviour, or fail at import, if it were still read.

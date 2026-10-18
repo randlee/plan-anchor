@@ -2,7 +2,7 @@
 name: sc-plan-anchor-reference-catalog
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -25,7 +25,7 @@ version: {{ version }}
 
 - `references/anchor-capture.md` - detecting, proposing, confirming, and wording anchors
 - `references/anchor-document.md` - intent.md, anchors.json schema, anchors.md, IDs, lifecycle
-- `references/bead-layout.md` - {% if tracker == "br" %}the anchor bead tree, br commands,{% elif tracker == "bd" %}the anchor bead tree, bd commands,{% else %}the anchor bead tree, br and bd commands,{% endif %} labels, overrides in beads, reading beads
+- `references/bead-layout.md` - {% if tracker == "br" %}the anchor bead tree, br commands,{% elif tracker == "bd" %}the anchor bead tree, bd commands,{% endif %} labels, overrides in beads, reading beads
 - `references/question-tuning.md` - the testability rubric, per-anchor question overrides, proving the wording
 - `references/triage-and-iteration.md` - the run, triage, apply, re-run, diff loop and the stop conditions
 - `references/plan-size-and-shape.md` - oversized beads and phases: triage order, what Jev reads, `shape` metrics
@@ -39,7 +39,6 @@ version: {{ version }}
 - `references/jev-api.md` - endpoint, request and response, limits, retries, the `allow_remote_judge` setting, every flag and error code
 - `references/installation-and-troubleshooting.md` - {% if tracker == "br" %}installing the plugin (`install.py`), python3, br, and the API key; tracker selection and switching; PATH; Codex
 {% elif tracker == "bd" %}installing the plugin (`install.py`), python3, bd, and the API key; tracker selection and switching; PATH; Codex
-{% else %}installing the plugin (`install.py`), python3, br or bd, and the API key; tracker selection and switching; PATH; Codex
 {% endif %}- `references/agent-runner-contract.md` - one trusted agent resolution, strict fenced envelopes, and redacted attestation
 - `assets/questions/plan.json`, `assets/questions/dev.json`, `assets/questions/testability.json`, `assets/questions/dedupe.json` - the question wording of record
 - `assets/templates/intent.md`, `assets/templates/anchor-questions-bead.md`, `assets/examples/` - starting points and a worked example

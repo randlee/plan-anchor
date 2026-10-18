@@ -6,34 +6,53 @@
 #   "sc-compose>=1.7.0,<2",
 # ]
 # ///
-"""Install the sc-plan-anchor skill and agents into a repository, rendered for one tracker.
+"""Install plan-anchor (the plan-anchoring skill and its agents) into a folder, rendered for one tracker.
 
-    uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd]
+    uv run install.py --dest <folder> [--tracker br|bd]
         [--target claude,codex,cursor] [--init-br] [--overwrite] [--dry-run]
         [--allow-remote-judge | --no-remote-judge]
+    uv run install.py --dest <folder> --status     # read-only: installed vs installer version
+
+The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
+this script. Everything the script reads is inside this plugin directory.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
 sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
 header pins 3.11 (uv downloads it when needed); the code itself runs on
 Python 3.9+, so ``python3 install.py`` works wherever both packages import.
 
-What it writes, per target (default ``claude``):
-  <repo>/.<target>/skills/plan-anchoring/...   the skill
-  <repo>/.<target>/agents/anchor-*.md          the agents
-  <repo>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
-                                               ``allow_remote_judge`` when a flag gives it
-  <repo>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
+Destination. Any folder: a repository, or a parent folder holding many
+repositories (they inherit it: the gates walk up from the working directory to
+the nearest install, and the nearest settings file wins). Global harness
+locations are refused with ``INSTALL.DEST_GLOBAL``: the home directory itself,
+anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``, ``~/.agents``,
+``/etc/codex`` or Claude Code's managed-settings directory
+(which covers every plugin cache), and this plugin's own directory.
 
-Tracker text. Files whose text names the tracker are sc-compose templates in
-``install/templates/``; the committed plugin tree is their ``neutral`` render
-(both trackers, what marketplace installs read). This installer renders ``br``
-or ``bd`` strictly, so an installed copy names one tracker.
+What it writes, per target (default ``claude``):
+  <dest>/.<target>/skills/plan-anchoring/...   the skill (and registry.yaml for the agents)
+  <dest>/.<target>/agents/anchor-*.md          the agents
+  <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
+                                               ``allow_remote_judge`` when a flag gives it
+  <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
+
+Tracker text. Every prompt file (SKILL.md, every reference, the .md assets and
+every agent body) is an sc-compose template under ``install/templates/`` that
+renders strictly for ``br`` or ``bd``, so an installed copy names one tracker.
+Scripts, schemas, JSON assets and the runtime ``templates/*.md.j2`` are code
+and data and are copied verbatim. A ``.j2`` file is an install-time template
+when its frontmatter ``name`` starts with ``sc-plan-anchor-``. Agent
+frontmatter per harness lives in ``install/harness/<target>/agents/``, the
+agent registry in ``install/harness/<target>/registry.yaml``.
 
 Tracker choice reuses ``anchor_tracker.py``'s rules: ``--tracker``, else the
-settings file, else detection (a Dolt-backed ``.beads/`` is bd, anything else
-br). bd needs a Dolt-backed ``.beads/``; br needs one that is not. With no
-``.beads/`` the install fails unless ``--init-br`` runs ``br init``;
-it never runs ``bd init``. Rerunning with another ``--tracker`` re-renders every installed
+destination's settings file, else detection (a Dolt-backed ``.beads/`` is bd,
+anything else br). bd needs a Dolt-backed ``.beads/``; br needs one that is not.
+A repository with no ``.beads/`` fails unless ``--init-br`` runs ``br init``;
+it never runs bd's init. A folder that is not a repository and has no
+``.beads/`` (a parent folder) needs ``--tracker`` (or its settings file); each
+child repository's ``.beads/`` is checked against it when the gates resolve the
+tracker there. Rerunning with another ``--tracker`` re-renders every installed
 target and updates the setting; it never migrates issue data.
 
 Remote judging. ``--allow-remote-judge`` / ``--no-remote-judge`` record the
@@ -41,16 +60,18 @@ user's answer to whether plan text may be sent to TypeSafe (Jev) as
 ``allow_remote_judge: true|false``; live Jev calls are refused until it is
 ``true``. Without either flag the existing value (or its absence) is kept.
 
-Ownership. A rerun replaces a file only when its bytes are what the lock says
-this installer wrote; it removes files this version no longer ships when they
-are unchanged; it fails naming a modified or foreign file unless
-``--overwrite`` moves it to ``<repo>/.backup/<UTC>/<path>``. A repository
-vendored before the lock existed is migrated once: a file is owned when its
-bytes match something an earlier version shipped (``install/legacy-owned.json``).
-Every check runs before anything is written; ``--dry-run`` stops there.
+Ownership. A rerun (the upgrade path) replaces a file only when its bytes are
+what the lock says this installer wrote; it removes files this version no
+longer ships when they are unchanged; it fails naming a modified or foreign
+file unless ``--overwrite`` moves it to ``<dest>/.backup/<UTC>/<path>``. A
+repository vendored before the lock existed is migrated once: a file is owned
+when its bytes match something an earlier version shipped
+(``install/legacy-owned.json``). Every check runs before anything is written;
+``--dry-run`` stops there.
 
-Output: the JSON envelope ``{success, data, error}``; exit 0 on success, 2 on
-any error (an unexpected exception is ``SCRIPT.INTERNAL``).
+Output: the JSON envelope ``{success, data, error}``; exit 0 when the command
+ran (``--status`` included, whatever it found), 2 on any error (an unexpected
+exception is ``SCRIPT.INTERNAL``).
 """
 
 from __future__ import annotations
@@ -72,30 +93,33 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 SKILL_NAME = "plan-anchoring"
-SCRIPTS_DIR = PLUGIN_DIR / "skills" / SKILL_NAME / "scripts"
+INSTALL_DIR = PLUGIN_DIR / "install"
+TEMPLATES_DIR = INSTALL_DIR / "templates"
+SKILL_SRC = TEMPLATES_DIR / "skills" / SKILL_NAME
+HARNESS_DIR = INSTALL_DIR / "harness"
+SCRIPTS_DIR = SKILL_SRC / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import anchor_tracker as rules  # noqa: E402
+from plan_anchor_paths import find_lock, global_location  # noqa: E402
 from plan_anchor_settings import (  # noqa: E402
     SCHEMA_VERSION,
     SETTINGS_RELPATH,
     Settings,
-    find_repo_root,
     read_settings,
     write_settings,
 )
 from result import Err, Ok, Result, ToolError, err  # noqa: E402
 
 PACKAGE = "sc-plan-anchor"
-INSTALL_DIR = PLUGIN_DIR / "install"
-MANIFEST_PATH = INSTALL_DIR / "manifest.json"
 LEGACY_PATH = INSTALL_DIR / "legacy-owned.json"
-TEMPLATES_DIR = INSTALL_DIR / "templates"
 LOCK_RELPATH = ".sc/plan-anchor/install-lock.json"
 BACKUP_DIR = ".backup"
 TARGETS = ("claude", "codex", "cursor")
 TRACKERS = ("br", "bd")
-RENDERINGS = ("neutral", "br", "bd")
+RENDERINGS = TRACKERS
+REGISTRY = "registry.yaml"   # per-target file installed in the skill directory
+TEMPLATE_NAME_PREFIX = "name: sc-plan-anchor-"
 SC_COMPOSE_FLOOR = (1, 7, 0)
 SC_COMPOSE_CEILING_MAJOR = 2
 SC_COMPOSE_SPEC = "sc-compose>=1.7.0,<2"
@@ -115,16 +139,20 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def version_tuple(version: Optional[str]) -> Optional[Tuple[int, int, int]]:
+    m = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", version or "")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
 # ---------------------------------------------------------------- package data
 
 
 @dataclass(frozen=True)
 class Package:
     version: str
-    skill: Tuple[str, ...]                    # paths under skills/plan-anchoring/
-    agents: Dict[str, Tuple[str, ...]]        # target -> agent file names
-    skill_templates: frozenset
-    agent_templates: frozenset
+    skill: Tuple[str, ...]                    # paths under .<target>/skills/plan-anchoring/
+    rendered: frozenset                       # skill paths rendered from <rel>.j2
+    agents: Tuple[str, ...]                   # agent file names, the same for every target
     legacy_skill: Dict[str, Set[str]]
     legacy_agents: Dict[str, Dict[str, Set[str]]]
 
@@ -134,10 +162,26 @@ def _read_json(path: Path, code: str) -> Result[Any, ToolError]:
         return Ok(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, UnicodeError) as exc:
         return err(code, f"{path} could not be read: {type(exc).__name__}: {exc}",
-                   "Use a complete plan-anchor checkout (git status / git checkout -- plugins/sc-plan-anchor).")
+                   "Reinstall the plugin (or restore plugins/sc-plan-anchor in a source checkout).")
     except json.JSONDecodeError as exc:
         return err(code, f"{path} is not valid JSON: {exc.msg}",
-                   "Regenerate it with scripts/gen_install_data.py, or restore it from git.")
+                   "Reinstall the plugin, or regenerate it with scripts/gen_install_data.py in a source checkout.")
+
+
+def is_install_template(path: Path) -> bool:
+    """A ``.j2`` whose sc-compose frontmatter names it ``sc-plan-anchor-*`` (runtime templates are copied)."""
+    if path.suffix != ".j2":
+        return False
+    try:
+        with path.open(encoding="utf-8") as handle:
+            first, second = handle.readline(), handle.readline()
+    except (OSError, UnicodeError):
+        return False
+    return first == "---\n" and second.startswith(TEMPLATE_NAME_PREFIX)
+
+
+def _tree(base: Path) -> List[Path]:
+    return sorted(p for p in base.rglob("*") if p.is_file() and not IGNORED & set(p.relative_to(base).parts))
 
 
 def load_package(plugin_dir: Path = PLUGIN_DIR) -> Result[Package, ToolError]:
@@ -146,19 +190,35 @@ def load_package(plugin_dir: Path = PLUGIN_DIR) -> Result[Package, ToolError]:
     if isinstance(plugin, Err):
         return plugin
     version = plugin.value.get("version") if isinstance(plugin.value, dict) else None
-    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    if not isinstance(version, str) or version_tuple(version) is None:
         return err(bad, f"{plugin_dir / 'plugin.json'} declares no X.Y.Z version")
-    manifest = _read_json(plugin_dir / "install" / "manifest.json", bad)
-    if isinstance(manifest, Err):
-        return manifest
-    m = manifest.value
-    try:
-        skill = tuple(str(p) for p in m["skill"])
-        agents = {t: tuple(str(n) for n in m["agents"][t]) for t in TARGETS}
-        skill_templates = frozenset(str(p) for p in m["templates"]["skill"])
-        agent_templates = frozenset(str(p) for p in m["templates"]["agents"])
-    except (KeyError, TypeError) as exc:
-        return err(bad, f"install/manifest.json is missing {exc}", "Regenerate it with scripts/gen_install_data.py.")
+    skill_src = plugin_dir / "install" / "templates" / "skills" / SKILL_NAME
+    agents_src = plugin_dir / "install" / "templates" / "agents"
+    harness = plugin_dir / "install" / "harness"
+    if not skill_src.is_dir() or not agents_src.is_dir():
+        return err(bad, f"{plugin_dir} has no install/templates/ tree", "Reinstall the plugin.")
+    skill: List[str] = []
+    rendered: Set[str] = set()
+    for path in _tree(skill_src):
+        rel = path.relative_to(skill_src).as_posix()
+        if is_install_template(path):
+            rel = rel[: -len(".j2")]
+            rendered.add(rel)
+        skill.append(rel)
+    if "SKILL.md" not in rendered:
+        return err(bad, "install/templates/skills/plan-anchoring/SKILL.md.j2 is missing")
+    if REGISTRY in skill:
+        return err(bad, f"install/templates/skills/plan-anchoring/{REGISTRY} would shadow the per-target registry")
+    skill.append(REGISTRY)
+    agents = []
+    for path in _tree(agents_src):
+        if not is_install_template(path) or path.parent != agents_src:
+            return err(bad, f"{path.relative_to(plugin_dir).as_posix()} is not an agent template")
+        agents.append(path.name[: -len(".j2")])
+    for target in TARGETS:
+        for name in [*(f"agents/{a}" for a in agents), REGISTRY]:
+            if not (harness / target / name).is_file():
+                return err(bad, f"install/harness/{target}/{name} is missing")
     legacy = _read_json(plugin_dir / "install" / "legacy-owned.json", bad)
     if isinstance(legacy, Err):
         return legacy
@@ -168,20 +228,7 @@ def load_package(plugin_dir: Path = PLUGIN_DIR) -> Result[Package, ToolError]:
         legacy_agents = {t: {n: set(s) for n, s in lg["agents"].get(t, {}).items()} for t in TARGETS}
     except (KeyError, TypeError, AttributeError) as exc:
         return err(bad, f"install/legacy-owned.json is malformed ({exc})", "Regenerate it with scripts/gen_install_data.py.")
-    for rel in skill:
-        if not (plugin_dir / "skills" / SKILL_NAME / rel).is_file():
-            return err(bad, f"manifest lists skills/{SKILL_NAME}/{rel}, which the package does not contain")
-    for t, names in agents.items():
-        for name in names:
-            if not (plugin_dir / f".{t}" / "agents" / name).is_file():
-                return err(bad, f"manifest lists .{t}/agents/{name}, which the package does not contain")
-    for rel in skill_templates:
-        if rel not in skill or not (plugin_dir / "install" / "templates" / "skills" / SKILL_NAME / f"{rel}.j2").is_file():
-            return err(bad, f"manifest lists template {rel}, which is missing or not a shipped skill file")
-    for name in agent_templates:
-        if not (plugin_dir / "install" / "templates" / "agents" / f"{name}.j2").is_file():
-            return err(bad, f"manifest lists agent template {name}, which is missing")
-    return Ok(Package(version, skill, agents, skill_templates, agent_templates, legacy_skill, legacy_agents))
+    return Ok(Package(version, tuple(sorted(skill)), frozenset(rendered), tuple(agents), legacy_skill, legacy_agents))
 
 
 # ---------------------------------------------------------------- dependencies
@@ -210,16 +257,10 @@ def check_sc_compose() -> Result[Any, ToolError]:
 # ---------------------------------------------------------------- rendering
 
 
-def _split_frontmatter(text: str) -> Tuple[str, str]:
-    if text.startswith("---\n"):
-        end = text.find("\n---\n", 4)
-        if end >= 0:
-            return text[: end + 5], text[end + 5:]
-    return "", text
-
-
 def render_template(sc_compose: Any, template: Path, tracker: str, version: str) -> Result[str, ToolError]:
-    """Strict sc-compose render of one tracker template (``tracker`` in neutral|br|bd)."""
+    """Strict sc-compose render of one install-time template for ``tracker`` (br or bd)."""
+    if tracker not in TRACKERS:
+        raise ValueError(f"render_template got tracker {tracker!r}")  # caller bug: there is no neutral render
     template = template.resolve()
     request = sc_compose.ComposeRequest(
         str(template.parent), sc_compose.ComposeMode.file(str(template)),
@@ -237,12 +278,15 @@ def render_template(sc_compose: Any, template: Path, tracker: str, version: str)
 
 
 class Renderer:
-    """Renders and caches template output for one package and version."""
+    """Renders and caches the installed bytes of one package and version."""
 
     def __init__(self, sc_compose: Any, package: Package, plugin_dir: Path = PLUGIN_DIR) -> None:
         self.sc_compose = sc_compose
         self.package = package
         self.plugin_dir = plugin_dir
+        self.skill_src = plugin_dir / "install" / "templates" / "skills" / SKILL_NAME
+        self.agents_src = plugin_dir / "install" / "templates" / "agents"
+        self.harness = plugin_dir / "install" / "harness"
         self._cache: Dict[Tuple[str, str], str] = {}
 
     def _render(self, template: Path, tracker: str) -> Result[str, ToolError]:
@@ -254,23 +298,22 @@ class Renderer:
             self._cache[key] = out.value
         return Ok(self._cache[key])
 
-    def skill_file(self, rel: str, tracker: str) -> Result[bytes, ToolError]:
-        src = self.plugin_dir / "skills" / SKILL_NAME / rel
-        if rel not in self.package.skill_templates or tracker == "neutral":
+    def skill_source(self, rel: str, target: str) -> Path:
+        if rel == REGISTRY:
+            return self.harness / target / REGISTRY
+        return self.skill_src / (f"{rel}.j2" if rel in self.package.rendered else rel)
+
+    def skill_file(self, rel: str, tracker: str, target: str) -> Result[bytes, ToolError]:
+        src = self.skill_source(rel, target)
+        if rel not in self.package.rendered:
             return Ok(src.read_bytes())
-        out = self._render(self.plugin_dir / "install" / "templates" / "skills" / SKILL_NAME / f"{rel}.j2", tracker)
+        out = self._render(src, tracker)
         return out if isinstance(out, Err) else Ok(out.value.encode("utf-8"))
 
     def agent_file(self, target: str, name: str, tracker: str) -> Result[bytes, ToolError]:
-        src = self.plugin_dir / f".{target}" / "agents" / name
-        if name not in self.package.agent_templates or tracker == "neutral":
-            return Ok(src.read_bytes())
-        front, _ = _split_frontmatter(src.read_text(encoding="utf-8"))
-        out = self._render(self.plugin_dir / "install" / "templates" / "agents" / f"{name}.j2", tracker)
+        front = (self.harness / target / "agents" / name).read_text(encoding="utf-8")
+        out = self._render(self.agents_src / f"{name}.j2", tracker)
         return out if isinstance(out, Err) else Ok((front + out.value).encode("utf-8"))
-
-    def neutral_template_render(self, template: Path) -> Result[str, ToolError]:
-        return self._render(template, "neutral")
 
 
 # ---------------------------------------------------------------- lock file
@@ -318,47 +361,59 @@ class TrackerChoice:
     beads: Any                # anchor_tracker.BeadsState
     init_br: bool             # br init will run
     cli_path: str
+    folder: bool = False      # not a repository and no .beads/: child repositories are checked at gate time
+
+
+def is_repository(root: Path) -> bool:
+    return (root / ".git").exists()
 
 
 def choose_tracker(root: Path, requested: Optional[str], init_br: bool, which: Which) -> Result[TrackerChoice, ToolError]:
-    settings = read_settings(root)
+    settings = read_settings(root)  # the destination's own file: the one this install writes
     if isinstance(settings, Err):
         return settings
     beads = rules.inspect_beads(root)
     if isinstance(beads, Err):
         return beads
     configured = settings.value.anchor_tracker if settings.value is not None else None
+    folder = not beads.value.exists and not is_repository(root)
     if requested:
         tracker, origin, label = requested, "--tracker", "--tracker"
     elif configured:
         tracker, origin, label = configured, "settings", f"{SETTINGS_RELPATH} anchor_tracker"
+    elif folder:
+        return err("TRACKER.REQUIRED",
+                   f"{root} is not a repository and has no .beads/, so the anchor tracker cannot be detected",
+                   "Ask the user which tracker the repositories under this folder use, then rerun with "
+                   "--tracker br or --tracker bd.", data={"evidence": beads.value.to_json()})
     else:
         tracker, origin, label = rules.detect(beads.value), "detected", "detection"
-    checked = rules.check_against_disk(tracker, beads.value, label)
-    if isinstance(checked, Err):
-        error = checked.error
-        if error.code == "TRACKER.DOLT_REQUIRED":
-            error = ToolError(error.code, error.message,
-                              "Rerun with --tracker br. bd needs a Dolt-backed .beads/ that already exists; "
-                              "provisioning Dolt is outside this installer.", error.data)
-        elif origin == "settings":
-            error = ToolError(error.code, error.message,
-                              f"Rerun with --tracker {'bd' if tracker == 'br' else 'br'} to switch, or fix {SETTINGS_RELPATH}.",
-                              error.data)
-        return Err(error)
     runs_init = False
-    if not beads.value.exists:
-        if not init_br:
-            return err("TRACKER.NOT_INITIALIZED",
-                       "the repository has no .beads/ workspace; br would be selected but is not initialized",
-                       "Rerun with --init-br to run 'br init' (the only bootstrap this installer performs), "
-                       "or run 'br init' in the repository root yourself.",
-                       data={"tracker": tracker, "evidence": beads.value.to_json()})
-        runs_init = True
+    if not folder:
+        checked = rules.check_against_disk(tracker, beads.value, label)
+        if isinstance(checked, Err):
+            error = checked.error
+            if error.code == "TRACKER.DOLT_REQUIRED":
+                error = ToolError(error.code, error.message,
+                                  "Rerun with --tracker br. bd needs a Dolt-backed .beads/ that already exists; "
+                                  "provisioning Dolt is outside this installer.", error.data)
+            elif origin == "settings":
+                error = ToolError(error.code, error.message,
+                                  f"Rerun with --tracker {'bd' if tracker == 'br' else 'br'} to switch, or fix {SETTINGS_RELPATH}.",
+                                  error.data)
+            return Err(error)
+        if not beads.value.exists:
+            if not init_br:
+                return err("TRACKER.NOT_INITIALIZED",
+                           "the repository has no .beads/ workspace; br would be selected but is not initialized",
+                           "Rerun with --init-br to run 'br init' (the only bootstrap this installer performs), "
+                           "or run 'br init' in the repository root yourself.",
+                           data={"tracker": tracker, "evidence": beads.value.to_json()})
+            runs_init = True
     cli = rules.locate_cli(tracker, which)
     if isinstance(cli, Err):
         return cli
-    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value))
+    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value, folder))
 
 
 # ---------------------------------------------------------------- plan
@@ -393,17 +448,18 @@ def _agents_prefix(target: str) -> str:
     return f".{target}/agents/"
 
 
-def wanted_files(package: Package, renderer: Renderer, targets: List[str], tracker: str,
-                 plugin_dir: Path = PLUGIN_DIR) -> Result[Dict[str, Tuple[bytes, bool]], ToolError]:
+def wanted_files(package: Package, renderer: Renderer, targets: List[str],
+                 tracker: str) -> Result[Dict[str, Tuple[bytes, bool]], ToolError]:
     out: Dict[str, Tuple[bytes, bool]] = {}
     for target in targets:
         for rel in package.skill:
-            data = renderer.skill_file(rel, tracker)
+            data = renderer.skill_file(rel, tracker, target)
             if isinstance(data, Err):
                 return data
-            src = plugin_dir / "skills" / SKILL_NAME / rel
-            out[_skill_prefix(target) + rel] = (data.value, bool(src.stat().st_mode & stat.S_IXUSR))
-        for name in package.agents[target]:
+            src = renderer.skill_source(rel, target)
+            executable = rel not in package.rendered and bool(src.stat().st_mode & stat.S_IXUSR)
+            out[_skill_prefix(target) + rel] = (data.value, executable)
+        for name in package.agents:
             data = renderer.agent_file(target, name, tracker)
             if isinstance(data, Err):
                 return data
@@ -412,7 +468,7 @@ def wanted_files(package: Package, renderer: Renderer, targets: List[str], track
 
 
 def known_bytes(key: str, package: Package, renderer: Renderer) -> Result[Set[str], ToolError]:
-    """sha256 of every byte string this package (any version, any rendering) shipped at ``key``."""
+    """sha256 of every byte string this package (any version, either tracker) shipped at ``key``."""
     shas: Set[str] = set()
     for target in TARGETS:
         if key.startswith(_skill_prefix(target)):
@@ -420,14 +476,14 @@ def known_bytes(key: str, package: Package, renderer: Renderer) -> Result[Set[st
             shas |= package.legacy_skill.get(rel, set())
             if rel in package.skill:
                 for rendering in RENDERINGS:
-                    data = renderer.skill_file(rel, rendering)
+                    data = renderer.skill_file(rel, rendering, target)
                     if isinstance(data, Err):
                         return data
                     shas.add(sha256(data.value))
         elif key.startswith(_agents_prefix(target)):
             name = key[len(_agents_prefix(target)):]
             shas |= package.legacy_agents[target].get(name, set())
-            if name in package.agents[target]:
+            if name in package.agents:
                 for rendering in RENDERINGS:
                     data = renderer.agent_file(target, name, rendering)
                     if isinstance(data, Err):
@@ -669,17 +725,76 @@ class Options:
     allow_remote_judge: Optional[bool] = None  # None: keep what the settings file holds
 
 
-def install(opts: Options, *, which: Which = shutil.which, run: Runner = subprocess.run,
-            plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]:
-    dest = opts.dest.expanduser()
+def check_dest(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[Path, ToolError]:
+    """The destination folder, resolved; a global harness location or the plugin itself is refused."""
+    dest = dest.expanduser()
     if not dest.is_dir():
-        return err("INSTALL.DEST", f"--dest {str(dest)!r} is not a directory", "Pass the repository root as --dest.")
-    root = find_repo_root(dest)
+        return err("INSTALL.DEST", f"--dest {str(dest)!r} is not a directory",
+                   "Pass an existing folder: a repository, or a parent folder holding repositories.")
+    root = dest.resolve()
+    why = global_location(root)
+    plugin = plugin_dir.resolve()
+    if why is None and (root == plugin or plugin in root.parents):
+        why = f"{root} is inside the plugin directory {plugin}"
+    if why is not None:
+        return err("INSTALL.DEST_GLOBAL", f"--dest refused: {why}",
+                   "plan-anchor installs per folder, never globally: pass a repository or a parent folder of "
+                   "repositories (not the home directory, ~/.claude, ~/.codex, ~/.cursor, ~/.agents or a plugin cache).",
+                   data={"dest": str(root)})
+    return Ok(root)
+
+
+def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]:
+    """Read-only: the installer's version against the destination's lock (or the nearest lock above it)."""
+    root = check_dest(dest, plugin_dir)
     if isinstance(root, Err):
         return root
-    if root.value != dest.resolve():
-        return err("INSTALL.DEST", f"--dest {str(dest)!r} is inside the repository rooted at {str(root.value)!r}",
-                   "Pass the repository root (git rev-parse --show-toplevel) as --dest.")
+    plugin = _read_json(plugin_dir / "plugin.json", "INSTALL.PACKAGE_INVALID")
+    if isinstance(plugin, Err):
+        return plugin
+    mine = plugin.value.get("version") if isinstance(plugin.value, dict) else None
+    lock = read_lock(root.value)
+    if isinstance(lock, Err):
+        return lock
+    covering = None
+    if lock.value is None:
+        above = find_lock(root.value.parent) if root.value.parent != root.value else None
+        if above is not None:
+            parent_root = above.parent.parent.parent
+            found = read_lock(parent_root)
+            covering = {"root": str(parent_root), "version": found.value.version if isinstance(found, Ok) and found.value else None,
+                        "valid": isinstance(found, Ok)}
+    installed = lock.value.version if lock.value is not None else None
+    have, want = version_tuple(installed), version_tuple(mine)
+    if installed is None:
+        state, message = "not_installed", f"not installed in {root.value}, installer {mine}"
+        if covering is not None:
+            message += f" (an install at {covering['root']} covers it: {covering['version']})"
+    elif have is None or want is None or have < want:
+        state, message = "older", f"installed {installed}, installer {mine}"
+    elif have == want:
+        state, message = "current", f"installed {installed}, installer {mine}"
+    else:
+        state, message = "newer", f"installed {installed} is newer than installer {mine}"
+    return Ok({
+        "package": PACKAGE,
+        "dest": str(root.value),
+        "installer_version": mine,
+        "installed_version": installed,
+        "installed_tracker": lock.value.tracker if lock.value is not None else None,
+        "installed_targets": list(lock.value.targets) if lock.value is not None else [],
+        "covering_install": covering,
+        "state": state,
+        "message": message,
+    })
+
+
+def install(opts: Options, *, which: Which = shutil.which, run: Runner = subprocess.run,
+            plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]:
+    checked = check_dest(opts.dest, plugin_dir)
+    if isinstance(checked, Err):
+        return checked
+    root = Ok(checked.value)
     package = load_package(plugin_dir)
     if isinstance(package, Err):
         return package
@@ -717,13 +832,21 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         notes.append(f"{SETTINGS_RELPATH} does not set allow_remote_judge, so live Jev calls are refused. Ask the user "
                      "once whether plan text may be sent to TypeSafe (Jev), then rerun with --allow-remote-judge or "
                      "--no-remote-judge (or run 'plan_anchor_settings.py set allow_remote_judge true|false') and commit it.")
-    if opts.init_br and not c.init_br:
+    if c.folder:
+        notes.append(f"{root.value} is not a repository: repositories below it inherit this install and its "
+                     f"{SETTINGS_RELPATH} (the nearest settings file wins, so a repository can override it with its own). "
+                     "Each repository keeps its own .beads/, anchors.json, plans and runs; its .beads/ is checked "
+                     f"against anchor_tracker {c.tracker} when the gates resolve the tracker there.")
+        if opts.init_br:
+            notes.append("--init-br ignored: the destination is not a repository; run 'br init' in each repository.")
+    elif opts.init_br and not c.init_br:
         notes.append("--init-br ignored: .beads/ already exists.")
     data: Dict[str, Any] = {
         "package": PACKAGE,
         "version": plan.version,
         "previous_version": lock.value.version if lock.value is not None else None,
-        "repository_root": str(root.value),
+        "install_root": str(root.value),
+        "repository": is_repository(root.value),
         "tracker": c.tracker,
         "tracker_origin": c.origin,
         "previous_tracker": previous,
@@ -780,7 +903,10 @@ def _targets(value: str) -> List[str]:
 
 def _parser() -> argparse.ArgumentParser:
     p = _JsonArgumentParser(prog="install.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dest", required=True, help="the repository root to install into")
+    p.add_argument("--dest", required=True,
+                   help="the folder to install into: a repository, or a parent folder holding repositories")
+    p.add_argument("--status", action="store_true",
+                   help="read-only: compare this installer's version with the destination's install lock")
     p.add_argument("--tracker", choices=TRACKERS,
                    help="render for this tracker and record it (default: the settings file, else detection)")
     p.add_argument("--target", type=_targets, action="append", default=None, metavar="claude,codex,cursor",
@@ -812,13 +938,19 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
         opts = Options(dest=Path(args.dest), tracker=args.tracker, targets=list(dict.fromkeys(targets)),
                        init_br=args.init_br, overwrite=args.overwrite, dry_run=args.dry_run,
                        allow_remote_judge=args.allow_remote_judge)
+        if args.status and (args.tracker or args.target or args.init_br or args.overwrite or args.dry_run
+                            or args.allow_remote_judge is not None):
+            raise _UsageError("install.py: --status takes only --dest")
     except _UsageError as exc:
         envelope = {"success": False, "data": None,
                     "error": ToolError("VALIDATION.INPUT", str(exc), "Run 'install.py --help'.").to_json()}
         print(json.dumps(envelope, indent=2, sort_keys=True))
         return ERROR_EXIT
     try:
-        envelope, code = _envelope(install(opts, which=which, run=run, plugin_dir=plugin_dir))
+        if args.status:
+            envelope, code = _envelope(status(opts.dest, plugin_dir))
+        else:
+            envelope, code = _envelope(install(opts, which=which, run=run, plugin_dir=plugin_dir))
     except Exception as exc:  # a bug, not an expected failure
         envelope = {"success": False, "data": None, "error": ToolError(
             "SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}", "Report this with the command line.").to_json()}

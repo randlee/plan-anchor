@@ -28,6 +28,7 @@ from test_jev_judge import (  # noqa: F401 - shared helpers
 )
 import plan_anchor_settings as settings_mod  # noqa: E402 - test_jev_judge put scripts/ on sys.path
 import anchor_tracker as tracker_mod  # noqa: E402
+from layout_support import TRACKERS, rendered_agent, rendered_skill  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
@@ -341,16 +342,18 @@ class PromptAndDocsTests(unittest.TestCase):
                 self.assertNotRegex(text, r"--allow-remote(?!-judge)")
 
     def test_gate_agents_carry_the_rule(self):
-        agents = [*PLUGIN.glob(".*/agents/anchor-*-review.md"), *(PLUGIN / "install" / "templates" / "agents").glob("anchor-*-review.md.j2")]
-        self.assertEqual(len(agents), 8)
+        agents = [rendered_agent(t, h, n) for t in TRACKERS for h in ("claude", "codex", "cursor")
+                  for n in ("anchor-plan-review.md", "anchor-sprint-review.md")]
+        agents += sorted((PLUGIN / "install" / "templates" / "agents").glob("anchor-*-review.md.j2"))
+        self.assertEqual(len(agents), 14)
         for path in agents:
-            with self.subTest(path=path.name, harness=path.parent.parent.name):
+            with self.subTest(path=path.as_posix()[-60:]):
                 self.assertIn(AGENT_RULE, path.read_text(encoding="utf-8"))
 
     def test_skill_asks_once_and_never_infers(self):
-        for path in (SKILL / "SKILL.md", PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "SKILL.md.j2"):
+        for path in (*(rendered_skill(t) / "SKILL.md" for t in TRACKERS), SKILL / "SKILL.md.j2"):
             text = path.read_text(encoding="utf-8")
-            with self.subTest(path=path.name):
+            with self.subTest(path=path.as_posix()[-60:]):
                 self.assertIn("plan_anchor_settings.py\" set allow_remote_judge true|false", text)
                 self.assertIn("ask the user once", text)
                 self.assertIn("Never infer consent from existing run files", text)

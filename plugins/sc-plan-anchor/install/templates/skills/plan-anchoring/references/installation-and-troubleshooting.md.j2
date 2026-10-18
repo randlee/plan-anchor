@@ -2,7 +2,7 @@
 name: sc-plan-anchor-installation-and-troubleshooting
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -10,11 +10,7 @@ required_variables:
 ---
 name: installation-and-troubleshooting
 version: {{ version }}
-{% if tracker == "neutral" %}
-description: Installing the plugin into a repository (install.py), how the anchor tracker (br or bd) is chosen and switched, the CLIs and credentials plan-anchoring depends on (python3, PyYAML, br or bd, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
-{% else %}
-description: Installing the plugin into a repository (install.py), the anchor tracker this install is rendered for and how to switch it, the CLIs and credentials plan-anchoring depends on (python3, PyYAML, {{ tracker }}, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
-{% endif %}
+description: Installing plan-anchor into a repository or a parent folder with the plan-anchor-installer skill (install.py), per-repository overrides and per-folder upgrades, the anchor tracker this install is rendered for and how to switch it, the CLIs and credentials plan-anchoring depends on (python3, PyYAML, {{ tracker }}, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
 ---
 
 # Installation and troubleshooting
@@ -25,11 +21,7 @@ description: Installing the plugin into a repository (install.py), the anchor tr
 which python3 && python3 --version
 python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
 python3 "<skill dir>/scripts/anchor_tracker.py" resolve      # selected tracker, or a typed error
-{% if tracker == "neutral" %}
-which br && br --version                                      # or bd, when resolve selects bd
-{% else %}
 which {{ tracker }} && {{ tracker }} --version
-{% endif %}
 which sc-compose && sc-compose --version
 which jq && jq --version
 test -n "$TYPESAFE_API_KEY" && echo "key set" || echo "key missing"
@@ -37,17 +29,21 @@ test -n "$TYPESAFE_API_KEY" && echo "key set" || echo "key missing"
 
 If these checks succeed, skip to Validation.
 
-## Install the plugin into a repository
+## Install plan-anchor into a folder
 
-Marketplace installs (`/plugin install sc-plan-anchor`, the Codex and Cursor plugin catalogs) use the plugin tree as published; its text covers both br and bd, and nothing is rendered. To vendor the skill and agents into a repository instead, run the installer from a plan-anchor checkout:
+The marketplace plugin (`/plugin install sc-plan-anchor`, the Codex and Cursor plugin catalogs) ships one skill, `plan-anchor-installer`. It installs nothing globally: ask it to install plan-anchor and it runs
 
 ```bash
-uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd] [--target claude,codex,cursor] [--dry-run]
+uv run "<installer plugin>/install.py" --dest <folder> --tracker br|bd --allow-remote-judge|--no-remote-judge [--target claude,codex,cursor] [--dry-run]
 ```
 
-`uv` reads the script's inline dependencies (PyYAML and the `sc-compose` wheel) and needs no pip step; with those installed, `python3 plugins/sc-plan-anchor/install.py ...` works too. The installer renders the skill and agent text for one tracker, so an installed copy names only that tracker, and writes `<repo>/.claude/skills/plan-anchoring/` and `<repo>/.claude/agents/anchor-*.md` (`.codex/` or `.cursor/` with `--target`; default `claude`). It records the version and the sha256 of every file it wrote in `<repo>/.sc/plan-anchor/install-lock.json`; commit that file with the installed files.
+`uv` reads the script's inline dependencies (PyYAML and the `sc-compose` wheel) and needs no pip step; from a plan-anchor checkout, `uv run plugins/sc-plan-anchor/install.py ...` is the same command. The installer renders the skill and agent text for one tracker, so an installed copy names only that tracker, and writes `<folder>/.claude/skills/plan-anchoring/` and `<folder>/.claude/agents/anchor-*.md` (`.codex/` or `.cursor/` with `--target`; default `claude`). It records the version, tracker, targets and the sha256 of every file it wrote in `<folder>/.sc/plan-anchor/install-lock.json`; commit that file with the installed files. When no settings file says so yet, the installer skill asks once for the tracker and whether plan text may be sent to TypeSafe (Jev); it never infers that consent from earlier runs.
 
-Rerun the same command to upgrade. A rerun replaces only files that are unchanged since the installer wrote them, removes files this version no longer ships (agents, scripts, references, tests left inside the skill directory) when unchanged, and refuses, naming the file, when one was modified; `--overwrite` moves such a file to `<repo>/.backup/<UTC time>/<path>` and installs over it. It never writes over a file it does not own. A repository vendored by hand before the lock file existed is migrated once: a file is owned when its bytes match what some earlier plan-anchor version shipped. Every check runs before anything is written; `--dry-run` prints the plan (writes, replacements, removals, settings) and writes nothing. Output is the JSON envelope `{success, data, error}`; exit 0 on success, 2 on any error.
+**Destination.** `<folder>` is a repository, or a parent folder that holds several repositories (it need not be a git repository). Global locations are refused with `INSTALL.DEST_GLOBAL` (exit 2): the home directory itself, `~/.claude`, `~/.codex`, `~/.cursor`, `~/.agents`, `/etc/codex`, and any plugin cache under them. A parent folder that is not a repository and has no `.beads/` needs `--tracker` (`TRACKER.REQUIRED` otherwise); `--init-br` is ignored there, so run `br init` in each repository.
+
+**Parent-folder installs and overrides.** The gates trust the `jev_judge.py` in the nearest `<dir>/.claude|.codex|.cursor|.agents/skills/plan-anchoring/scripts/`, walking up from the working directory and stopping before the home directory; a copy in a global location fails with `VALIDATION.PATH`. Settings follow the same walk: the nearest `.sc/plan-anchor/settings.yaml` wins whole (files are not merged), so a repository under a parent install can override the tracker or `allow_remote_judge` with its own file. The tracker check still runs in each repository: a `br` setting over a Dolt-backed `.beads/` is `TRACKER.MISMATCH`. `.beads/`, `anchors.json`, plans and run files stay in each repository. Whether a harness discovers a skill installed above the repository it was started in is the harness's own rule; Claude Code and Codex document skill discovery up to the repository root, so start the session in the folder that holds the install, or install into the repository.
+
+**Upgrade.** An upgrade is a rerun of the same command for that folder; each install folder is upgraded on its own. `install.py --dest <folder> --status` reports, read-only, the installed and installer versions (for example `installed 0.7.3, installer 0.8.0`). A rerun replaces only files that are unchanged since the installer wrote them, removes files this version no longer ships (agents, scripts, references, tests left inside the skill directory) when unchanged, and refuses, naming the file, when one was modified; `--overwrite` moves such a file to `<folder>/.backup/<UTC time>/<path>` and installs over it. It never writes over a file it does not own. A folder vendored by hand before the lock file existed is migrated once: a file is owned when its bytes match what some earlier plan-anchor version shipped. Every check runs before anything is written; `--dry-run` prints the plan (writes, replacements, removals, settings) and writes nothing. Output is the JSON envelope `{success, data, error}`; exit 0 when the command ran, 2 on any error. The installer plugin's SessionStart hook prints one line when the nearest install is older than the plugin, and stays silent otherwise.
 
 ## Anchor tracker selection
 
@@ -63,7 +59,7 @@ The installer applies the same rules. Without `--tracker` it uses the resolved t
 
 Exit codes follow the plugin convention shared by every script: 0 the command ran (selected); 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. The only exit codes are 0, 2 and 130 (interrupt); a negative answer from a command that ran is exit 0 with the outcome in `data`. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
 
-**Settings file.** Synaptic Canvas packages keep repository settings at `<repository root>/.sc/<package>/settings.yaml`: YAML, snake_case keys, committed to git, never secrets. The repository root is `git rev-parse --show-toplevel` (falling back to the nearest ancestor with `.git`), never the working directory. For this package:
+**Settings file.** Synaptic Canvas packages keep settings at `<folder>/.sc/<package>/settings.yaml`: YAML, snake_case keys, committed to git, never secrets. The file in effect is the nearest one at or above the working directory, stopping before the home directory: the repository's own file, else a parent folder's (see Parent-folder installs). `plan_anchor_settings.py set` changes the file in effect (or creates one at the repository root, `git rev-parse --show-toplevel`); `anchor_tracker.py write` records the tracker in the repository's own file. For this package:
 
 ```yaml
 # .sc/plan-anchor/settings.yaml
@@ -75,15 +71,11 @@ anchor_tracker: {% if tracker == "bd" %}bd{% else %}br{% endif %}
 
 `schema_version` must be `1`. Unknown or duplicate keys are rejected (`SETTINGS.UNKNOWN_KEY`, `SETTINGS.MALFORMED`) so a typo never falls back silently. When the file or its `anchor_tracker` key is absent, detection (rule 2) applies. `.gitignore` may ignore `.sc/sessions/` and `.sc/*/cache/`, never this file; `write` reports `settings_ignored_by_git` when it is.
 
-{% if tracker == "neutral" %}
-Both gates follow the selection: anchor and question beads are read with the selected tracker. The sprint text comes from the caller, from wherever it wrote it (`item_file`).
-{% else %}
 This install is rendered for `{{ tracker }}`; both gates read anchor and question beads with it. The sprint text comes from the caller, from wherever it wrote it (`item_file`).
-{% endif %}
 
 ## Switching trackers
 
-Rerun the installer with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. Commit the settings file, the lock file and the re-rendered files together.
+Rerun the installer for the install folder with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. Commit the settings file, the lock file and the re-rendered files together.
 
 ## Install the CLIs
 
@@ -98,7 +90,7 @@ Rerun the installer with the other `--tracker` value. It checks the request agai
 - `python3 -m pip install pyyaml` (into the interpreter the skill runs). Without it `anchor_tracker.py` returns `DEPENDENCY.PYYAML` and exits 2; it never falls back to defaults.
 {% if tracker != "bd" %}
 
-**br (beads_rust)**{% if tracker == "neutral" %}, the default anchor tracker{% endif %}
+**br (beads_rust)**
 
 
 - macOS: `brew install dicklesworthstone/tap/br`; other platforms: the releases at github.com/Dicklesworthstone/beads_rust.
@@ -109,7 +101,7 @@ Rerun the installer with the other `--tracker` value. It checks the request agai
 
 **bd (beads)**, only for an existing Dolt-backed workspace
 
-- bd is supported only where a Dolt-backed `.beads/` already exists (`.beads/metadata.json` has `"backend": "dolt"`). On these systems bd needs an upstream Dolt (DoltHub or a Dolt server); provisioning one is outside this skill, so never run `bd init` for plan anchoring.{% if tracker == "neutral" %} Without such a workspace, use br.{% endif %}
+- bd is supported only where a Dolt-backed `.beads/` already exists (`.beads/metadata.json` has `"backend": "dolt"`). On these systems bd needs an upstream Dolt (DoltHub or a Dolt server); provisioning one is outside this skill, so never run `bd init` for plan anchoring.
 
 - Install: `brew install steveyegge/beads/bd` (or your team's tap), or with Go `go install github.com/steveyegge/beads/cmd/bd@latest` and `$HOME/go/bin` on PATH.
 {% endif %}
@@ -143,7 +135,7 @@ Rerun the installer with the other `--tracker` value. It checks the request agai
 Claude Code's bash inherits a minimal PATH that can miss Homebrew, Go, pyenv, and `~/.local/bin`:
 
 ```bash
-for t in {% if tracker == "neutral" %}br bd{% else %}{{ tracker }}{% endif %}; do for p in "/opt/homebrew/bin/$t" "$HOME/.cargo/bin/$t" "$HOME/go/bin/$t" "$HOME/.local/bin/$t" "/usr/local/bin/$t"; do [ -x "$p" ] && echo "$t at $p"; done; done
+for t in {{ tracker }}; do for p in "/opt/homebrew/bin/$t" "$HOME/.cargo/bin/$t" "$HOME/go/bin/$t" "$HOME/.local/bin/$t" "/usr/local/bin/$t"; do [ -x "$p" ] && echo "$t at $p"; done; done
 for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 "$HOME/.pyenv/shims/python3"; do [ -x "$p" ] && echo "python3 at $p"; done
 for p in /opt/homebrew/bin/sc-compose "$HOME/.local/bin/sc-compose" /usr/local/bin/sc-compose; do [ -x "$p" ] && echo "sc-compose at $p"; done
 for p in /opt/homebrew/bin/jq /usr/bin/jq /usr/local/bin/jq; do [ -x "$p" ] && echo "jq at $p"; done
@@ -172,9 +164,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 - A tool works in your terminal but not in the skill: Claude Code's bash did not source the shell init that added it to PATH. Export the directory in the session or use the full path.
 - `sc-compose` is missing: install 1.7.0 or newer and rerun the dependency
   gate; do not hand-assemble the fenced tuning payload.
-{% if tracker == "neutral" %}
-- `br show --json` or `bd show --json` errors with "no database": run from the repo root that has `.beads/`, or pass `--db <path>` (bd also accepts `-C <repo root>`). In a fresh clone br imports `issues.jsonl` into its gitignored database automatically; `br sync --import-only` does it explicitly.
-{% elif tracker == "br" %}
+{% if tracker == "br" %}
 - `br show --json` errors with "no database": run from the repo root that has `.beads/`, or pass `--db <path>`. In a fresh clone br imports `issues.jsonl` into its gitignored database automatically; `br sync --import-only` does it explicitly.
 {% else %}
 - `bd show --json` errors with "no database": run from the repo root that has `.beads/`, or pass `--db <path>` or `-C <repo root>`.
@@ -210,17 +200,14 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 {% if tracker != "br" %}
 - `bd comment --body-file`: does not exist; use `--file` (or `--stdin`).
 {% endif %}
-{% if tracker == "neutral" %}
-- `TRACKER.MISMATCH`: the settings file says `br` but `.beads/` is Dolt-backed. Set `anchor_tracker: bd`, or remove the key to detect.
-- `TRACKER.DOLT_REQUIRED`: `bd` was requested without a Dolt-backed `.beads/`. Dolt provisioning is outside this skill; use `anchor_tracker: br`.
-{% else %}
-- `TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`: the settings file and `.beads/` disagree. Dolt provisioning is outside this skill; rerun the installer with the `--tracker` that matches the repository.
-{% endif %}
+- `TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`: the settings file in effect (possibly a parent folder's) and the repository's `.beads/` disagree. Dolt provisioning is outside this skill; give the repository its own `.sc/plan-anchor/settings.yaml`, or rerun the installer with the `--tracker` that matches it.
 - `TRACKER.CLI_MISSING`: the selected tracker is not on PATH; see Find an existing install.
 {% if tracker != "bd" %}
 - `TRACKER.INIT_FAILED`: `br init` exited non-zero (its exit code and stderr are in `data`) or created no workspace.
 {% endif %}
 - `SETTINGS.UNKNOWN_KEY`, `SETTINGS.SCHEMA_VERSION`, `SETTINGS.INVALID_TRACKER`, `SETTINGS.MALFORMED`: fix `.sc/plan-anchor/settings.yaml` to the form above.
 - `BEADS.METADATA_INVALID`: `.beads/metadata.json` is not a readable JSON object; repair it before selection can run.
+- Installer `INSTALL.DEST_GLOBAL`: `--dest` named the home directory, a global harness directory or a plugin cache; pass a repository or a parent folder of repositories.
+- `VALIDATION.PATH` from a gate with plan-anchor installed: the script passed is not the nearest per-folder copy (or is a global one); pass the `jev_judge.py` of the install at or above the repository.
 - Installer `INSTALL.CONFLICT`: `data.problems` names each file that was modified since it was installed or is not the installer's; restore or move it, or rerun with `--overwrite`.
-- Windows: run {% if tracker == "neutral" %}`br`/`bd`{% else %}`{{ tracker }}`{% endif %} and the script from Git Bash or PowerShell with forward slashes; report short-date formatting falls back gracefully.
+- Windows: run `{{ tracker }}` and the script from Git Bash or PowerShell with forward slashes; report short-date formatting falls back gracefully.

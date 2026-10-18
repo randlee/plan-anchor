@@ -10,7 +10,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 MODULE_PATH = SKILL / "scripts" / "anchor_runner_contract.py"
 
 
@@ -48,7 +48,9 @@ class RunnerContractTests(unittest.TestCase):
             "---\n\n# Agent\n",
             encoding="utf-8",
         )
-        (agent_dir / "registry.yaml").write_text(
+        registry = root / f".{harness}" / "skills" / "plan-anchoring" / "registry.yaml"  # the installed layout
+        registry.parent.mkdir(parents=True)
+        registry.write_text(
             "agents:\n"
             "  anchor-plan-review:\n"
             f"    version: {version}\n"
@@ -83,7 +85,8 @@ class RunnerContractTests(unittest.TestCase):
         }
 
     def test_resolves_real_claude_and_codex_registries(self):
-        plugin = ROOT / "plugins" / "sc-plan-anchor"
+        from layout_support import rendered
+        plugin = rendered("br")  # an install root as install.py writes it: registries, agents, skill
         claude = self.ok(self.contract.resolve_agent(plugin, "claude", "anchor-plan-review"))
         codex = self.ok(self.contract.resolve_agent(plugin, "codex", "anchor-plan-review"))
         cursor = self.ok(self.contract.resolve_agent(plugin, "cursor", "anchor-plan-review"))
@@ -107,7 +110,7 @@ class RunnerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "plugin"
             definition = self.plugin(root)
-            registry = root / ".codex" / "agents" / "registry.yaml"
+            registry = root / ".codex" / "skills" / "plan-anchoring" / "registry.yaml"
 
             outside = Path(td) / "outside.md"
             outside.write_text(definition.read_text(encoding="utf-8"), encoding="utf-8")

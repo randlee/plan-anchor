@@ -2,7 +2,7 @@
 name: sc-plan-anchor-report-format
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -55,7 +55,6 @@ Before acting on a failing verdict, re-read the sent text (the composed item fil
   ```bash
   python3 "$S" report --run <run.json> --format md > "$W/report.md" {% if tracker == "br" %}&& br comments add <bead> --file "$W/report.md"
 {% elif tracker == "bd" %}&& bd comment <bead> --file "$W/report.md"
-{% else %}# then, with the selected tracker: br comments add <bead> --file "$W/report.md"  |  bd comment <bead> --file "$W/report.md"
 {% endif %}  ```
 - Development gate: comment on the sprint bead and, when there is a PR, on the PR, with the deterministic check outcomes beneath.
 - Both: the run JSON stays in `doc/plan/phase-current/anchor-runs/` and is committed with the plan.

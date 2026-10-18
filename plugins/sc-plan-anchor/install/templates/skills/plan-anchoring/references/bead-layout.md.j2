@@ -2,7 +2,7 @@
 name: sc-plan-anchor-bead-layout
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -10,7 +10,7 @@ required_variables:
 ---
 name: bead-layout
 version: {{ version }}
-description: {% if tracker == "br" %}The anchor bead tree in beads (br),{% elif tracker == "bd" %}The anchor bead tree in beads (bd),{% else %}The anchor bead tree in beads (br or bd),{% endif %} the commands to create it, labels, how question overrides live in the child beads, how agents read beads, and how reports are posted back.
+description: {% if tracker == "br" %}The anchor bead tree in beads (br),{% elif tracker == "bd" %}The anchor bead tree in beads (bd),{% endif %} the commands to create it, labels, how question overrides live in the child beads, how agents read beads, and how reports are posted back.
 ---
 
 # Bead layout
@@ -49,21 +49,6 @@ ANCHOR=$(bd create "$ID: $SUMMARY" --type decision --labels "anchor,anchor:$ID" 
 Anchor record: $A. The description is the testable statement; change it only through jev_judge.py update --statement.")
 PLANQ=$(bd create "$ID plan questions" --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:plan" --silent --body-file "$T")
 DEVQ=$(bd create "$ID dev questions"  --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:dev"  --silent --body-file "$T")
-{% else %}
-if [ "$ANCHOR_TRACKER" = br ]; then
-ANCHOR=$(br create "$ID: $SUMMARY" --type decision --labels "anchor,anchor:$ID" --silent --description "$STATEMENT")
-br update "$ANCHOR" --notes "Quote (verbatim, immutable): $QUOTE
-Anchor record: $A. The description is the testable statement; change it only through jev_judge.py update --statement."
-PLANQ=$(br create "$ID plan questions" --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:plan" --silent --description-file "$T")
-DEVQ=$(br create "$ID dev questions"  --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:dev"  --silent --description-file "$T")
-else  # bd
-ANCHOR=$(bd create "$ID: $SUMMARY" --type decision --labels "anchor,anchor:$ID" --silent \
-  --description "$STATEMENT" \
-  --notes "Quote (verbatim, immutable): $QUOTE
-Anchor record: $A. The description is the testable statement; change it only through jev_judge.py update --statement.")
-PLANQ=$(bd create "$ID plan questions" --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:plan" --silent --body-file "$T")
-DEVQ=$(bd create "$ID dev questions"  --type decision --parent "$ANCHOR" --labels "anchor,anchor-questions,anchor:$ID,gate:dev"  --silent --body-file "$T")
-fi
 {% endif %}
 python3 "$S" set-beads --anchors "$A" --id "$ID" --anchor-bead "$ANCHOR" --plan-bead "$PLANQ" --dev-bead "$DEVQ"
 python3 "$S" render --anchors "$A"
@@ -73,8 +58,6 @@ python3 "$S" render --anchors "$A"
 Labels are passed explicitly on the children so the tree never depends on label inheritance. Anchor beads are type `decision` and labelled `anchor`; keep them out of work queues with `br ready --exclude-label anchor`.
 {% elif tracker == "bd" %}
 Labels are passed explicitly on the children so the tree is correct on a `bd` that does not inherit parent labels. Anchor beads are type `decision` and labelled `anchor`; keep them out of work queues with `bd ready --exclude-label anchor`.
-{% else %}
-Labels are passed explicitly on the children so the tree never depends on label inheritance. Anchor beads are type `decision` and labelled `anchor`; keep them out of work queues with `"$ANCHOR_TRACKER" ready --exclude-label anchor`.
 {% endif %}
 
 ## Question overrides in the child beads
@@ -95,7 +78,7 @@ The wording of record is `assets/questions/plan.json` and `assets/questions/dev.
 ```
 ````
 
-{% if tracker == "br" %}Edit with `br update <question bead> --description-file <file>`.{% elif tracker == "bd" %}Edit with `bd update <question bead> --body-file <file>`.{% else %}Edit with the selected tracker: `br update <question bead> --description-file <file>` or `bd update <question bead> --body-file <file>`.{% endif %} Overrides may also live in `anchors.json` under `question_overrides.plan` or `.dev`; the bead wins when both exist. Prefer the bead: each gate evolves its wording independently against one root fact. Never rename question IDs; the script refuses a set whose roles no longer resolve (`QUESTIONS.ROLES`).
+{% if tracker == "br" %}Edit with `br update <question bead> --description-file <file>`.{% elif tracker == "bd" %}Edit with `bd update <question bead> --body-file <file>`.{% endif %} Overrides may also live in `anchors.json` under `question_overrides.plan` or `.dev`; the bead wins when both exist. Prefer the bead: each gate evolves its wording independently against one root fact. Never rename question IDs; the script refuses a set whose roles no longer resolve (`QUESTIONS.ROLES`).
 
 ## How the agents read beads
 
@@ -104,12 +87,9 @@ The wording of record is `assets/questions/plan.json` and `assets/questions/dev.
 - `br show <id> --json` lists children under `dependents` (`dependency_type: parent-child`) with `id`, `title` and `status`; `br show <child id>... --json` returns each child's record, with `close_reason` when closed. `br list --label <label> ... --json` prints `{"issues": [...]}` with every label given (AND). `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
 {% elif tracker == "bd" %}
 - `bd children <id> --json` lists children with `status`, `title`, `labels`, and for closed children `close_reason` and `closed_at`. `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
-{% else %}
-- Children: with br, `br show <id> --json` lists them under `dependents` (`dependency_type: parent-child`) and `br show <child id>... --json` returns each child's record; with bd, `bd children <id> --json` lists them with `status`, `title`, `labels`, and for closed children `close_reason` and `closed_at`. `compose-item --children-json <file>` appends `## Closed beads`, one line per closed child.
 {% endif %}
 - Question beads resolve from `anchors.json` (`beads.plan_questions` / `beads.dev_questions`) first, {% if tracker == "br" %}then `br list --label "anchor:$ID" --label gate:plan --json`.
 {% elif tracker == "bd" %}then `bd children <anchor bead> --json` filtered on the `gate:plan` or `gate:dev` label.
-{% else %}then, with br, `br list --label "anchor:$ID" --label gate:plan --json`, or with bd, `bd children <anchor bead> --json` filtered on the `gate:plan` or `gate:dev` label.
 {% endif %}- The fenced JSON from the question bead's `description` goes into an overrides file keyed by anchor ID, passed as `--overrides-file`; the script merges.
 
 All read-only. Agents never create, update, close or comment on beads.
@@ -124,9 +104,6 @@ python3 "$S" report --run doc/plan/phase-current/anchor-runs/<run>.json --format
 br comments add <bead> --file "$W/report.md"     # or: br comments add <bead> "$(cat "$W/report.md")"
 {% elif tracker == "bd" %}
 bd comment <bead> --file "$W/report.md"          # or: bd comment <bead> "$(cat "$W/report.md")"
-{% else %}
-br comments add <bead> --file "$W/report.md"     # br
-bd comment <bead> --file "$W/report.md"          # bd
 {% endif %}
 ```
 
@@ -134,6 +111,4 @@ bd comment <bead> --file "$W/report.md"          # bd
 `br comments add` takes `--file` or the text as arguments; `br create` and `br update` read a body with `--description-file`.
 {% elif tracker == "bd" %}
 `bd comment` takes `--file` or `--stdin`; `--body-file` belongs to `bd create` and `bd update` only.
-{% else %}
-`br comments add` takes `--file` or the text as arguments; `bd comment` takes `--file` or `--stdin` (`--body-file` belongs to `bd create` and `bd update` only).
 {% endif %}

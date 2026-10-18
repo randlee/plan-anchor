@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 sys.path.insert(0, str(SKILL / "scripts"))
 import jev_judge as jj  # noqa: E402
 
@@ -1412,60 +1412,146 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(json.loads(rendered), {"message": "key=<redacted>", "header": "Bearer <redacted>"})
 
 
+def run_installed(script, argv, cwd, home=None):
+    """Run an installed copy of jev_judge.py as an agent does (a process, from ``cwd``); (exit code, JSON)."""
+    import subprocess
+    environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+    if home is not None:
+        environment["HOME"] = environment["USERPROFILE"] = str(home)  # expanduser("~") on POSIX / Windows
+    proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
+                          capture_output=True, text=True, encoding="utf-8")
+    try:
+        return proc.returncode, json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise AssertionError(f"no JSON envelope: {proc.stdout!r} {proc.stderr!r}")
+
+
 class AgentPreflightTests(unittest.TestCase):
+    """agent-preflight runs from the installed copy the trust rule selects, as the gate agents run it."""
+
+    def install(self, folder, target="claude"):
+        from layout_support import installed_scripts
+        return installed_scripts(Path(folder), target) / "jev_judge.py"
+
     def test_normalises_workspace_paths_and_identifiers(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "repo"
+            root = (Path(d) / "repo").resolve()
             root.mkdir()
+            script = self.install(root)
             anchors = write(root, "doc/plan/phase-current/anchors.json", record(anchor()))
             evidence = write(root, "reports/sprint.md", "done")
-            code, out = run_cli([
-                "agent-preflight", "--workspace-root", str(root), "--script", jj.__file__,
+            code, out = run_installed(script, [
+                "agent-preflight", "--workspace-root", str(root), "--script", str(script),
                 "--anchors", "doc/plan/phase-current/anchors.json", "--run-dir", "doc/plan/phase-current/runs",
                 "--evidence", evidence, "--identifier", "proj-s2", "--pr-number", "12",
                 "--correlation-id", "proj-s2:dev",
-            ])
-            self.assertEqual(code, 0)
+            ], cwd=root)
+            self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["anchors_path"], str(Path(anchors).resolve()))
             self.assertEqual(out["data"]["evidence"], [str(Path(evidence).resolve())])
             self.assertEqual(out["data"]["work_key"], "proj-s2_dev")
 
     def test_rejects_paths_outside_the_workspace(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "repo"
+            root = (Path(d) / "repo").resolve()
             root.mkdir()
+            script = self.install(root)
             anchors = write(root, "anchors.json", record(anchor()))
             outside = write(d, "secret.txt", "do not upload")
-            code, out = run_cli([
-                "agent-preflight", "--workspace-root", str(root), "--script", jj.__file__,
+            code, out = run_installed(script, [
+                "agent-preflight", "--workspace-root", str(root), "--script", str(script),
                 "--anchors", anchors, "--evidence", outside,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("outside the repository", out["error"]["message"])
 
     def test_rejects_unsafe_ids_pr_numbers_and_script_mismatch(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
+            root = Path(d).resolve()
+            script = self.install(root)
             anchors = write(root, "anchors.json", record(anchor()))
-            base = ["agent-preflight", "--workspace-root", str(root), "--script", jj.__file__, "--anchors", anchors]
-            code, out = run_cli([*base, "--identifier", "../../secret"])
+            base = ["agent-preflight", "--workspace-root", str(root), "--script", str(script), "--anchors", anchors]
+            code, out = run_installed(script, [*base, "--identifier", "../../secret"], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.ID"))
-            code, out = run_cli([*base, "--pr-number", "12oops"])
+            code, out = run_installed(script, [*base, "--pr-number", "12oops"], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.ID"))
             other = write(root, "other.py", "pass")
-            code, out = run_cli([
+            code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", other, "--anchors", anchors,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
-            code, out = run_cli([
+            code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", str(root / "missing.py"),
                 "--anchors", anchors,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("script could not be resolved", out["error"]["message"])
-            code, out = run_cli([*base, "--run-dir", write(root, "not-a-directory", "x")])
+            code, out = run_installed(script, [*base, "--run-dir", write(root, "not-a-directory", "x")], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("run directory is not a directory", out["error"]["message"])
+
+
+class ScriptTrustRuleTests(unittest.TestCase):
+    """The nearest per-folder install at or above the working directory is trusted; nothing global is."""
+
+    def preflight(self, script, repo, cwd=None, home=None):
+        anchors = write(repo, "anchors.json", record(anchor()))
+        return run_installed(script, ["agent-preflight", "--workspace-root", str(repo), "--script", str(script),
+                                      "--anchors", anchors], cwd=cwd or repo, home=home)
+
+    def test_a_parent_folder_install_is_trusted_from_a_child_repository(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d).resolve() / "work"
+            repo = parent / "child"
+            (repo / "src").mkdir(parents=True)
+            script = installed_scripts(parent, "codex") / "jev_judge.py"
+            code, out = self.preflight(script, repo, cwd=repo / "src")
+            self.assertEqual((code, out["success"]), (0, True), out)
+
+    def test_only_the_nearest_install_is_trusted(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d).resolve() / "work"
+            repo = parent / "child"
+            repo.mkdir(parents=True)
+            far = installed_scripts(parent) / "jev_judge.py"
+            installed_scripts(repo, "cursor")
+            code, out = self.preflight(far, repo)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn(f"the nearest install is {repo}", out["error"]["message"])
+
+    def test_a_copy_only_in_the_global_claude_dir_is_refused(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d).resolve() / "home"
+            repo = home / "src" / "repo"
+            repo.mkdir(parents=True)
+            script = installed_scripts(home, "claude") / "jev_judge.py"  # ~/.claude/skills/plan-anchoring
+            code, out = self.preflight(script, repo, home=home)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn("global location", out["error"]["message"])
+            self.assertIn(str(home / ".claude"), out["error"]["message"])
+
+    def test_the_walk_stops_before_home(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d).resolve() / "home"
+            repo = home / "repo"
+            repo.mkdir(parents=True)
+            script = installed_scripts(home, "agents") / "jev_judge.py"  # ~/.agents/skills/plan-anchoring
+            code, out = self.preflight(script, repo, home=home)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+
+    def test_the_source_tree_is_not_an_install(self):
+        """The old marketplace and source-checkout fallbacks are gone: the plugin's own copy is not trusted."""
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d).resolve()
+            anchors = write(repo, "anchors.json", record(anchor()))
+            code, out = run_cli(["agent-preflight", "--workspace-root", str(repo), "--script", jj.__file__,
+                                 "--anchors", anchors])
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn("untrusted plan-anchoring script", out["error"]["message"])
 
 
 class TransportPolicyTests(unittest.TestCase):

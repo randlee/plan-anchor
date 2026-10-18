@@ -2,7 +2,7 @@
 name: sc-plan-anchor-SKILL
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -43,8 +43,6 @@ python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq '.d
 `anchor_tracker.py resolve` confirms `ANCHOR_TRACKER` for anchor storage, independently of whether plans are Markdown or tracker documents. This install is rendered for `br`: `.sc/plan-anchor/settings.yaml` sets `anchor_tracker: br`, and `resolve` checks it against disk. `success: false` (exit 2) is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick another tracker by hand. If `resolve` selects anything but `br`, stop: the repository changed trackers and the plugin installer must be rerun with `--tracker` (`references/installation-and-troubleshooting.md`). `resolve` is read-only; `python3 "$T" write --init` runs `br init` when there is no `.beads/`. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Tracker command examples use `br`.
 {% elif tracker == "bd" %}
 `anchor_tracker.py resolve` confirms `ANCHOR_TRACKER` for anchor storage, independently of whether plans are Markdown or tracker documents. This install is rendered for `bd`: `.sc/plan-anchor/settings.yaml` sets `anchor_tracker: bd`, and `resolve` checks it against disk (`.beads/` must be Dolt-backed). `success: false` (exit 2) is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick another tracker by hand. If `resolve` selects anything but `bd`, stop: the repository changed trackers and the plugin installer must be rerun with `--tracker` (`references/installation-and-troubleshooting.md`). `resolve` is read-only. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Tracker command examples use `bd`.
-{% else %}
-`anchor_tracker.py resolve` selects `ANCHOR_TRACKER` (`bd` or `br`) for anchor storage, independently of whether plans are Markdown or tracker documents. An explicit `anchor_tracker` in the committed `.sc/plan-anchor/settings.yaml` wins and is checked against disk; without it a Dolt-backed `.beads/` selects `bd` and anything else selects `br`. `success: false` (exit 2) is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick the other tracker by hand. `resolve` is read-only; `python3 "$T" write` records the detected choice for the user to commit, and `write --init` runs `br init` when there is no `.beads/`. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Tracker commands below are written for the selected tracker, `"$ANCHOR_TRACKER"`; where a reference shows both, use the one `resolve` selected.
 {% endif %}
 
 If `resolve` reports `TRACKER.CLI_MISSING` (its `data.tracker` names the selected tracker, so `ANCHOR_TRACKER` is still set), or `sc-compose` is missing, Claude Code's bash may not share your shell's PATH. Check common locations:
@@ -63,7 +61,7 @@ If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolv
 Then resolve the script once. It sits next to this file:
 
 ```bash
-S="<this skill's directory>/scripts/jev_judge.py"   # absolute; Claude: $CLAUDE_PLUGIN_ROOT/...; Cursor: $CURSOR_PLUGIN_ROOT/skills/plan-anchoring/scripts/jev_judge.py
+S="<this skill's directory>/scripts/jev_judge.py"   # absolute: <install folder>/.<harness>/skills/plan-anchoring/scripts/jev_judge.py
 A=doc/plan/phase-current/anchors.json
 python3 "$S" --help
 ```
@@ -80,7 +78,7 @@ contracts only when that operation needs them.
 | --- | --- |
 | Capture, lock, or maintain anchors and requirements | `references/capture-and-maintenance-workflow.md` |
 | Calibrate the rubric or tune anchor questions | `references/question-tuning-workflow.md` |
-{% if tracker == "br" %}| Review a Markdown or `br` plan |{% elif tracker == "bd" %}| Review a Markdown or `bd` plan |{% else %}| Review a Markdown or `bd`/`br` plan |{% endif %} `references/planning-review-workflow.md` |
+{% if tracker == "br" %}| Review a Markdown or `br` plan |{% elif tracker == "bd" %}| Review a Markdown or `bd` plan |{% endif %} `references/planning-review-workflow.md` |
 | Review delivered sprint work | `references/development-review-workflow.md` |
 
 Do not preload the other workflow references. Open only additional references

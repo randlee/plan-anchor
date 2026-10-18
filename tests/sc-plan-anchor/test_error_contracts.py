@@ -21,8 +21,9 @@ from unittest import mock
 import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 SCRIPTS = SKILL / "scripts"
+SCRIPT_IN_WORKSPACE = ".claude/skills/plan-anchoring/scripts/jev_judge.py"  # installed by PreflightContracts
 sys.path.insert(0, str(SCRIPTS))
 import anchor_runner_contract as rc  # noqa: E402
 import jev_judge as jj  # noqa: E402
@@ -234,10 +235,16 @@ JEV_CASES = {
                                   "prose_lines": 2, "fenced_blocks": 0, "bullets": 0, "table_rows": 0,
                                   "references": {"github": [], "req": [], "adr": [], "anc": []}, "no_issue_reference": True,
                                   "chars_before_reduction": 261}}),
-    "validation_path": (["agent-preflight", "--workspace-root", ".", "--script", str(SCRIPTS / "jev_judge.py"), "--anchors", ""], {}, {}, None, 2,
+}
+
+
+# agent-preflight trusts only the nearest per-folder install, so its envelopes are pinned through an
+# installed copy run as a process from the workspace (the source tree's copy is refused first).
+PREFLIGHT_CASES = {
+    "validation_path": (["agent-preflight", "--workspace-root", ".", "--script", SCRIPT_IN_WORKSPACE, "--anchors", ""], {}, {}, None, 2,
                         {"code": "VALIDATION.PATH", "message": "anchors file is empty", "recoverable": False,
                          "suggested_action": "Pass a anchors file inside the repository."}, None),
-    "validation_id": (["agent-preflight", "--workspace-root", ".", "--script", str(SCRIPTS / "jev_judge.py"), "--anchors", "anchors.json", "--identifier", "../x"],
+    "validation_id": (["agent-preflight", "--workspace-root", ".", "--script", SCRIPT_IN_WORKSPACE, "--anchors", "anchors.json", "--identifier", "../x"],
                       {"anchors.json": LOCKED}, {}, None, 2,
                       {"code": "VALIDATION.ID", "message": "unsafe agent identifier: '../x'", "recoverable": False,
                        "suggested_action": "Use 1-128 letters, digits, dots, underscores, colons or hyphens; do not use paths or whitespace."}, None),
@@ -271,6 +278,17 @@ class JevJudgeErrorContracts(unittest.TestCase):
                 if error is None:
                     continue
                 self.assertEqual(out, {"success": False, "data": data, "error": error})
+
+    def test_preflight_error_envelopes_from_an_installed_copy(self):
+        from layout_support import installed_scripts
+        for name, (argv, files, env, stdin, exit_code, error, data) in PREFLIGHT_CASES.items():
+            with self.subTest(name), Workspace(files) as ws:
+                installed_scripts(ws.path)
+                environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+                proc = subprocess.run([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
+                                      capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(proc.returncode, exit_code, proc.stdout + proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), {"success": False, "data": data, "error": error})
 
     def test_add_refusals_are_negative_answers_with_exit_zero(self):
         for name, (argv, files, env, stdin, exit_code, refused, _) in REFUSAL_CASES.items():
@@ -463,13 +481,14 @@ class RunnerContractErrorContracts(unittest.TestCase):
             (registry, b"\xff", contract_error("RUNTIME.PATH", "registered agent definition is not readable UTF-8")),
         )
         for reg, definition, expected in cases:
-            files = {"plug/.codex/agents/registry.yaml": reg, "plug/.codex/agents/anchor-tuning.md": definition}
+            files = {"plug/.codex/skills/plan-anchoring/registry.yaml": reg, "plug/.codex/agents/anchor-tuning.md": definition}
             with self.subTest(expected=expected["error"]["message"]), Workspace(files) as ws:
-                argv = ["resolve", "--plugin-root", str(ws.path / "plug"), "--harness", "codex", "--agent", "anchor-tuning"]
+                argv = ["resolve", "--install-root", str(ws.path / "plug"), "--harness", "codex", "--agent", "anchor-tuning"]
                 self.assertEqual(call_main(rc.main, argv), (2, expected))
         with Workspace({}) as ws:
-            self.assertEqual(call_main(rc.main, ["resolve", "--plugin-root", str(ws.path / "nope"), "--harness", "codex", "--agent", "anchor-tuning"]),
-                             (2, contract_error("RUNTIME.PATH", "plugin root does not resolve")))
+            self.assertEqual(call_main(rc.main, ["resolve", "--install-root", str(ws.path / "nope"), "--harness", "codex", "--agent", "anchor-tuning"]),
+                             (2, contract_error("RUNTIME.PATH", "install root does not resolve")))
+            # --plugin-root is kept as an alias of --install-root
             self.assertEqual(call_main(rc.main, ["resolve", "--plugin-root", str(ws.path), "--harness", "codex", "--agent", "anchor-tuning"]),
                              (2, contract_error("RUNTIME.REGISTRY", "agent registry is missing or not a regular file")))
 
