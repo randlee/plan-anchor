@@ -80,6 +80,11 @@ SCANNED_GLOBS = (
 )
 
 
+def _rel(path: pathlib.Path) -> str:
+    """``path`` relative to the repository in POSIX form, so a message reads the same on every OS."""
+    return path.relative_to(ROOT).as_posix()
+
+
 def _declared(path: pathlib.Path) -> list:
     """Semver versions a metadata file declares (frontmatter, YAML, or JSON manifest keys)."""
     text = path.read_text(encoding="utf-8")
@@ -170,11 +175,11 @@ def load_manifest(path: pathlib.Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as exc:
-        raise CheckError(f"{path.relative_to(ROOT)} could not be read: {type(exc).__name__}: {exc}") from None
+        raise CheckError(f"{_rel(path)} could not be read: {type(exc).__name__}: {exc}") from None
     except json.JSONDecodeError as exc:
-        raise CheckError(f"{path.relative_to(ROOT)} is not valid JSON: {exc}") from None
+        raise CheckError(f"{_rel(path)} is not valid JSON: {exc}") from None
     if not isinstance(data, dict):
-        raise CheckError(f"{path.relative_to(ROOT)} must be a JSON object, got {type(data).__name__}")
+        raise CheckError(f"{_rel(path)} must be a JSON object, got {type(data).__name__}")
     return data
 
 
@@ -206,15 +211,15 @@ def release_checks(want: str, drift: list) -> int:
             else:
                 expected = "sonnet" if harness == "claude" else "luna"
             if not model_match or model_match.group(1) != expected:
-                drift.append(f"{f.relative_to(ROOT)}: model must be {expected} for the {harness} harness")
+                drift.append(f"{_rel(f)}: model must be {expected} for the {harness} harness")
     expected_agents = {f.stem for f in AGENT_DIRS["claude"].glob("*.md")}
     for harness, agent_dir in AGENT_DIRS.items():
         actual_agents = {f.stem for f in agent_dir.glob("*.md")}
         if actual_agents != expected_agents:
-            drift.append(f"{agent_dir.relative_to(ROOT)}: agent files {sorted(actual_agents)} != {sorted(expected_agents)}")
+            drift.append(f"{_rel(agent_dir)}: agent files {sorted(actual_agents)} != {sorted(expected_agents)}")
         reg = HARNESS / harness / "registry.yaml"
         if not reg.exists():
-            drift.append(f"{reg.relative_to(ROOT)}: missing")
+            drift.append(f"{_rel(reg)}: missing")
             continue
         text = reg.read_text(encoding="utf-8")
         registered = set()
@@ -224,17 +229,17 @@ def release_checks(want: str, drift: list) -> int:
                 registered.add(name)
             source = registry_source(harness, path)
             if source is None or not source.exists():
-                drift.append(f"{reg.relative_to(ROOT)} {name}: path {path} is not an installed .{harness}/ path "
+                drift.append(f"{_rel(reg)} {name}: path {path} is not an installed .{harness}/ path "
                              "this plugin ships")
         if registered != expected_agents:
-            drift.append(f"{reg.relative_to(ROOT)}: agents {sorted(registered)} != {sorted(expected_agents)}")
+            drift.append(f"{_rel(reg)}: agents {sorted(registered)} != {sorted(expected_agents)}")
         dependencies = set()
         for m in re.finditer(r'(anchor-[a-z-]+):\s*"([^"]+)"', text):
             dependencies.add(m.group(1))
             if m.group(2) not in (want, f"{wmaj}.x"):
-                drift.append(f"{reg.relative_to(ROOT)} depends_on {m.group(1)}: {m.group(2)} does not cover {want}")
+                drift.append(f"{_rel(reg)} depends_on {m.group(1)}: {m.group(2)} does not cover {want}")
         if dependencies != expected_agents:
-            drift.append(f"{reg.relative_to(ROOT)}: depends_on {sorted(dependencies)} != {sorted(expected_agents)}")
+            drift.append(f"{_rel(reg)}: depends_on {sorted(dependencies)} != {sorted(expected_agents)}")
     plugin_manifests = [
         PLUGIN / "plugin.json",
         PLUGIN / ".claude-plugin" / "plugin.json",
@@ -243,17 +248,17 @@ def release_checks(want: str, drift: list) -> int:
     ]
     for manifest in plugin_manifests:
         if not manifest.exists():
-            drift.append(f"{manifest.relative_to(ROOT)}: missing")
+            drift.append(f"{_rel(manifest)}: missing")
             continue
         data = load_manifest(manifest)
         if data.get("name") != "sc-plan-anchor":
-            drift.append(f"{manifest.relative_to(ROOT)}: name must be sc-plan-anchor")
+            drift.append(f"{_rel(manifest)}: name must be sc-plan-anchor")
     for manifest in plugin_manifests[1:]:
         data = load_manifest(manifest) if manifest.exists() else {}
         if "agents" in data:
-            drift.append(f"{manifest.relative_to(ROOT)}: must not register agents (they are installed per folder)")
+            drift.append(f"{_rel(manifest)}: must not register agents (they are installed per folder)")
         if data and data.get("skills") != "./skills/":
-            drift.append(f"{manifest.relative_to(ROOT)}: skills must be ./skills/")
+            drift.append(f"{_rel(manifest)}: skills must be ./skills/")
     exposed = sorted(p.name for p in (PLUGIN / "skills").iterdir() if p.is_dir()) if (PLUGIN / "skills").is_dir() else []
     if exposed != [INSTALLER_SKILL]:
         drift.append(f"plugins/sc-plan-anchor/skills: exposes {exposed}; must be exactly [{INSTALLER_SKILL!r}]")
@@ -264,20 +269,20 @@ def release_checks(want: str, drift: list) -> int:
     ]
     for catalog in catalogs:
         if not catalog.exists():
-            drift.append(f"{catalog.relative_to(ROOT)}: missing")
+            drift.append(f"{_rel(catalog)}: missing")
             continue
         data = load_manifest(catalog)
         plugins = data.get("plugins", [])
         entries = [p for p in plugins if isinstance(p, dict) and p.get("name") == "sc-plan-anchor"] if isinstance(plugins, list) else []
         if len(entries) != 1:
-            drift.append(f"{catalog.relative_to(ROOT)}: expected one sc-plan-anchor entry")
+            drift.append(f"{_rel(catalog)}: expected one sc-plan-anchor entry")
             continue
         source = entries[0].get("source")
         source_path = source.get("path") if isinstance(source, dict) else source
         if source_path != "./plugins/sc-plan-anchor":
-            drift.append(f"{catalog.relative_to(ROOT)}: source must be ./plugins/sc-plan-anchor")
+            drift.append(f"{_rel(catalog)}: source must be ./plugins/sc-plan-anchor")
         elif not (ROOT / source_path[2:]).is_dir():
-            drift.append(f"{catalog.relative_to(ROOT)}: source path does not exist")
+            drift.append(f"{_rel(catalog)}: source path does not exist")
     return sum(len(v) or 1 for _, v in declarations)
 
 
