@@ -66,7 +66,7 @@ python3 "$S" coverage --runs anchor-runs --gate plan --format md
 
 ## 5. Stop conditions
 
-- **Pass.** Every bead's latest run exits 0 and `coverage` lists no uncovered locked anchor (planning gate); the sprint's latest run exits 0 and every deterministic check is recorded (development gate).
+- **Pass.** Every bead's latest run has `summary.pass: true` and `coverage` lists no uncovered locked anchor (planning gate); the sprint's latest run has `summary.pass: true` and every deterministic check is recorded (development gate).
 - **Hard stop: three identical failures.** Three consecutive runs of one bead with the same failing set. Stop editing; post the report and ask the user.
 - **Hard stop: anchor churn.** A statement updated three times. Retire the anchor and lock a new one with the user.
 

@@ -11,6 +11,13 @@ Expected contract failures are returned as ``Err(ToolError)`` values (see
 still catches unreadable input as ``SCRIPT.IO``. Bad arguments are a
 ``VALIDATION.INPUT`` envelope and any other unexpected exception is
 ``SCRIPT.INTERNAL``, both exit 2; nothing escapes as a traceback.
+
+Exit codes: 0 when the command ran, 2 when it could not; there is no exit 1.
+``validate-fence`` on a readable file exits 0 either way and reports the
+outcome in ``data.valid``: ``{"valid": true, "value": <parsed envelope>}``, or
+``{"valid": false, "violation": {"code", "message"}}`` for a fence or envelope
+that breaks the contract. ``resolve`` returns the runtime descriptor, or exit 2
+with a typed error when no trusted agent can be resolved.
 """
 
 from __future__ import annotations
@@ -425,12 +432,13 @@ def _parser() -> argparse.ArgumentParser:
 def _run(args: argparse.Namespace) -> Result[dict[str, Any], ToolError]:
     if args.command == "resolve":
         return resolve_agent(args.plugin_root, args.harness, args.agent)
-    text = Path(args.file).read_text(encoding="utf-8")
-    if args.kind == "request":
-        return parse_request(text)
-    if not args.correlation_id:
+    if args.kind == "result" and not args.correlation_id:
         return err("ENVELOPE.CORRELATION", "result validation requires correlation_id")
-    return parse_result(text, args.correlation_id)
+    text = Path(args.file).read_text(encoding="utf-8")
+    parsed = parse_request(text) if args.kind == "request" else parse_result(text, args.correlation_id)
+    if isinstance(parsed, Err):  # a completed check with a negative answer: exit 0
+        return Ok({"valid": False, "violation": {"code": parsed.error.code, "message": parsed.error.message}})
+    return Ok({"valid": True, "value": parsed.value})
 
 
 def main(argv: list[str] | None = None) -> int:

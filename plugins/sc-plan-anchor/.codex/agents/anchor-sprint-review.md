@@ -34,7 +34,7 @@ Run the development gate for one sprint: take the sprint text the caller passes,
 
 Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
 
-1. Establish script trust and `ROOT` exactly as `anchor-plan-review` step 1. Reject a supplied `anchor_tracker` other than `bd` or `br` with `VALIDATION.TRACKER`. `python3 --version` and `jq --version` must succeed, or return `PREREQ.MISSING`. Resolve the tracker read-only with the accepted script's sibling: `RESOLVED="$(python3 "$(dirname "$SCRIPT")/anchor_tracker.py" resolve --repository-root "$ROOT")"`. On a non-zero exit return its JSON error object unchanged; never run its `write` subcommand or initialize a tracker. Set `ANCHOR_TRACKER="$(printf '%s' "$RESOLVED" | jq -r '.data.tracker')"`; when `anchor_tracker` was supplied and differs, return `VALIDATION.TRACKER`. `"$ANCHOR_TRACKER" --version` must succeed, or return `PREREQ.MISSING`. `gh` is required only when `pr_number` is given.
+1. Establish script trust and `ROOT` exactly as `anchor-plan-review` step 1. Reject a supplied `anchor_tracker` other than `bd` or `br` with `VALIDATION.TRACKER`. `python3 --version` and `jq --version` must succeed, or return `PREREQ.MISSING`. Resolve the tracker read-only with the accepted script's sibling: `RESOLVED="$(python3 "$(dirname "$SCRIPT")/anchor_tracker.py" resolve --repository-root "$ROOT")"`. On exit 2 (`success: false`) return its JSON error object unchanged; never run its `write` subcommand or initialize a tracker. Set `ANCHOR_TRACKER="$(printf '%s' "$RESOLVED" | jq -r '.data.tracker')"`; when `anchor_tracker` was supplied and differs, return `VALIDATION.TRACKER`. `"$ANCHOR_TRACKER" --version` must succeed, or return `PREREQ.MISSING`. `gh` is required only when `pr_number` is given.
 2. Preflight before reading repository inputs. Invoke `agent-preflight` with the canonical workspace and script paths, `--anchors "$anchors_path" --run-dir "$run_dir" --identifier "$item_id"`, `--evidence "$item_file"` first, one `--identifier` for each explicit anchor ID, every supplied evidence path and optional `run` as `--evidence`, `--pr-number "$pr_number"` when present, and `--correlation-id "${correlation_id:-$item_id}"`. On failure, return its error unchanged. Use only the canonical anchors, run directory, item path (`evidence[0]`, as `ITEM_FILE`), evidence paths, and optional run path it returns. Create `W` with `mktemp -d "${TMPDIR:-/tmp}/plan-anchoring-${work_key}.XXXXXX"`.
 3. Copy the sprint unchanged: `cat "$ITEM_FILE" > "$W/item.txt"`. Note `Closed beads` for `evidence_sections` when the text has that heading.
 4. Assemble the account in `"$W/account.md"`, labelled by section, in this priority order. The request cap at this gate is 64,000 bytes and the script shortens from the tail, so the sprint report goes first (`references/measured-behaviour.md`):
@@ -51,7 +51,7 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
      --item-id "$ITEM_ID" --item-title "$ITEM_TITLE" --item-file "$W/item.txt" \
      [--overrides-file "$W/overrides.json"] --threshold "$THRESHOLD" --run-dir "$RUN_DIR" [--dry-run]
    ```
-   Exit codes as for the planning gate: 0 passed or dry run, 1 failing or `error` verdicts, 2 fatal. The script retries and shortens; do not re-run.
+   Exit codes as for the planning gate: 0 the run completed (`data.summary.pass` false on failing or `error` verdicts; read it, not the exit code), 2 fatal. The script retries and shortens; do not re-run.
 8. Point to the weak spot for each failing cell exactly as `anchor-plan-review` step 5, against `$W/item.txt`; here `change` says what the work or the sprint report should show. Then render: `python3 "$SCRIPT" report --run <run path> --format md`.
 9. Collect `deterministic_checks`: for every result whose `verdict` is `satisfied` or `asserted_only` and whose `deterministic_check` is non-empty, emit `{anchor_id, verdict, check}`.
 10. Return the envelope below. `results` copy the run's `results[]` unchanged plus `to_fix` on failing cells; `reused_run` is true when `run` was given. An `excluded` cell (`summary.excluded`) was not judged and passes: return it unchanged with its `exclusion`, no `to_fix` and no deterministic check. Measure `duration_ms`, count actual external tool calls, and derive `retry_count` from extra script attempts exactly as `anchor-plan-review` does; do not emit placeholder zeroes.
@@ -72,7 +72,7 @@ Return fenced JSON:
     "run_path": "doc/plan/phase-current/anchor-runs/dev-20261022T101500Z-A2.json",
     "dry_run": false,
     "reused_run": false,
-    "exit_code": 1,
+    "exit_code": 0,
     "pass": false,
     "failing": ["ANC-012"],
     "excluded": [],

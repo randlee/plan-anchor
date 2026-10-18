@@ -19,7 +19,9 @@ registered subagent through the **Task** tool and do not pass a model argument;
 the descriptor's `model` is `composer` for the gates and `grok[effort=high]`
 for tuning. The invocation contains
 exactly one fenced JSON request. The response must contain exactly one fenced
-JSON result and pass `validate-fence` before any follow-on action.
+JSON result, and `validate-fence` must report `data.valid: true` (exit 0)
+before any follow-on action; `data.valid: false` with `data.violation` is a
+rejected response, and exit 2 means the check itself could not run.
 
 Every result, including a tuning failure, carries top-level
 `schema_version: "1.0.0"`. This versions the shared response envelope, independently

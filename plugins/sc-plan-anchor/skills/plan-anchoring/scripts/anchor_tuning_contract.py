@@ -2,11 +2,13 @@
 """Deterministic relational checks for anchor-tuning request/result contracts.
 
 Contract violations are returned as ``Err(ToolError)`` values (see
-``result.py``). The CLI prints one ``{success, data, error}`` JSON envelope:
-exit 0 with ``data = {"valid": true, "sha256": ...}`` when the object passes,
-exit 2 with a typed ``error`` for a violation, a missing field, unreadable or
-non-JSON input, bad arguments (``VALIDATION.INPUT``), or an unexpected failure
-(``SCRIPT.INTERNAL``).
+``result.py``). The CLI prints one ``{success, data, error}`` JSON envelope.
+A file that was read and checked exits 0, valid or not: ``data = {"valid":
+true, "sha256": ...}`` when the object passes, ``data = {"valid": false,
+"violation": {"code", "message"}}`` for a contract violation, a missing field,
+a non-object or non-JSON content. Exit 2 means the check could not run:
+unreadable input (``SCRIPT.IO``), bad arguments (``VALIDATION.INPUT``), or an
+unexpected failure (``SCRIPT.INTERNAL``). There is no exit 1.
 """
 
 from __future__ import annotations
@@ -271,13 +273,26 @@ def _emit(value: dict) -> None:
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 
+def _invalid(error: ToolError) -> Result[dict, ToolError]:
+    """A completed check that found a violation: Ok with data.valid false, exit 0."""
+
+    return Ok({"valid": False, "violation": {"code": error.code, "message": error.message}})
+
+
 def _check_file(kind: str, path: pathlib.Path) -> Result[dict, ToolError]:
-    """Read, decode and check one contract file. Raises only for unexpected failures."""
+    """Read, decode and check one contract file. Err only when the file cannot be read; raises only for unexpected failures."""
 
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return err("SCRIPT.IO", "input could not be read")
+    checked = _check_text(kind, text)
+    if isinstance(checked, Err):
+        return _invalid(checked.error)
+    return checked
+
+
+def _check_text(kind: str, text: str) -> Result[dict, ToolError]:
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:

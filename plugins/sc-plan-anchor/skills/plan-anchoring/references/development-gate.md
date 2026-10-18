@@ -32,7 +32,7 @@ python3 "$S" judge --anchors "$A" --gate dev --all --item-id <sprint ID> --item-
   --item-file "$W/item.txt" [--overrides-file "$W/overrides.json"] --run-dir doc/plan/phase-current/anchor-runs
 ```
 
-Exit codes as at the planning gate: 0 passed or dry run, 1 failing or `error` verdicts with the run file written, 2 fatal.
+Exit codes as at the planning gate: 0 the run completed (read `data.summary.pass`: false on failing or `error` verdicts, with the run file written), 2 fatal.
 
 ## Pairing with deterministic checks
 
@@ -59,6 +59,6 @@ Set a check with `add --deterministic-check` or later with `update --determinist
 | `excluded` | Not asked: the anchor's `exclude` names this item | `results[].exclusion.reason` | Nothing |
 | `error` | Jev could not be asked after retries | `results[].error.code` | Fix the cause; re-run |
 
-The gate passes when the sprint's latest run exits 0 and every returned deterministic check has been run and recorded.
+The gate passes when the sprint's latest run has `summary.pass: true` and every returned deterministic check has been run and recorded.
 
 Post the report on the sprint bead and, when there is a PR, on the PR. Compare with the previous handover using `diff`.

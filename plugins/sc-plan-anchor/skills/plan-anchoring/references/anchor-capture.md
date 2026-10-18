@@ -82,7 +82,7 @@ Record only when the user confirms or says "lock this" or "anchor this". If "loc
 
 ## Deduplication
 
-Before `add`, compare the candidate against every anchor in `anchors.md`, including REQ and ADR entries. Two anchors are duplicates when a plan that satisfies one necessarily satisfies the other. `add` refuses a candidate lexically close to an existing anchor (`ANCHOR.DUPLICATE_CANDIDATE`) and names the match; pass `--allow-similar` only after reading the match and finding a different constraint.
+Before `add`, compare the candidate against every anchor in `anchors.md`, including REQ and ADR entries. Two anchors are duplicates when a plan that satisfies one necessarily satisfies the other. `add` refuses a candidate lexically close to an existing anchor and names the match: exit 0 with `data.added: false`, `data.refused.code: ANCHOR.DUPLICATE_CANDIDATE` and `data.similar`; pass `--allow-similar` only after reading the match and finding a different constraint.
 
 For a set that has grown:
 

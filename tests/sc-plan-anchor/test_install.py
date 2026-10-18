@@ -271,7 +271,7 @@ class GeneratedDataTests(unittest.TestCase):
             data["skill"].remove("SKILL.md")
             stale.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             with mock.patch.object(gen, "MANIFEST", stale), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(gen.main(["--check"]), 1)
+                self.assertEqual(gen.main(["--check"]), 2)  # stale fails CI, and like every CLI here never exits 1
 
     def test_legacy_lacking_history_is_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +280,7 @@ class GeneratedDataTests(unittest.TestCase):
             del data["agents"]["claude"]["anchor-question-tune.md"]
             stale.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             with mock.patch.object(gen, "LEGACY", stale), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(gen.main(["--check"]), 1)
+                self.assertEqual(gen.main(["--check"]), 2)  # stale fails CI, and like every CLI here never exits 1
 
     def test_legacy_covers_retired_files(self):
         legacy = json.loads(gen.LEGACY.read_text(encoding="utf-8"))

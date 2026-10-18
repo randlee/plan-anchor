@@ -79,13 +79,13 @@ class JudgeExclusionTests(unittest.TestCase):
                 t = Transport(FAILING)
                 j = Judged(d, t, anchors=[cli_anchor(exclude=excluded(item=item))])
                 self.assertEqual(sent_anchor_ids(t), ["ANC-011"])
-                self.assertEqual((j.code, j.result["verdict"], j.run["summary"]["excluded"]), (1, "not_addressed", []))
+                self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.run["summary"]["excluded"]), (0, False, "not_addressed", []))
 
     def test_excluding_one_anchor_does_not_pass_a_failing_one(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(FAILING)
             j = Judged(d, t, anchors=[anchor("ANC-001"), cli_anchor(exclude=excluded())])
-            self.assertEqual((j.code, j.run["summary"]["failing"], j.run["summary"]["pass"]), (1, ["ANC-001"], False))
+            self.assertEqual((j.code, j.run["summary"]["failing"], j.run["summary"]["pass"]), (0, ["ANC-001"], False))
 
     def test_all_excluded_needs_no_key_or_opt_in(self):
         with tempfile.TemporaryDirectory() as d:
@@ -232,7 +232,7 @@ class SchemaTests(unittest.TestCase):
             j = Judged(d, t, anchors=[cli_anchor(exclude=[{"item": "ex-42", "reason": " "}])])
             self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "VALIDATION.ANCHORS", []))
             code, out = run_cli(["validate", "--anchors", j.anchors_path])
-            self.assertEqual(code, 1)
+            self.assertEqual((code, out["success"], out["data"]["valid"]), (0, True, False))
             self.assertTrue(any("reason is empty" in p for p in out["data"]["problems"]))
 
 

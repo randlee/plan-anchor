@@ -185,21 +185,6 @@ JEV_CASES = {
                           {"anchors.json": record(anchor(status="proposed")), "item.txt": ITEM}, {}, None, 2,
                           {"code": "ANCHOR.NOT_LOCKED", "message": "anchors not locked or promoted: ANC-001", "recoverable": False,
                            "suggested_action": "Lock the anchor first, or pass --include-unlocked to judge a proposed or retired anchor deliberately."}, None),
-    "anchor_duplicate_candidate": (ADD + ["--statement", STATEMENT, "--quote", "other words"], {"anchors.json": LOCKED}, {}, None, 2,
-                                   {"code": "ANCHOR.DUPLICATE_CANDIDATE", "message": "the new anchor looks like an existing one: ANC-001 (jaccard 1.0, statement/statement)",
-                                    "recoverable": True,
-                                    "suggested_action": "Update ANC-001 instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint."}, None),
-    "anchor_not_testable": (ADD + ["--statement", "Every command must emit JSON.", "--quote", "json", "--rubric", "--answers-file", "a.json"],
-                            {"a.json": {"*": rubric_answers("no")}}, {}, None, 2,
-                            {"code": "ANCHOR.NOT_TESTABLE",
-                             "message": "the statement did not pass the testability rubric (needs_work): single_constraint, observable, faithful, scoped, self_contained",
-                             "recoverable": True,
-                             "suggested_action": "Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, or pass --allow-untestable to record it anyway."}, None),
-    "anchor_lint": (ADD + ["--statement", "We should keep things clean.", "--quote", "x y z", "--strict"], {}, {}, None, 2,
-                    {"code": "ANCHOR.LINT",
-                     "message": "statement has testability warnings: hedged wording; state the requirement; written as speech, not as a requirement; not phrased as a testable requirement; vague term; name the observable outcome",
-                     "recoverable": True,
-                     "suggested_action": "Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway."}, None),
     "verbatim_statement": (ADD + ["--statement", "Copy it must.", "--quote", "copy it must"], {}, {}, None, 2,
                            {"code": "VALIDATION.INPUT", "message": "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)",
                             "recoverable": True,
@@ -222,7 +207,7 @@ JEV_CASES = {
     "input_empty": (JUDGE + ["--dry-run"], {"anchors.json": LOCKED, "item.txt": " \n"}, {}, None, 2,
                     {"code": "INPUT.EMPTY", "message": "item text is empty", "recoverable": False,
                      "suggested_action": "Pass the bead or work description via --item-file."}, None),
-    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 1,
+    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 0,
                         None, None),
     "fixture_none": (["check-fixtures", "--anchors", "anchors.json", "--gate", "plan", "--all", "--dry-run"], {"anchors.json": LOCKED}, {}, None, 2,
                      {"code": "FIXTURE.NONE", "message": "no fixture sentences recorded on the selected anchors", "recoverable": False,
@@ -259,6 +244,24 @@ JEV_CASES = {
 }
 
 
+# A quality gate saying no to `add` is a completed negative answer: exit 0, success, data.added false,
+# and data.refused carries the code, message and suggested action the refusal used to carry as an error.
+REFUSAL_CASES = {
+    "anchor_duplicate_candidate": (ADD + ["--statement", STATEMENT, "--quote", "other words"], {"anchors.json": LOCKED}, {}, None, 0,
+                                   {"code": "ANCHOR.DUPLICATE_CANDIDATE", "message": "the new anchor looks like an existing one: ANC-001 (jaccard 1.0, statement/statement)",
+                                    "suggested_action": "Update ANC-001 instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint."}, None),
+    "anchor_not_testable": (ADD + ["--statement", "Every command must emit JSON.", "--quote", "json", "--rubric", "--answers-file", "a.json"],
+                            {"a.json": {"*": rubric_answers("no")}}, {}, None, 0,
+                            {"code": "ANCHOR.NOT_TESTABLE",
+                             "message": "the statement did not pass the testability rubric (needs_work): single_constraint, observable, faithful, scoped, self_contained",
+                             "suggested_action": "Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, or pass --allow-untestable to record it anyway."}, None),
+    "anchor_lint": (ADD + ["--statement", "We should keep things clean.", "--quote", "x y z", "--strict"], {}, {}, None, 0,
+                    {"code": "ANCHOR.LINT",
+                     "message": "statement has testability warnings: hedged wording; state the requirement; written as speech, not as a requirement; not phrased as a testable requirement; vague term; name the observable outcome",
+                     "suggested_action": "Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway."}, None),
+}
+
+
 class JevJudgeErrorContracts(unittest.TestCase):
     def test_every_offline_error_code_keeps_its_exact_envelope(self):
         for name, (argv, files, env, stdin, exit_code, error, data) in JEV_CASES.items():
@@ -269,21 +272,34 @@ class JevJudgeErrorContracts(unittest.TestCase):
                     continue
                 self.assertEqual(out, {"success": False, "data": data, "error": error})
 
+    def test_add_refusals_are_negative_answers_with_exit_zero(self):
+        for name, (argv, files, env, stdin, exit_code, refused, _) in REFUSAL_CASES.items():
+            with self.subTest(name), Workspace(files):
+                code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
+                self.assertEqual((code, out["success"], out["error"]), (exit_code, True, None))
+                self.assertEqual((out["data"]["added"], out["data"]["refused"]), (False, refused))
+                self.assertNotIn("anchor", out["data"])
+                saved = json.loads(Path("anchors.json").read_text()) if Path("anchors.json").exists() else {"anchors": []}
+                self.assertEqual([a["id"] for a in saved["anchors"]], [a["id"] for a in files.get("anchors.json", {"anchors": []})["anchors"]])
+
     def test_fixture_missing_is_a_per_anchor_error_verdict(self):
         argv, files, env, stdin, _, _, _ = JEV_CASES["fixture_missing"]
         with Workspace(files):
             code, out = call_main(jj.main, list(argv), env=env)
         result = out["data"]["results"][0]
-        self.assertEqual((code, result["verdict"], result["attempts"]), (1, "error", 0))
+        self.assertEqual((code, out["success"], out["data"]["summary"]["pass"], result["verdict"], result["attempts"]), (0, True, False, "error", 0))
         self.assertEqual(result["error"], {"code": "FIXTURE.MISSING", "message": "answers fixture has no entry for ANC-001 (or '*')",
                                            "recoverable": False, "suggested_action": ""})
 
-    def test_validate_problems_and_lint_warnings_exit_one(self):
+    def test_validate_problems_and_lint_warnings_exit_zero(self):
         with Workspace({"anchors.json": record(anchor(statement=""))}):
             code, out = call_main(jj.main, ["validate", "--anchors", "anchors.json"])
-            self.assertEqual(code, 1)
-            self.assertEqual(out["error"], {"code": "VALIDATION.ANCHORS", "message": "1 problem(s) in anchors.json", "recoverable": True,
-                                            "suggested_action": "Fix the listed problems and re-run validate."})
+            self.assertEqual(code, 0)
+            self.assertEqual(out, {"success": True, "error": None, "data": {
+                "valid": False, "path": "anchors.json", "problems": ["ANC-001: statement is empty"], "warnings": ["intent_ref file not found: intent.md"],
+                "suggested_action": "Fix the listed problems and re-run validate."}})
+            code, out = call_main(jj.main, ["lint", "--anchors", "anchors.json"])
+            self.assertEqual((code, out["success"], out["data"]["clean"]), (0, True, False))
 
     def test_non_numeric_flag_exits_two_with_json(self):
         for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
@@ -337,7 +353,7 @@ class JevTransportErrorContracts(unittest.TestCase):
             with self.subTest(error_code=error_code, message=message):
                 code, out, calls, sleeps = self.judge([failure, failure, failure])
                 result = out["data"]["results"][0]
-                self.assertEqual((code, calls, sleeps, result["verdict"], result["attempts"]), (1, 3, delays, "error", 3))
+                self.assertEqual((code, out["data"]["summary"]["pass"], calls, sleeps, result["verdict"], result["attempts"]), (0, False, 3, delays, "error", 3))
                 self.assertEqual((result["error"]["code"], result["error"]["message"], result["error"]["recoverable"]), (error_code, message, True))
 
     def test_transient_failure_then_success_passes(self):
@@ -346,25 +362,25 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def test_non_transient_http_errors_are_recorded_without_retry(self):
         code, out, calls, _ = self.judge([http_error(422, b"questions.addressed is invalid")])
-        self.assertEqual((code, calls), (1, 1))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.VALIDATION", "message": "Jev HTTP 422: questions.addressed is invalid",
                                                                "recoverable": False, "suggested_action": "Fix the named field; usually a malformed question override."})
         code, out, calls, _ = self.judge([http_error(418, b"teapot")])
-        self.assertEqual((code, calls), (1, 1))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.HTTP", "message": "Jev HTTP 418; response body withheld",
                                                                "recoverable": False, "suggested_action": "Check the request body."})
 
     def test_plan_gate_context_overflow_is_plan_too_large_and_dev_gate_shortens(self):
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens exceeded")])
         error = out["data"]["results"][0]["error"]
-        self.assertEqual((code, calls, error["code"], error["recoverable"]), (1, 1, "PLAN.TOO_LARGE", False))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, error["code"], error["recoverable"]), (0, False, 1, "PLAN.TOO_LARGE", False))
         self.assertIn("Jev rejected it for context size (Jev HTTP 400: request exceeds the model's context window)", error["message"])
         self.assertEqual(error["data"]["item_id"], "ex-42")
 
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens"), http_error(400, b"max_tokens")], gate="dev",
                                          extra=("--min-item-chars", "1000"), item="evidence " * 200)
         result = out["data"]["results"][0]
-        self.assertEqual((code, calls, result["item_shortened"], result["attempts"]), (1, 2, True, 2))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, result["item_shortened"], result["attempts"]), (0, False, 2, True, 2))
         self.assertEqual(result["error"], {
             "code": "JEV.CONTEXT_EXCEEDED",
             "message": "Jev rejected the request for context size with the item at 1055 chars (floor --min-item-chars 1000): "
@@ -389,6 +405,11 @@ def contract_error(code, message):
     return {"success": False, "data": None, "error": {"code": code, "message": message, "recoverable": False, "suggested_action": None}}
 
 
+def contract_invalid(code, message):
+    """A completed contract check that found a violation: exit 0, success, data.valid false."""
+    return {"success": True, "error": None, "data": {"valid": False, "violation": {"code": code, "message": message}}}
+
+
 class RunnerContractErrorContracts(unittest.TestCase):
     def fence(self, files, kind="request", extra=()):
         with Workspace(files):
@@ -403,24 +424,27 @@ class RunnerContractErrorContracts(unittest.TestCase):
             return "```json\n" + (value if isinstance(value, str) else json.dumps(value)) + "\n```"
 
         cases = (
-            (fenced(request) + "\n" + fenced(request), contract_error("ENVELOPE.REQUEST_FENCE", "request must be exactly one fenced JSON object")),
-            (fenced("{bad"), contract_error("ENVELOPE.REQUEST_JSON", "request JSON is malformed")),
-            (fenced("[1]"), contract_error("ENVELOPE.REQUEST_JSON", "request JSON must be an object")),
-            (fenced('{"x": {"a": 1, "a": 2}, bad}'), contract_error("ENVELOPE.DUPLICATE_KEY", "JSON object contains a duplicate key")),
-            (fenced(dict(request, extra=1)), contract_error("ENVELOPE.REQUEST", "request must contain only the required top-level fields")),
-            (fenced(dict(request, schema_version="2")), contract_error("ENVELOPE.VERSION", "request schema_version is unsupported")),
-            (fenced(dict(request, operation="x")), contract_error("ENVELOPE.OPERATION", "request operation is unsupported")),
-            (fenced(dict(request, correlation_id="../x")), contract_error("ENVELOPE.CORRELATION", "request correlation_id is invalid")),
-            (fenced(dict(request, params=[])), contract_error("ENVELOPE.PARAMS", "request params must be an object")),
-            (fenced(dict(request, runtime=dict(runtime, sha256="x"))), contract_error("ENVELOPE.RUNTIME", "runtime sha256 is invalid")),
-            (fenced(dict(request, runtime=dict(runtime, path="a/../b"))), contract_error("ENVELOPE.RUNTIME", "runtime path must not traverse its plugin root")),
+            (fenced(request) + "\n" + fenced(request), contract_invalid("ENVELOPE.REQUEST_FENCE", "request must be exactly one fenced JSON object")),
+            (fenced("{bad"), contract_invalid("ENVELOPE.REQUEST_JSON", "request JSON is malformed")),
+            (fenced("[1]"), contract_invalid("ENVELOPE.REQUEST_JSON", "request JSON must be an object")),
+            (fenced('{"x": {"a": 1, "a": 2}, bad}'), contract_invalid("ENVELOPE.DUPLICATE_KEY", "JSON object contains a duplicate key")),
+            (fenced(dict(request, extra=1)), contract_invalid("ENVELOPE.REQUEST", "request must contain only the required top-level fields")),
+            (fenced(dict(request, schema_version="2")), contract_invalid("ENVELOPE.VERSION", "request schema_version is unsupported")),
+            (fenced(dict(request, operation="x")), contract_invalid("ENVELOPE.OPERATION", "request operation is unsupported")),
+            (fenced(dict(request, correlation_id="../x")), contract_invalid("ENVELOPE.CORRELATION", "request correlation_id is invalid")),
+            (fenced(dict(request, params=[])), contract_invalid("ENVELOPE.PARAMS", "request params must be an object")),
+            (fenced(dict(request, runtime=dict(runtime, sha256="x"))), contract_invalid("ENVELOPE.RUNTIME", "runtime sha256 is invalid")),
+            (fenced(dict(request, runtime=dict(runtime, path="a/../b"))), contract_invalid("ENVELOPE.RUNTIME", "runtime path must not traverse its plugin root")),
             (b"\xff", contract_error("SCRIPT.IO", "input could not be read")),
         )
         for text, expected in cases:
-            with self.subTest(expected=expected["error"]["message"]):
-                self.assertEqual(self.fence({"f.md": text}), (2, expected))
+            message = (expected["error"] or expected["data"]["violation"])["message"]
+            with self.subTest(expected=message):
+                self.assertEqual(self.fence({"f.md": text}), (0 if expected["success"] else 2, expected))
+        # a missing argument is bad input, not an invalid record
         self.assertEqual(self.fence({"f.md": fenced(request)}, kind="result"),
                          (2, contract_error("ENVELOPE.CORRELATION", "result validation requires correlation_id")))
+        self.assertEqual(self.fence({"f.md": fenced(request)}), (0, {"success": True, "error": None, "data": {"valid": True, "value": request}}))
 
     def test_resolve_error_envelopes(self):
         registry = 'agents:\n  anchor-tuning:\n    version: "0.5.0"\n    path: .codex/agents/anchor-tuning.md\n'
@@ -457,7 +481,7 @@ class TuningContractCli(unittest.TestCase):
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 
-    def test_cli_reports_every_error_as_an_envelope_with_exit_two(self):
+    def test_cli_reports_violations_as_valid_false_with_exit_zero(self):
         cases = (
             ("result", {"x": [{"desired_verdict": 1}]}, "VALIDATION.FORBIDDEN_FIELD", "$.x[0].desired_verdict"),
             ("result", {"success": True, "data": {"operation": "x"}}, "VALIDATION.OPERATION", "unknown result operation"),
@@ -465,13 +489,16 @@ class TuningContractCli(unittest.TestCase):
             ("request", {"runtime": {}}, "VALIDATION.MISSING_FIELD", "required field is missing: harness"),
             ("request", "{", "VALIDATION.JSON", "input is not valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"),
             ("result", [1], "VALIDATION.SHAPE", "result must be a JSON object"),
-            ("request", b"\xff", "SCRIPT.IO", "input could not be read"),
         )
         for kind, value, code, message in cases:
             with self.subTest(code=code):
                 rc_, out = self.run_cli(kind, value)
-                self.assertEqual((rc_, json.loads(out)), (2, contract_error(code, message)))
-                self.assertEqual(out, json.dumps(contract_error(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+                self.assertEqual((rc_, json.loads(out)), (0, contract_invalid(code, message)))
+                self.assertEqual(out, json.dumps(contract_invalid(code, message), sort_keys=True, separators=(",", ":")) + "\n")
+
+    def test_cli_reports_an_unreadable_file_as_an_error_with_exit_two(self):
+        rc_, out = self.run_cli("request", b"\xff")
+        self.assertEqual((rc_, json.loads(out)), (2, contract_error("SCRIPT.IO", "input could not be read")))
         rc_, out = self.run_cli("result", {"success": False})
         self.assertEqual((rc_, json.loads(out)), (0, {"success": True, "error": None, "data": {
             "valid": True, "sha256": hashlib.sha256(b'{"success":false}').hexdigest()}}))
