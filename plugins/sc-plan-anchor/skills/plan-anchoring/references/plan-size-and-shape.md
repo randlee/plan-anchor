@@ -36,7 +36,7 @@ The planning-gate cap (24,000 bytes, `jev-api.md`) is "what Jev reads reliably",
 Counting and sizing are the script's job, never Jev's. `shape` reports, per bead and for the set:
 
 ```bash
-python3 "$S" shape --beads <dir of bd show --json files | --children-json <file>> [--anchors "$A"] [--format md]
+python3 "$S" shape --beads <dir of "$ANCHOR_TRACKER" show --json files | --children-json <file>> [--anchors "$A"] [--format md]
 ```
 
 | Metric | Why it matters |
@@ -52,7 +52,7 @@ python3 "$S" shape --beads <dir of bd show --json files | --children-json <file>
 
 ## What the gate itself judges
 
-The gate helps with step 1: a scope anchor such as "Every phase deliverable is a targeted addition that addresses a named issue from the approved list; nothing is added that those issues do not require" makes unapproved work a `contradicted` verdict on the bead that carries it. Lock one for every phase. Step 2 is not an anchor question; use the reviewing-ceremony skill, when installed, on the plan beads (`bd show <ids> --json | ...`); it returns the items matching ceremony patterns and their locations.
+The gate helps with step 1: a scope anchor such as "Every phase deliverable is a targeted addition that addresses a named issue from the approved list; nothing is added that those issues do not require" makes unapproved work a `contradicted` verdict on the bead that carries it. Lock one for every phase. Step 2 is not an anchor question; use the reviewing-ceremony skill, when installed, on the plan beads (`"$ANCHOR_TRACKER" show <ids> --json | ...`); it returns the items matching ceremony patterns and their locations.
 
 ## Long code
 

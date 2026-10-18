@@ -44,7 +44,7 @@ Before acting on a failing verdict, re-read the sent text (the composed item fil
 
 - Planning gate: comment on the judged planning bead:
   ```bash
-  python3 "$S" report --run <run.json> --format md > "$W/report.md" && bd comment <bead> --file "$W/report.md"
+  python3 "$S" report --run <run.json> --format md > "$W/report.md" # then, with the selected tracker: br comments add <bead> --file "$W/report.md"  |  bd comment <bead> --file "$W/report.md"
   ```
 - Development gate: comment on the sprint bead and, when there is a PR, on the PR, with the deterministic check outcomes beneath.
 - Both: the run JSON stays in `doc/plan/phase-current/anchor-runs/` and is committed with the plan.

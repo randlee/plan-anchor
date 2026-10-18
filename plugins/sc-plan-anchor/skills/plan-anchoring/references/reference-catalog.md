@@ -16,7 +16,7 @@ version: 0.7.1
 
 - `references/anchor-capture.md` - detecting, proposing, confirming, and wording anchors
 - `references/anchor-document.md` - intent.md, anchors.json schema, anchors.md, IDs, lifecycle
-- `references/bead-layout.md` - the anchor bead tree, bd commands, labels, overrides in beads, reading beads
+- `references/bead-layout.md` - the anchor bead tree, br and bd commands, labels, overrides in beads, reading beads
 - `references/question-tuning.md` - the testability rubric, per-anchor question overrides, proving the wording
 - `references/triage-and-iteration.md` - the run, triage, apply, re-run, diff loop and the stop conditions
 - `references/plan-size-and-shape.md` - oversized beads and phases: triage order, what Jev reads, `shape` metrics
