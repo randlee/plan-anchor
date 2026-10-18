@@ -8,7 +8,9 @@ single fenced response, then writes a credential-safe attestation.
 
 Expected contract failures are returned as ``Err(ToolError)`` values (see
 ``result.py``) rather than raised; only ``main`` renders them, and it alone
-still catches unreadable input as ``SCRIPT.IO``.
+still catches unreadable input as ``SCRIPT.IO``. Bad arguments are a
+``VALIDATION.INPUT`` envelope and any other unexpected exception is
+``SCRIPT.INTERNAL``, both exit 2; nothing escapes as a traceback.
 """
 
 from __future__ import annotations
@@ -395,9 +397,20 @@ def _emit(value: dict[str, Any]) -> None:
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors become a VALIDATION.INPUT envelope (exit 2) instead of argparse's text on stderr."""
+
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = _JsonArgumentParser(prog="anchor_runner_contract.py", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--plugin-root", required=True)
     resolve.add_argument("--harness", required=True, choices=HARNESSES)
@@ -421,11 +434,20 @@ def _run(args: argparse.Namespace) -> Result[dict[str, Any], ToolError]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    try:
+        args = _parser().parse_args(argv)
+    except _UsageError as exc:
+        _emit({"success": False, "data": None, "error": ToolError(
+            "VALIDATION.INPUT", str(exc), "Run 'anchor_runner_contract.py <command> --help' for the accepted arguments.").to_json()})
+        return 2
     try:
         outcome = _run(args)
     except (OSError, UnicodeError):
         _emit({"success": False, "data": None, "error": {"code": "SCRIPT.IO", "message": "input could not be read", "recoverable": False, "suggested_action": None}})
+        return 2
+    except Exception as exc:  # noqa: BLE001 - the CLI boundary: a JSON error object beats a traceback
+        _emit({"success": False, "data": None, "error": ToolError(
+            "SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}", "Report this with the command line that produced it.").to_json()})
         return 2
     if isinstance(outcome, Err):
         _emit({"success": False, "data": None, "error": outcome.error.to_json()})

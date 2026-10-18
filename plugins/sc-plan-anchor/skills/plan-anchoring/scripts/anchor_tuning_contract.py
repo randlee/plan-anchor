@@ -5,7 +5,8 @@ Contract violations are returned as ``Err(ToolError)`` values (see
 ``result.py``). The CLI prints one ``{success, data, error}`` JSON envelope:
 exit 0 with ``data = {"valid": true, "sha256": ...}`` when the object passes,
 exit 2 with a typed ``error`` for a violation, a missing field, unreadable or
-non-JSON input, or an unexpected failure (``SCRIPT.INTERNAL``).
+non-JSON input, bad arguments (``VALIDATION.INPUT``), or an unexpected failure
+(``SCRIPT.INTERNAL``).
 """
 
 from __future__ import annotations
@@ -292,11 +293,27 @@ def _check_file(kind: str, path: pathlib.Path) -> Result[dict, ToolError]:
     return Ok({"valid": True, "sha256": sha256(value)})
 
 
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors become a VALIDATION.INPUT envelope (exit 2) instead of argparse's text on stderr."""
+
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
+    parser = _JsonArgumentParser(prog="anchor_tuning_contract.py")
     parser.add_argument("kind", choices=("request", "result"))
     parser.add_argument("path", type=pathlib.Path)
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except _UsageError as exc:
+        _emit({"success": False, "data": None, "error": ToolError(
+            "VALIDATION.INPUT", str(exc), "Run 'anchor_tuning_contract.py --help' for the accepted arguments.").to_json()})
+        return 2
     try:
         outcome = _check_file(args.kind, args.path)
     except Exception as exc:  # noqa: BLE001 - the CLI boundary: a JSON error object beats a traceback
