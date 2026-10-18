@@ -7,7 +7,7 @@ entry is derived from an existing source; nothing here is new scope.
   (`ANC-NNN`), the [Phase A intent](plans/phase-a/intent.md) (`INTENT`), a
   document, or an operator decision (`OPERATOR`). Retired anchors are cited only
   where their retirement reason says the requirement itself remains.
-- **Status** describes the code on `main` at 0.8.1: `shipped` (built),
+- **Status** describes the code on `main` at 0.8.2: `shipped` (built),
   `planned` (decided, not built) or `retired` (withdrawn; the entry stays
   listed and its number is not reused).
 - **Verified** names the test that exercises the requirement, as
@@ -112,8 +112,8 @@ Source: OPERATOR; INTENT "Success"; retired ANC-007 (requirement retained). Stat
 Verified: `test_anchor_tracker.py::SelectionRuleTests`, `test_gate_prompts.py::GatePromptTests.test_both_gates_resolve_the_tracker_for_question_beads`, `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_development_gate_resolves_tracker_and_takes_caller_text`, `test_install.py::RenderingTests.test_both_gates_render_the_selected_tracker`.
 
 **REQ-022** Tracker selection shall be: an explicit `anchor_tracker` in the settings file in effect (the nearest, REQ-070) wins and is validated against disk; otherwise a Dolt-backed `.beads/` selects `bd`, any other `.beads/` selects `br`, and no `.beads/` selects `br`; a mismatch is an error, never a silent switch.
-Source: OPERATOR. Status: shipped.
-Verified: `test_anchor_tracker.py::SelectionRuleTests` (all), `SelectionRuleTests.test_selection_never_switches_to_the_other_cli`.
+Source: OPERATOR. Status: shipped. Since 0.8.2 `install.py` applies these rules to both trackers; an installed `anchor_tracker.py` is rendered for one tracker (REQ-059) and refuses a setting naming the other (`SETTINGS.INVALID_TRACKER`) or a `.beads/` that does not fit it (`TRACKER.MISMATCH` in a `br` install, `TRACKER.DOLT_REQUIRED` in a `bd` install), with the installer's `--tracker` as the suggested action.
+Verified: `test_anchor_tracker.py::SelectionRuleTests` (all, run against the `br` and the `bd` render), `SelectionRuleTests.test_selection_never_switches_to_the_other_cli`, `test_install.py::InstallTests.test_switch_br_to_bd_with_dolt`, `InstallTests.test_bd_refused_without_dolt`.
 
 **REQ-023** The skill and the installer shall never run or recommend `bd init`; `br init` is the only bootstrap and runs only on `anchor_tracker.py write --init` or `install.py --init-br`, with fixed argv and no shell.
 Source: OPERATOR. Status: shipped.
@@ -269,9 +269,9 @@ Verified: `test_version_ssot.py::VersionSingleSourceOfTruthTests.test_every_ship
 
 ## Installer
 
-**REQ-059** `install.py` shall run through `uv run` with PEP 723 metadata (PyYAML, `sc-compose` >=1.7.0,<2, Python 3.11 pin) and render every prompt file (SKILL.md, each reference, the `.md` assets, each agent body) as an `sc-compose` template strictly for the selected tracker, so a `br` install names no `bd` command and a `bd` install no `br` command. There shall be no neutral render and no committed rendered tree; scripts, schemas, JSON assets and the skill's runtime templates shall be copied verbatim.
-Source: OPERATOR; ADR-015. Status: shipped (no neutral render since 0.8.0).
-Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree`, `RenderingTests.test_every_prompt_source_is_a_template`, `RenderingTests.test_every_template_renders_strictly_for_each_tracker`, `RenderingTests.test_runtime_templates_are_copied_verbatim`, `RenderingTests.test_br_and_bd_installs_name_one_tracker`, `RenderingTests.test_planted_negatives`, `InstallTests.test_missing_sc_compose_is_typed_error`.
+**REQ-059** `install.py` shall run through `uv run` with PEP 723 metadata (PyYAML, `sc-compose` >=1.7.0,<2, Python 3.11 pin) and render every installed Markdown file (SKILL.md, each reference, the `.md` assets, each agent body) and every script from a `<file>.md.j2` or `<script>.py.j2` `sc-compose` template strictly for the selected tracker, so an install names only its tracker, as a whole word, in every file it writes (copied files, the lock and the settings file included), except `references/installation-and-troubleshooting.md`, which names both to explain switching. There shall be no neutral render and no committed rendered tree; only schemas, JSON assets, `registry.yaml` and the skill's runtime templates shall be copied verbatim, and no `.md` or `.py` file. `compose-item`, `shape` and `plan-items` help and errors shall use the selected tracker's command names.
+Source: OPERATOR (0.8.2); ANC-032, ANC-034; ADR-015. Status: shipped (no neutral render since 0.8.0; scripts rendered since 0.8.2).
+Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree`, `RenderingTests.test_every_prompt_source_is_a_template`, `RenderingTests.test_every_template_renders_strictly_for_each_tracker`, `RenderingTests.test_runtime_templates_are_copied_verbatim`, `RenderingTests.test_br_and_bd_installs_name_one_tracker`, `RenderingTests.test_planted_negatives`, `RenderingTests.test_installer_imports_the_neutral_scripts_exactly_as_installed`, `RealInstallTests.test_each_install_names_only_its_tracker`, `RealInstallTests.test_every_installed_md_and_py_is_rendered_from_a_template`, `RealInstallTests.test_planted_tracker_mention_in_a_script_template_is_caught`, `InstallTests.test_missing_sc_compose_is_typed_error`.
 
 **REQ-060** An install shall record version, tracker, targets and a sha256 per file in `.sc/plan-anchor/install-lock.json`; a rerun of the same version shall change nothing, and an upgrade shall remove unchanged files the new version no longer ships while keeping files it does not own.
 Source: OPERATOR; ADR-015. Status: shipped.
@@ -305,12 +305,12 @@ Verified: `test_install.py::InstallTests.test_remote_judge_flags_write_the_setti
 
 ## Per-folder installs (0.8.0)
 
-**REQ-067** The marketplace plugin shall ship one skill, `plan-anchor-installer`, and no agents; the skill and `install.py` shall read only files inside the plugin directory. The skill shall compare versions first (`install.py --dest <folder> --status`, read-only) and stop when the folder's install is newer, ask the user once for a setting the folder does not record (tracker; remote-judge consent), never infer consent, never run or recommend `bd init`, and upgrade by rerunning the same command in each install folder.
-Source: OPERATOR; ADR-015. Status: shipped.
+**REQ-067** The marketplace plugin shall ship one skill, `plan-anchor-installer`, and no agents, with no loadable plan-anchoring skill, because every installed file is rendered for one repository's tracker (REQ-059) and a marketplace copy cannot be; the skill and `install.py` shall read only files inside the plugin directory. The skill shall compare versions first (`install.py --dest <folder> --status`, read-only) and stop when the folder's install is newer, ask the user once for a setting the folder does not record (tracker; remote-judge consent), never infer consent, never run or recommend `bd init`, and upgrade by rerunning the same command in each install folder.
+Source: OPERATOR; ANC-035; ADR-015 (Single-tracker installs). Status: shipped.
 Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree`, `test_installer_skill.py::InstallerSkillTextTests` (all), `StatusTests.test_states_and_message`, `StatusTests.test_status_takes_only_dest`, `SelfContainedPluginTests.test_a_copy_of_the_plugin_alone_installs`. Partial: the skill's behavior is instruction text; tests check the text, not a harness run.
 
-**REQ-068** `install.py --dest` shall accept any existing folder (a repository, a folder inside one, or a parent folder of repositories) and refuse global locations with `INSTALL.DEST_GLOBAL` and exit 2: the home directory, anything inside `~/.claude`, `~/.codex`, `~/.cursor` or `~/.agents` (plugin caches included), `/etc/codex`, Claude Code's managed-settings directories, and the plugin directory. A non-directory is `INSTALL.DEST`; a folder that is not a repository and has no `.beads/` needs `--tracker` or a settings file (`TRACKER.REQUIRED`).
-Source: OPERATOR; ADR-015. Status: shipped.
+**REQ-068** `install.py --dest` shall accept any existing folder (a repository, a folder inside one, or a parent folder of repositories) and refuse global locations with `INSTALL.DEST_GLOBAL` and exit 2, because a copy shared across repositories cannot be rendered for one repository's tracker (REQ-059): the home directory, anything inside `~/.claude`, `~/.codex`, `~/.cursor` or `~/.agents` (plugin caches included), `/etc/codex`, Claude Code's managed-settings directories, and the plugin directory. A non-directory is `INSTALL.DEST`; a folder that is not a repository and has no `.beads/` needs `--tracker` or a settings file (`TRACKER.REQUIRED`).
+Source: OPERATOR; ANC-036; ADR-015 (Single-tracker installs). Status: shipped.
 Verified: `test_installer_skill.py::GlobalDestinationTests` (all), `ParentFolderInstallTests.test_install_writes_the_parent_and_no_child`, `ParentFolderInstallTests.test_a_parent_folder_needs_a_tracker`, `test_install.py::InstallTests.test_dest_may_be_a_folder_inside_a_repository`, `InstallTests.test_dest_must_be_an_existing_directory`.
 
 **REQ-069** `agent-preflight` and both gate agents shall accept only the canonical `jev_judge.py` of the nearest install, walking up from the working directory and stopping before the home directory; a copy in a global location, a farther install's copy or the source tree shall be `VALIDATION.PATH`. There shall be no plugin-root or manifest fallback.
@@ -332,3 +332,7 @@ Verified: `test_installer_skill.py::SessionStartHookTests` (all).
 **REQ-073** Every plan-anchor CLI and the SessionStart hook shall read and write UTF-8 on stdin, stdout and stderr on every platform, and the nearest-install, settings and lock lookups, the global-location refusal and `install.py`'s destination check shall work when the home directory cannot be determined (the walk then ends at the filesystem root; a `--dest` starting with `~` is `INSTALL.DEST`).
 Source: OPERATOR (0.8.1). Status: shipped.
 Verified: `test_windows_portability.py::NoHomeDirectoryTests` (all), `Utf8OutputTests` (all).
+
+**REQ-074** Rerunning `install.py` with the other `--tracker` over an install shall leave a folder byte-identical to a fresh install of that tracker into an empty folder, every target, the lock and settings files included, in both directions (`br` to `bd` and `bd` to `br`).
+Source: OPERATOR (0.8.2); ANC-033; ADR-015. Status: shipped.
+Verified: `test_install.py::RealInstallTests.test_switching_trackers_equals_a_fresh_install`.

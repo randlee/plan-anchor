@@ -47,15 +47,17 @@ uv run "<installer plugin>/install.py" --dest <folder> --tracker br|bd --allow-r
 
 ## Anchor tracker selection
 
-`anchor_tracker.py resolve` picks the CLI that stores anchors and question beads, independently of the plan source:
+The installer picks the CLI that stores anchors and question beads, independently of the plan source, and renders every installed file (prompts and scripts) for that tracker only:
 
 1. An explicit `anchor_tracker` in `.sc/plan-anchor/settings.yaml` wins, checked against disk: `bd` needs `.beads/metadata.json` with `"backend": "dolt"` (else `TRACKER.DOLT_REQUIRED`); `br` needs a `.beads/` that is not Dolt-backed, or none yet (else `TRACKER.MISMATCH`). A mismatch is an error, never a silent switch.
 2. With no setting: a Dolt-backed `.beads/` selects `bd`; any other `.beads/` selects `br`; no `.beads/` selects `br`.
 3. The selected CLI must be on PATH (`TRACKER.CLI_MISSING`).
 
-The installer applies the same rules. Without `--tracker` it uses the resolved tracker (the setting, else detection). It writes the chosen tracker to `anchor_tracker` in the settings file. With no `.beads/` it refuses (`TRACKER.NOT_INITIALIZED`) unless `--init-br` is given, which runs `br init`. Dolt provisioning is outside this skill: the installer and the skill never run or recommend `bd init`.
+Without `--tracker` the installer uses the resolved tracker (the setting, else detection). It writes the chosen tracker to `anchor_tracker` in the settings file. With no `.beads/` it refuses (`TRACKER.NOT_INITIALIZED`) unless `--init-br` is given, which runs `br init`. Dolt provisioning is outside this skill: the installer and the skill never run or recommend `bd init`.
 
-`resolve` is read-only and never initializes. `write` records the result in the settings file (`--tracker br|bd` pins a choice, checked the same way; an existing setting is never rewritten, and a different pin is `SETTINGS.CONFLICT`). `write --init` also runs `br init` when br is selected and there is no `.beads/`. Commit what `write` reports in `commit_paths`.
+The installed `anchor_tracker.py resolve` knows only the tracker this install is rendered for, `{{ tracker }}`, and applies rules 1 and 3 to it: a setting that names the other tracker is `SETTINGS.INVALID_TRACKER`, and {% if tracker == "bd" %}a `.beads/` that is not Dolt-backed, or none, is `TRACKER.DOLT_REQUIRED`{% else %}a Dolt-backed `.beads/` is `TRACKER.MISMATCH`{% endif %}, with or without a setting. Each error's suggested action is to rerun the installer with `--tracker` (see Switching trackers); there is never a silent switch.
+
+`resolve` is read-only and never initializes. `write` records the result in the settings file (`--tracker {{ tracker }}` pins it, checked the same way; an existing setting is never rewritten, and a different pin is `SETTINGS.CONFLICT`).{% if tracker == "br" %} `write --init` also runs `br init` when there is no `.beads/`.{% endif %} Commit what `write` reports in `commit_paths`.
 
 Exit codes follow the plugin convention shared by every script: 0 the command ran (selected); 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. The only exit codes are 0, 2 and 130 (interrupt); a negative answer from a command that ran is exit 0 with the outcome in `data`. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
 
@@ -69,13 +71,13 @@ anchor_tracker: {% if tracker == "bd" %}bd{% else %}br{% endif %}
 
 ```
 
-`schema_version` must be `1`. Unknown or duplicate keys are rejected (`SETTINGS.UNKNOWN_KEY`, `SETTINGS.MALFORMED`) so a typo never falls back silently. When the file or its `anchor_tracker` key is absent, detection (rule 2) applies. `.gitignore` may ignore `.sc/sessions/` and `.sc/*/cache/`, never this file; `write` reports `settings_ignored_by_git` when it is.
+`schema_version` must be `1`. Unknown or duplicate keys are rejected (`SETTINGS.UNKNOWN_KEY`, `SETTINGS.MALFORMED`) so a typo never falls back silently. When the file or its `anchor_tracker` key is absent, the installer detects (rule 2) and the installed `anchor_tracker.py` selects `{{ tracker }}`, checked against disk. `.gitignore` may ignore `.sc/sessions/` and `.sc/*/cache/`, never this file; `write` reports `settings_ignored_by_git` when it is.
 
 This install is rendered for `{{ tracker }}`; both gates read anchor and question beads with it. The sprint text comes from the caller, from wherever it wrote it (`item_file`).
 
 ## Switching trackers
 
-Rerun the installer for the install folder with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. Commit the settings file, the lock file and the re-rendered files together.
+Rerun the installer for the install folder with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. The switched folder is byte-for-byte what a fresh install with that `--tracker` writes into an empty folder, the lock and settings files included, in either direction. Commit the settings file, the lock file and the re-rendered files together.
 
 ## Install the CLIs
 

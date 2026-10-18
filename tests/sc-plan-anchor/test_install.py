@@ -87,11 +87,14 @@ def sha(data):
 BD_WORD = re.compile(r"(?<![\w./<-])bd(?!\w)")
 BR_WORD = re.compile(r"(?<![\w./<-])br(?!\w)")
 # Installed files that may name both trackers, each with its reason. Every
-# other installed file (prompt text and data alike) names only the selected one.
+# other installed file (prompt text, scripts and data alike) names only the
+# selected one. This is the whole allow-list; the scripts are rendered too.
 MIXED_BY_DESIGN = {
     "references/installation-and-troubleshooting.md": "the install guide explains choosing and switching trackers",
-    "scripts/*.py": "code, not prompt text: the scripts support both trackers at run time",
 }
+# Installed .md and .py files copied verbatim instead of rendered from a .j2
+# template, each with its reason. Empty: every one is rendered for one tracker.
+VERBATIM_MD_PY = {}
 
 
 def mixed_by_design(rel):
@@ -183,22 +186,77 @@ class RenderingTests(unittest.TestCase):
             inst.render_template(self.sc, TEMPLATES / "skills" / "plan-anchoring" / "SKILL.md.j2", "neutral", VERSION)
 
     def test_every_prompt_source_is_a_template(self):
-        """Every .md the skill installs is rendered for one tracker; none is copied verbatim."""
+        """Every .md and .py the skill installs is rendered for one tracker; none is copied verbatim."""
         copied_md = [rel for rel in self.package.skill if rel.endswith(".md") and rel not in self.package.rendered]
         self.assertEqual(copied_md, [])
+        copied_py = [rel for rel in self.package.skill if rel.endswith(".py") and rel not in self.package.rendered]
+        self.assertEqual(copied_py, [])
         source = TEMPLATES / "skills" / "plan-anchoring"
         expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
+        expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
+        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 7)
         self.assertEqual(set(self.package.rendered), expected)
         self.assertEqual(len([r for r in expected if r.startswith("references/")]), 22)
         self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 3 + 22)  # agents, SKILL.md + 2 assets templates, references
+        self.assertEqual(len(templates), 3 + 3 + 22 + 7)  # agents, SKILL.md + 2 assets templates, references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
+
+    def test_installer_imports_the_neutral_scripts_exactly_as_installed(self):
+        """install.py loads result.py and plan_anchor_paths.py from their templates' bodies: the same bytes it installs."""
+        for name in ("result", "plan_anchor_paths"):
+            template = TEMPLATES / "skills" / "plan-anchoring" / "scripts" / f"{name}.py.j2"
+            body = inst.template_body(template.read_text(encoding="utf-8"))
+            for token in inst.TEMPLATE_SYNTAX:
+                self.assertNotIn(token, body)
+            for tracker in inst.TRACKERS:
+                with self.subTest(script=name, tracker=tracker):
+                    self.assertEqual(self.render(template, tracker), body)
+
+    def test_cli_render_matches_the_wheel(self):
+        """The script tests fall back to the sc-compose CLI where the wheel is missing; both render the same bytes."""
+        from layout_support import render_cli
+        if shutil.which("sc-compose") is None:
+            self.skipTest("the sc-compose CLI is not on PATH (scripts/install_sc_compose_ci.py installs it)")
+        with tempfile.TemporaryDirectory() as tmp:
+            for template in sorted((TEMPLATES / "skills" / "plan-anchoring" / "scripts").glob("*.py.j2")):
+                for tracker in inst.TRACKERS:
+                    with self.subTest(script=template.name, tracker=tracker):
+                        out = Path(tmp) / tracker / template.name[:-len(".j2")]
+                        render_cli(template, tracker, out)
+                        self.assertEqual(out.read_text(encoding="utf-8"), self.render(template, tracker))
+
+    def test_installer_settings_match_the_installed_settings_script(self):
+        """install.py writes and reads settings with its own dual-tracker copy; the installed script agrees on both."""
+        import yaml
+        for tracker in inst.TRACKERS:
+            template = TEMPLATES / "skills" / "plan-anchoring" / "scripts" / "plan_anchor_settings.py.j2"
+            with tempfile.TemporaryDirectory() as tmp:
+                for name in ("result", "plan_anchor_paths"):
+                    source = TEMPLATES / "skills" / "plan-anchoring" / "scripts" / f"{name}.py.j2"
+                    (Path(tmp) / f"{name}.py").write_text(self.render(source, tracker), encoding="utf-8")
+                (Path(tmp) / "plan_anchor_settings.py").write_text(self.render(template, tracker), encoding="utf-8")
+                code = ("import json, sys\n"
+                        f"sys.path.insert(0, {tmp!r})\n"
+                        "import yaml, plan_anchor_settings as s\n"
+                        "out = {}\n"
+                        "for remote in (None, True, False):\n"
+                        f"    out[str(remote)] = s.render_settings(s.Settings(1, {tracker!r}, remote))\n"
+                        "print(json.dumps(out))\n")
+                proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                installed = json.loads(proc.stdout)
+            for remote in (None, True, False):
+                with self.subTest(tracker=tracker, remote=remote):
+                    text = inst.render_settings(inst.Settings(1, tracker, remote))
+                    self.assertEqual(installed[str(remote)], text)
+                    parsed = inst.parse_settings(text, yaml)
+                    self.assertEqual((parsed.value.anchor_tracker, parsed.value.allow_remote_judge), (tracker, remote))
 
     def test_runtime_templates_are_copied_verbatim(self):
         """The skill's own templates/*.md.j2 are sc-compose inputs at run time, not install templates."""
@@ -253,7 +311,7 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(other_tracker_mentions("the item is bd-42\n", "br"))
         self.assertTrue(other_tracker_mentions("the item is br-42\n", "bd"))
         self.assertEqual(other_tracker_mentions("IDs look like ex-42 in scripts/bd_x.py and .beads/\n", "br"), [])
-        self.assertTrue(mixed_by_design("scripts/jev_judge.py"))
+        self.assertFalse(mixed_by_design("scripts/jev_judge.py"))  # scripts are rendered for one tracker too
         self.assertFalse(mixed_by_design("references/jev-api.md"))
         self.assertFalse(mixed_by_design("assets/schemas/anchor-tuning-request.schema.json"))
         # A br render that slipped a bd command in is caught.
@@ -632,6 +690,149 @@ class InstallTests(unittest.TestCase):
 
     def test_target_dot_form_is_accepted(self):
         self.assertEqual(inst._targets(".claude,codex"), ["claude", "codex"])
+
+
+# ---------------------------------------------------------------- real installs: purity and switching
+
+
+def whole_word(name):
+    """grep -w: the name with no letter, digit or underscore on either side."""
+    return re.compile(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])")
+
+
+def installed_tree(dest):
+    """Every file the installer wrote: the harness folders and .sc/ (the lock and settings), all file types."""
+    out = {}
+    for top in [f".{t}" for t in inst.TARGETS] + [".sc"]:
+        for path in sorted((Path(dest) / top).rglob("*")):
+            if path.is_file():
+                out[path.relative_to(dest).as_posix()] = path.read_bytes()
+    return out
+
+
+def purity_hits(dest, tracker):
+    """Lines in an install that name the other tracker as a whole word, outside the install guide."""
+    other = whole_word("bd" if tracker == "br" else "br")
+    hits = []
+    for rel, data in installed_tree(dest).items():
+        if mixed_by_design(rel.split("/skills/plan-anchoring/", 1)[-1]):
+            continue
+        for number, line in enumerate(data.decode("utf-8").splitlines(), 1):
+            if other.search(line):
+                hits.append(f"{rel}:{number}:{line}")
+    return hits
+
+
+def _fake_cli(bin_dir, name):
+    if os.name == "nt":
+        (bin_dir / f"{name}.cmd").write_text("@exit /b 0\r\n", encoding="utf-8")
+    else:
+        shim = bin_dir / name
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+
+@needs_wheel
+class RealInstallTests(unittest.TestCase):
+    """install.py run as a process into scratch repositories, every target; the files on disk are checked."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.tmp = Path(td.name).resolve()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        for name in inst.TRACKERS:
+            _fake_cli(self.bin, name)
+
+    def repo(self, name):
+        root = self.tmp / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        return root
+
+    def backend(self, root, tracker):
+        (root / ".beads").mkdir(exist_ok=True)
+        (root / ".beads" / "metadata.json").write_text(
+            json.dumps({"backend": "dolt" if tracker == "bd" else "sqlite"}), encoding="utf-8")
+
+    def install(self, root, tracker, plugin=PLUGIN, extra=("--no-remote-judge",)):
+        self.backend(root, tracker)
+        env = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+        env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
+        proc = subprocess.run([sys.executable, str(Path(plugin) / "install.py"), "--dest", str(root),
+                               "--tracker", tracker, "--target", ",".join(inst.TARGETS), *extra],
+                              env=env, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["success"], proc.stdout)
+        return root
+
+    def test_each_install_names_only_its_tracker(self):
+        for tracker in inst.TRACKERS:
+            with self.subTest(tracker=tracker):
+                root = self.install(self.repo(f"fresh-{tracker}"), tracker)
+                tree = installed_tree(root)
+                self.assertIn(".sc/plan-anchor/install-lock.json", tree)
+                self.assertIn(".sc/plan-anchor/settings.yaml", tree)
+                for target in inst.TARGETS:
+                    self.assertIn(f".{target}/skills/plan-anchoring/scripts/jev_judge.py", tree)
+                self.assertEqual(purity_hits(root, tracker), [])
+                # The install guide is the one file that names both: it explains the switch.
+                guide = tree[".claude/skills/plan-anchoring/references/installation-and-troubleshooting.md"].decode("utf-8")
+                self.assertTrue(whole_word("br").search(guide) and whole_word("bd").search(guide))
+                grep = shutil.which("grep")
+                if grep:  # the same check with the grep a reader would run
+                    other = "bd" if tracker == "br" else "br"
+                    proc = subprocess.run([grep, "-rnwI", other, *[f".{t}" for t in inst.TARGETS], ".sc"],
+                                          cwd=str(root), capture_output=True, text=True, encoding="utf-8")
+                    lines = [line for line in proc.stdout.splitlines()
+                             if "references/installation-and-troubleshooting.md:" not in line]
+                    self.assertEqual(lines, [])
+
+    def test_every_installed_md_and_py_is_rendered_from_a_template(self):
+        skill_src = TEMPLATES / "skills" / "plan-anchoring"
+        for tracker in inst.TRACKERS:
+            root = self.install(self.repo(f"j2-{tracker}"), tracker)
+            checked = 0
+            for rel in installed_tree(root):
+                if not rel.endswith((".md", ".py")):
+                    continue
+                with self.subTest(tracker=tracker, path=rel):
+                    harness, kind, rest = rel.split("/", 2)
+                    if kind == "agents":
+                        source = TEMPLATES / "agents" / f"{rest}.j2"
+                    else:
+                        source = skill_src / f"{rest.split('/', 1)[1]}.j2"
+                    if rest in VERBATIM_MD_PY:
+                        continue
+                    self.assertTrue(source.is_file(), source)
+                    self.assertTrue(inst.is_install_template(source), source)
+                    checked += 1
+            self.assertEqual(checked, 3 * (3 + 3 + 22 + 7))
+
+    def test_switching_trackers_equals_a_fresh_install(self):
+        for first, second in (("br", "bd"), ("bd", "br")):
+            with self.subTest(switch=f"{first}->{second}"):
+                switched = self.install(self.repo(f"switch-{first}-{second}"), first)
+                self.install(switched, second, extra=())
+                fresh = self.install(self.repo(f"fresh-{second}-for-{first}"), second)
+                a, b = installed_tree(switched), installed_tree(fresh)
+                self.assertEqual(sorted(a), sorted(b))
+                for rel in a:
+                    self.assertEqual(a[rel], b[rel], rel)
+                    mode = lambda root: os.stat(root / rel).st_mode & 0o777
+                    self.assertEqual(mode(switched), mode(fresh), rel)
+
+    def test_planted_tracker_mention_in_a_script_template_is_caught(self):
+        plugin = self.tmp / "plugin"
+        shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
+        script = plugin / "install" / "templates" / "skills" / "plan-anchoring" / "scripts" / "result.py.j2"
+        script.write_text(script.read_text(encoding="utf-8") + "# planted: run bd ready\n", encoding="utf-8")
+        root = self.install(self.repo("planted"), "br", plugin=plugin)
+        hits = purity_hits(root, "br")
+        self.assertEqual(sorted(h.split(":", 1)[0] for h in hits),
+                         [f".{t}/skills/plan-anchoring/scripts/result.py" for t in sorted(inst.TARGETS)])
+        self.assertTrue(all(h.endswith("# planted: run bd ready") for h in hits), hits)
 
 
 # ---------------------------------------------------------------- history fixtures

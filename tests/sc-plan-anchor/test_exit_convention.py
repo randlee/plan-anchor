@@ -20,7 +20,7 @@ from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubri
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPTS = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only adds a status command and its tests.\n" * 3
@@ -222,7 +222,9 @@ class NoExitOneInShippedText(unittest.TestCase):
     def test_no_prompt_or_reference_says_exit_1(self):
         files = [ROOT / "README.md"]
         for pattern in SHIPPED_TEXT:
-            files.extend(p for p in PLUGIN.rglob(pattern) if p.is_file())
+            # Script templates (*.py.j2) are code, as the scripts were before they became templates:
+            # their docstrings state the convention ("There is no exit 1"); prompts must not mention it.
+            files.extend(p for p in PLUGIN.rglob(pattern) if p.is_file() and not p.name.endswith(".py.j2"))
         self.assertGreater(len(files), 40)
         hits = [f"{p.relative_to(ROOT)}:{n}: {line.strip()}"
                 for p in files for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)

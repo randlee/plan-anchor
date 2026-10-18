@@ -8,10 +8,12 @@ import tempfile
 import unittest
 from unittest import mock
 
+from layout_support import SCRIPTS
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
-MODULE_PATH = SKILL / "scripts" / "anchor_runner_contract.py"
+MODULE_PATH = SCRIPTS / "anchor_runner_contract.py"
 
 
 def load_contract():

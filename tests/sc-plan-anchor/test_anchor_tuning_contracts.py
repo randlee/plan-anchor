@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from layout_support import SCRIPTS
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
@@ -30,11 +32,11 @@ class AnchorTuningContractTests(unittest.TestCase):
         except ImportError as exc:  # pragma: no cover - CI dependency failure
             raise AssertionError("jsonschema is required for contract validation") from exc
         cls.jsonschema = jsonschema
-        contract_path = SKILL / "scripts" / "anchor_tuning_contract.py"
+        contract_path = SCRIPTS / "anchor_tuning_contract.py"
         spec = importlib.util.spec_from_file_location("anchor_tuning_contract", contract_path)
         cls.contract = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.contract)
-        runner_path = SKILL / "scripts" / "anchor_runner_contract.py"
+        runner_path = SCRIPTS / "anchor_runner_contract.py"
         runner_spec = importlib.util.spec_from_file_location("anchor_runner_contract", runner_path)
         cls.runner = importlib.util.module_from_spec(runner_spec)
         runner_spec.loader.exec_module(cls.runner)

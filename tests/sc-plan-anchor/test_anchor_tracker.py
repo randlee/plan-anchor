@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -14,8 +15,14 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
+from layout_support import SCRIPTS, TEST_TRACKER  # noqa: E402 - the scripts as installed for one tracker
 TRACKER_SCRIPT = SCRIPTS / "anchor_tracker.py"
+# The scripts under test are rendered for one tracker (PLAN_ANCHOR_TEST_TRACKER;
+# CI runs the suite once per tracker). Tracker-dependent tests branch on it: the
+# 0.8.1 assertions run unchanged against the install they hold for, and the other
+# install asserts its own single-tracker behaviour.
+BR_INSTALL = TEST_TRACKER == "br"
+OTHER = "bd" if BR_INSTALL else "br"
 
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -146,6 +153,13 @@ class RepoCase(unittest.TestCase):
         self.assertTrue(outcome.error.message)
         return outcome.error
 
+    def assertNamesOnlyThisTracker(self, error):
+        """A refusal points at the installer's --tracker switch and never names the other tracker."""
+        text = f"{error.message} {error.action}"
+        self.assertIn("plan-anchor-installer", error.action)
+        self.assertIn("--tracker", error.action)
+        self.assertIsNone(re.search(rf"\b{OTHER}\b", text), text)
+
 
 class ResultTypeTests(unittest.TestCase):
     def test_ok_and_err_are_frozen_discriminated_variants(self):
@@ -166,6 +180,10 @@ class SelectionRuleTests(RepoCase):
     def test_setting_bd_with_dolt_backend_is_selected(self):
         self.dolt()
         self.pin("bd")
+        if BR_INSTALL:  # a br install accepts only anchor_tracker: br
+            error = self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
+            self.assertIn("plan-anchor-installer", error.action)
+            return
         sel = self.assertOk(self.resolve())
         self.assertEqual((sel.tracker, sel.source), ("bd", "setting"))
         self.assertTrue(sel.beads.dolt)
@@ -176,18 +194,31 @@ class SelectionRuleTests(RepoCase):
                 shutil.rmtree(self.root / ".beads", ignore_errors=True)
                 prepare()
                 self.pin("bd")
+                if BR_INSTALL:
+                    self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
+                    continue
                 error = self.assertErr(self.resolve(), "TRACKER.DOLT_REQUIRED")
                 self.assertIn("outside this skill", error.message)
                 self.assertNotIn("bd init", f"{error.message} {error.action}")
+                self.assertNamesOnlyThisTracker(error)
 
     def test_setting_br_with_dolt_backend_is_a_mismatch(self):
         self.dolt()
         self.pin("br")
+        if not BR_INSTALL:  # a bd install accepts only anchor_tracker: bd
+            self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
+            return
         error = self.assertErr(self.resolve(), "TRACKER.MISMATCH")
         self.assertEqual(error.data["evidence"]["backend"], "dolt")
+        self.assertNamesOnlyThisTracker(error)
 
     def test_setting_br_with_br_workspace_or_none(self):
         self.pin("br")
+        if not BR_INSTALL:
+            self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
+            self.br_workspace()
+            self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
+            return
         sel = self.assertOk(self.resolve())
         self.assertEqual((sel.tracker, sel.source, sel.beads.exists), ("br", "setting", False))
         self.br_workspace()
@@ -196,6 +227,11 @@ class SelectionRuleTests(RepoCase):
 
     def test_no_setting_with_dolt_detects_bd(self):
         self.dolt()
+        if BR_INSTALL:  # a br install never switches: a Dolt .beads/ is refused with a pointer to the installer
+            error = self.assertErr(self.resolve(), "TRACKER.MISMATCH")
+            self.assertEqual(error.data["evidence"]["backend"], "dolt")
+            self.assertNamesOnlyThisTracker(error)
+            return
         sel = self.assertOk(self.resolve())
         self.assertEqual((sel.tracker, sel.source), ("bd", "detected"))
 
@@ -205,10 +241,19 @@ class SelectionRuleTests(RepoCase):
             with self.subTest(metadata=metadata):
                 shutil.rmtree(self.root / ".beads", ignore_errors=True)
                 self.beads(metadata)
+                if not BR_INSTALL:  # a bd install needs a Dolt-backed .beads/
+                    self.assertNamesOnlyThisTracker(self.assertErr(self.resolve(), "TRACKER.DOLT_REQUIRED"))
+                    continue
                 sel = self.assertOk(self.resolve())
                 self.assertEqual((sel.tracker, sel.source), ("br", "detected"))
 
     def test_no_beads_detects_br_without_initializing(self):
+        if not BR_INSTALL:
+            error = self.assertErr(self.resolve(), "TRACKER.DOLT_REQUIRED")
+            self.assertIn("no .beads/", error.message)
+            self.assertFalse((self.root / ".beads").exists())
+            self.assertFalse(self.settings_file.exists(), "resolve is read-only")
+            return
         sel = self.assertOk(self.resolve())
         self.assertEqual((sel.tracker, sel.source, sel.beads.exists), ("br", "detected", False))
         self.assertFalse((self.root / ".beads").exists())
@@ -217,13 +262,28 @@ class SelectionRuleTests(RepoCase):
     def test_settings_without_tracker_key_falls_back_to_detection(self):
         self.setting("schema_version: 1\n")
         self.dolt()
+        if BR_INSTALL:
+            self.assertErr(self.resolve(), "TRACKER.MISMATCH")  # detection, then the disk check
+            shutil.rmtree(self.root / ".beads")
+            self.br_workspace()
+            sel = self.assertOk(self.resolve())
+            self.assertEqual((sel.tracker, sel.source), ("br", "detected"))
+            return
         sel = self.assertOk(self.resolve())
         self.assertEqual((sel.tracker, sel.source), ("bd", "detected"))
 
     def test_selected_cli_must_be_on_path(self):
-        self.assertErr(self.resolve(which=fake_which("bd")), "TRACKER.CLI_MISSING")
+        if BR_INSTALL:
+            error = self.assertErr(self.resolve(which=fake_which("bd")), "TRACKER.CLI_MISSING")
+            self.assertIn("'br'", error.message)
+            self.assertEqual(error.data, {"tracker": "br"})
+            self.assertIsNone(re.search(r"\bbd\b", error.action), error.action)
+            sel = self.assertOk(self.resolve(which=fake_which("br")))
+            self.assertEqual(sel.cli_path, os.path.abspath("/fake/bin/br"))
+            return
         self.dolt()
         error = self.assertErr(self.resolve(which=fake_which("br")), "TRACKER.CLI_MISSING")
+        self.assertIsNone(re.search(r"\bbr\b", error.action), error.action)
         self.assertIn("'bd'", error.message)
         self.assertEqual(error.data, {"tracker": "bd"})
         sel = self.assertOk(self.resolve(which=fake_which("bd")))
@@ -233,7 +293,8 @@ class SelectionRuleTests(RepoCase):
         self.dolt()
         self.pin("br")
         # Even with only br installed, a br pin on a Dolt workspace is an error, not a switch.
-        self.assertErr(self.resolve(which=fake_which("br")), "TRACKER.MISMATCH")
+        self.assertErr(self.resolve(which=fake_which("br")),
+                       "TRACKER.MISMATCH" if BR_INSTALL else "SETTINGS.INVALID_TRACKER")
 
 
 class MalformedInputTests(RepoCase):
@@ -288,7 +349,7 @@ class MalformedInputTests(RepoCase):
         self.assertErr(self.resolve(), "SETTINGS.SCHEMA_VERSION")
 
     def test_tracker_value_must_be_bd_or_br(self):
-        for value in ("bx", "BR", "no", "null", "[br]", "''"):
+        for value in ("bx", "BR", "no", "null", "[br]", "''", OTHER):  # an install accepts only its own tracker
             with self.subTest(value=value):
                 self.setting(f"schema_version: 1\nanchor_tracker: {value}\n")
                 self.assertErr(self.resolve(), "SETTINGS.INVALID_TRACKER")
@@ -316,7 +377,8 @@ class RepoRootTests(RepoCase):
         cwd = os.getcwd()
         try:
             os.chdir(str(elsewhere))  # cwd has no settings; the root's settings must still be read
-            self.assertErr(self.resolve(start=nested), "TRACKER.MISMATCH")
+            self.assertErr(self.resolve(start=nested),
+                           "TRACKER.MISMATCH" if BR_INSTALL else "SETTINGS.INVALID_TRACKER")
         finally:
             os.chdir(cwd)
         self.assertEqual(self.assertOk(settings_mod.find_repo_root(nested)), self.root)
@@ -350,33 +412,67 @@ class WriteAndInitTests(RepoCase):
         kwargs.setdefault("run", Recorder())
         return tracker.write(self.root, **kwargs)
 
+    def assertBdWriteRunsNothing(self):
+        """A bd install has no init: write never starts a process, with or without .beads/."""
+        self.assertFalse(hasattr(tracker, "init_br"))
+        for prepare in (lambda: None, self.br_workspace, self.dolt):
+            with self.subTest(prepare=prepare):
+                shutil.rmtree(self.root / ".beads", ignore_errors=True)
+                shutil.rmtree(self.root / ".sc", ignore_errors=True)
+                prepare()
+                run = Recorder()
+                outcome = self.write(init=True, run=run)
+                self.assertEqual(run.calls, [])
+                if (self.root / ".beads" / "metadata.json").exists() and \
+                        json.loads((self.root / ".beads" / "metadata.json").read_text()).get("backend") == "dolt":
+                    self.assertFalse(self.assertOk(outcome)["initialized_now"])
+                else:
+                    self.assertErr(outcome, "TRACKER.DOLT_REQUIRED")
+
     def test_write_produces_committed_format(self):
-        self.br_workspace()
+        self.br_workspace() if BR_INSTALL else self.dolt()
         data = self.assertOk(self.write())
         self.assertTrue(data["written"])
         self.assertEqual(data["commit_paths"], [".sc/plan-anchor/settings.yaml"])
         self.assertTrue(any("Commit .sc/plan-anchor/settings.yaml" in a for a in data["next_actions"]))
-        self.assertEqual(self.settings_file.read_bytes(), EXPECTED_FILE.format(tracker="br").encode("ascii"))
+        self.assertEqual(self.settings_file.read_bytes(), EXPECTED_FILE.format(tracker=TEST_TRACKER).encode("ascii"))
         sel = self.assertOk(self.resolve())
-        self.assertEqual((sel.tracker, sel.source), ("br", "setting"))
+        self.assertEqual((sel.tracker, sel.source), (TEST_TRACKER, "setting"))
 
     def test_write_detected_bd_on_dolt_and_never_initializes(self):
         self.dolt()
         run = Recorder()
+        if BR_INSTALL:
+            self.assertErr(self.write(init=True, run=run), "TRACKER.MISMATCH")
+            self.assertEqual(run.calls, [])
+            self.assertFalse(self.settings_file.exists())
+            return
         data = self.assertOk(self.write(init=True, run=run))
         self.assertEqual(data["tracker"], "bd")
         self.assertEqual(run.calls, [])
         self.assertEqual(self.settings_file.read_text(encoding="utf-8"), EXPECTED_FILE.format(tracker="bd"))
 
     def test_existing_setting_is_left_untouched(self):
-        custom = "# my comment\nschema_version: 1\nanchor_tracker: br\n"
+        custom = f"# my comment\nschema_version: 1\nanchor_tracker: {TEST_TRACKER}\n"
         self.setting(custom)
+        if not BR_INSTALL:
+            self.dolt()
         data = self.assertOk(self.write())
         self.assertFalse(data["written"])
         self.assertEqual(data["commit_paths"], [])
         self.assertEqual(self.settings_file.read_text(encoding="utf-8"), custom)
 
     def test_pin_conflicting_with_setting_is_refused(self):
+        if not BR_INSTALL:
+            self.pin("bd")
+            self.dolt()
+            self.assertErr(self.write(pinned="br"), "SETTINGS.CONFLICT")
+            self.assertOk(self.write())
+            shutil.rmtree(self.root / ".beads")
+            self.assertErr(self.write(), "TRACKER.DOLT_REQUIRED")  # the file wins and is validated
+            self.assertErr(self.write(pinned="br"), "SETTINGS.CONFLICT")
+            self.assertEqual(self.settings_file.read_text(encoding="utf-8"), "schema_version: 1\nanchor_tracker: bd\n")
+            return
         self.pin("br")
         self.dolt()
         self.assertErr(self.write(pinned="bd"), "SETTINGS.CONFLICT")  # never rewrites a committed choice
@@ -387,12 +483,38 @@ class WriteAndInitTests(RepoCase):
 
     def test_pin_is_checked_against_disk(self):
         self.br_workspace()
-        self.assertErr(self.write(pinned="bd"), "TRACKER.DOLT_REQUIRED")
-        self.assertFalse(self.settings_file.exists())
+        if BR_INSTALL:
+            # A pin of the tracker this install is not rendered for is refused before any disk check.
+            error = self.assertErr(self.write(pinned="bd"), "VALIDATION.INPUT")
+            self.assertIn("plan-anchor-installer", error.action)
+            self.assertFalse(self.settings_file.exists())
+            self.dolt()
+            self.assertErr(self.write(pinned="br"), "TRACKER.MISMATCH")
+            shutil.rmtree(self.root / ".beads")
+            self.br_workspace()
+        else:
+            self.assertErr(self.write(pinned="bd"), "TRACKER.DOLT_REQUIRED")
+            self.assertFalse(self.settings_file.exists())
+            error = self.assertErr(self.write(pinned="br"), "VALIDATION.INPUT")
+            self.assertIn("plan-anchor-installer", error.action)
+            self.assertFalse(self.settings_file.exists())
+            shutil.rmtree(self.root / ".beads")
+            self.dolt()
+            data = self.assertOk(self.write(pinned="bd"))
+            self.assertEqual((data["tracker"], data["source"]), ("bd", "setting"))
+            return
         data = self.assertOk(self.write(pinned="br"))
         self.assertEqual((data["tracker"], data["source"]), ("br", "setting"))
 
     def test_write_without_init_never_runs_br_init(self):
+        if not BR_INSTALL:
+            self.dolt()
+            run = Recorder()
+            data = self.assertOk(self.write(run=run))
+            self.assertEqual(run.calls, [])
+            self.assertFalse(any("--init" in a for a in data["next_actions"]))
+            self.assertEqual(self.settings_file.read_text(encoding="utf-8"), EXPECTED_FILE.format(tracker="bd"))
+            return
         run = Recorder()
         data = self.assertOk(self.write(run=run))
         self.assertEqual(run.calls, [])
@@ -401,6 +523,9 @@ class WriteAndInitTests(RepoCase):
         self.assertEqual(self.settings_file.read_text(encoding="utf-8"), EXPECTED_FILE.format(tracker="br"))
 
     def test_init_runs_br_init_with_fixed_argv_and_no_shell(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         run = Recorder()
         data = self.assertOk(self.write(init=True, run=run))
         self.assertEqual(len(run.calls), 1)
@@ -414,6 +539,9 @@ class WriteAndInitTests(RepoCase):
         self.assertTrue(any("br sync --flush-only" in a for a in data["next_actions"]))
 
     def test_init_skipped_when_beads_exists(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         self.br_workspace()
         run = Recorder()
         data = self.assertOk(self.write(init=True, run=run))
@@ -421,6 +549,9 @@ class WriteAndInitTests(RepoCase):
         self.assertFalse(data["initialized_now"])
 
     def test_br_init_failure_surfaces_code_and_stderr(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         run = Recorder(returncode=3, stderr="error: cannot create database\n")
         error = self.assertErr(self.write(init=True, run=run), "TRACKER.INIT_FAILED")
         self.assertIn("exited 3", error.message)
@@ -429,6 +560,9 @@ class WriteAndInitTests(RepoCase):
         self.assertFalse(self.settings_file.exists(), "nothing is persisted after a failed init")
 
     def test_br_init_that_creates_nothing_or_cannot_start(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         self.assertErr(self.write(init=True, run=Recorder(create=False)), "TRACKER.INIT_FAILED")
         self.assertErr(self.write(init=True, run=Recorder(raises=FileNotFoundError("br"))), "TRACKER.INIT_FAILED")
         timeout = subprocess.TimeoutExpired(["br", "init"], 120)
@@ -436,11 +570,17 @@ class WriteAndInitTests(RepoCase):
         self.assertFalse(self.settings_file.exists())
 
     def test_init_requires_br_on_path_before_running_anything(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         run = Recorder()
         self.assertErr(self.write(init=True, run=run, which=fake_which("bd")), "TRACKER.CLI_MISSING")
         self.assertEqual(run.calls, [])
 
     def test_bd_is_never_initialized(self):
+        if not BR_INSTALL:
+            self.assertBdWriteRunsNothing()
+            return
         run = Recorder()
         error = self.assertErr(tracker.init_br("bd", "/fake/bin/bd", self.root, run), "TRACKER.INIT_REFUSED")
         self.assertIn("outside this skill", error.message)
@@ -470,23 +610,36 @@ class CliTests(RepoCase):
         return code, json.loads(out.getvalue())
 
     def test_envelope_and_exit_codes(self):
+        if not BR_INSTALL:
+            self.dolt()
         code, env = self.main("resolve")
         self.assertEqual(code, 0)
         self.assertEqual(set(env), {"success", "data", "error"})
         self.assertTrue(env["success"])
         self.assertIsNone(env["error"])
-        self.assertEqual((env["data"]["tracker"], env["data"]["source"]), ("br", "detected"))
+        self.assertEqual((env["data"]["tracker"], env["data"]["source"]), (TEST_TRACKER, "detected"))
         self.assertEqual(env["data"]["settings_relpath"], ".sc/plan-anchor/settings.yaml")
 
-        self.dolt()
-        self.pin("br")
+        if BR_INSTALL:
+            self.dolt()
+            self.pin("br")
+        else:
+            shutil.rmtree(self.root / ".beads")
+            self.pin("bd")
         code, env = self.main("resolve")
         self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py
         self.assertFalse(env["success"])
-        self.assertEqual(env["error"]["code"], "TRACKER.MISMATCH")
+        self.assertEqual(env["error"]["code"], "TRACKER.MISMATCH" if BR_INSTALL else "TRACKER.DOLT_REQUIRED")
         self.assertEqual(set(env["error"]), {"code", "message", "recoverable", "suggested_action"})
 
     def test_fatal_codes_exit_two(self):
+        if not BR_INSTALL:  # no --init on a bd install
+            code, env = self.main("write", "--init", run=Recorder(returncode=9, stderr="nope"))
+            self.assertEqual((code, env["error"]["code"]), (2, "VALIDATION.INPUT"))
+            self.dolt()
+            code, env = self.main("resolve", which=fake_which("br"))
+            self.assertEqual((code, env["error"]["code"]), (2, "TRACKER.CLI_MISSING"))
+            return
         code, env = self.main("write", "--init", run=Recorder(returncode=9, stderr="nope"))
         self.assertEqual((code, env["error"]["code"]), (2, "TRACKER.INIT_FAILED"))
         self.assertEqual(env["data"]["returncode"], 9)
@@ -503,7 +656,8 @@ class CliTests(RepoCase):
     def test_usage_errors_are_json(self):
         import contextlib
         import io
-        for argv in ([], ["bogus"], ["write", "--tracker", "bx"], ["resolve", "--nope"]):
+        for argv in ([], ["bogus"], ["write", "--tracker", "bx"], ["resolve", "--nope"],
+                     ["write", "--tracker", OTHER]):  # an install offers only its own tracker
             with self.subTest(argv=argv):
                 out, err_out = io.StringIO(), io.StringIO()
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err_out):
@@ -514,11 +668,15 @@ class CliTests(RepoCase):
                 self.assertEqual(err_out.getvalue(), "")
 
     def test_cli_path_is_absolute_even_when_which_answers_relative(self):
+        if not BR_INSTALL:
+            self.dolt()
         code, env = self.main("resolve", which=lambda name: os.path.join(".", f"{name}.CMD"))
         self.assertEqual(code, 0)
         self.assertTrue(os.path.isabs(env["data"]["cli_path"]), env["data"]["cli_path"])
 
     def test_unanswerable_gitignore_check_is_reported(self):
+        if not BR_INSTALL:
+            self.dolt()
         def fail_git(argv, **kwargs):
             raise FileNotFoundError("git")
         with mock.patch.object(tracker.subprocess, "run", fail_git):
@@ -529,6 +687,8 @@ class CliTests(RepoCase):
         self.assertTrue(any("git check-ignore -v" in a for a in env["data"]["next_actions"]))
 
     def test_unexpected_exception_becomes_script_internal(self):
+        if not BR_INSTALL:
+            self.dolt()
         def broken(name):
             raise RuntimeError("bug")
         code, env = self.main("resolve", which=broken)
@@ -601,7 +761,24 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
+    def dolt(self):
+        (self.root / ".beads").mkdir()
+        (self.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
+
+    def assertBdCliRunsNothing(self, env=None):
+        """A bd install has no --init, and write never starts br or bd."""
+        code, out, _ = self.run_cli("write", "--init", env=env)
+        self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
+        self.dolt()
+        code, out, proc = self.run_cli("write", env=env)
+        self.assertEqual((code, out["data"]["tracker"]), (0, "bd"), proc.stdout + proc.stderr)
+        self.assertTrue(os.path.isabs(out["data"]["cli_path"]))
+        self.assertEqual(self.calls(), [])
+
     def test_write_init_invokes_fake_br_init_on_path(self):
+        if not BR_INSTALL:
+            self.assertBdCliRunsNothing()
+            return
         code, env, proc = self.run_cli("write", "--init")
         self.assertEqual(code, 0, proc.stdout + proc.stderr)
         self.assertTrue(env["data"]["initialized_now"])
@@ -614,6 +791,9 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         self.assertTrue(all(call[0] != "bd" for call in self.calls()))
 
     def test_fake_br_init_failure_surfaces_exit_code_and_stderr(self):
+        if not BR_INSTALL:
+            self.assertBdCliRunsNothing(env=dict(self.env, FAKE_BR_FAIL="1"))
+            return
         code, env, _ = self.run_cli("write", "--init", env=dict(self.env, FAKE_BR_FAIL="1"))
         self.assertEqual(code, 2)
         self.assertEqual(env["error"]["code"], "TRACKER.INIT_FAILED")
@@ -622,10 +802,13 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         self.assertFalse((self.root / ".sc").exists())
 
     def test_dolt_workspace_never_calls_bd(self):
-        (self.root / ".beads").mkdir()
-        (self.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
+        if not BR_INSTALL:
+            self.assertBdCliRunsNothing()
+            return
+        self.dolt()
         code, env, _ = self.run_cli("write", "--init")
-        self.assertEqual((code, env["data"]["tracker"]), (0, "bd"))
+        self.assertEqual((code, env["error"]["code"]), (2, "TRACKER.MISMATCH"))  # a br install refuses Dolt
+        self.assertNotIn("bd", env["error"]["suggested_action"].split())
         self.assertEqual(self.calls(), [])
 
     def test_relative_path_entry_still_runs_br_init(self):
@@ -633,6 +816,9 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         # makes which() answer relative to the caller's cwd; br init runs in the
         # repository root, so the CLI path must be absolute (Windows CI regression).
         env = dict(self.env, PATH="." + os.pathsep + os.environ.get("PATH", ""))
+        if not BR_INSTALL:
+            self.assertBdCliRunsNothing(env=env)
+            return
         code, out, proc = self.run_cli("write", "--init", env=env)
         self.assertEqual(code, 0, proc.stdout + proc.stderr)
         self.assertTrue(os.path.isabs(out["data"]["cli_path"]))
@@ -653,6 +839,9 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertTrue(text.startswith("# .sc/plan-anchor/settings.yaml\n"))
         self.assertEqual(text, EXPECTED_FILE.format(tracker="br") + REMOTE_JUDGE_TRUE)
         parsed = settings_mod.parse_settings(text, __import__("yaml"))
+        if not BR_INSTALL:  # this repository is pinned to br; a bd install refuses it
+            self.assertEqual(parsed.error.code, "SETTINGS.INVALID_TRACKER")
+            return
         self.assertEqual(parsed.value, settings_mod.Settings(1, "br", True))
 
     @unittest.skipUnless(GIT, "git is not installed")
@@ -695,6 +884,11 @@ class RepositoryContractTests(unittest.TestCase):
     def test_ci_installs_pyyaml(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
         self.assertIn("pyyaml", workflow.lower())
+
+    def test_ci_runs_the_suite_against_each_render(self):
+        """The scripts under test are one tracker's render; every CI job runs the suite for br and again for bd."""
+        workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 4)  # unit, two dependency-floor runs, installer
 
 
 if __name__ == "__main__":

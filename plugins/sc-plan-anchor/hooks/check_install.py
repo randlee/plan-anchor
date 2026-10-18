@@ -11,14 +11,15 @@ Never writes, never touches the network, always exits 0. Standard library only.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import re
 import sys
+from types import ModuleType
 from typing import Optional, Tuple
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PLUGIN_DIR / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"))
 
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -35,6 +36,17 @@ def _json(path: Path) -> object:
         return None
 
 
+def installer() -> ModuleType:
+    """install.py, imported as a module: it loads plan_anchor_paths and result from their templates."""
+    name = "sc_plan_anchor_install"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, PLUGIN_DIR / "install.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return sys.modules[name]
+
+
 def start_dir(raw: str) -> Path:
     try:
         payload = json.loads(raw) if raw.strip() else {}
@@ -45,7 +57,7 @@ def start_dir(raw: str) -> Path:
 
 
 def message(start: Path) -> Optional[str]:
-    from plan_anchor_paths import find_lock
+    find_lock = installer().find_lock
 
     plugin = _json(PLUGIN_DIR / "plugin.json")
     available = plugin.get("version") if isinstance(plugin, dict) else None
@@ -74,9 +86,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        from result import utf8_stdio
-
-        utf8_stdio()
+        installer().utf8_stdio()
     except Exception:  # never break the session over output encoding
         pass
     sys.exit(main())

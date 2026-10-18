@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPTS = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 JUDGE_SCRIPT = SCRIPTS / "jev_judge.py"
 
 # Each would change behaviour, or fail at import, if it were still read.
@@ -165,7 +165,7 @@ class ShippedTreeNamesNoRetiredVariable(unittest.TestCase):
         allowed = {"TYPESAFE_API_KEY", "USER"}
         read = re.compile(r"""(?:environ\.get|environ\[|getenv)\(?\s*["']([^"']+)["']""")
         found = {}
-        for path in sorted(PLUGIN.rglob("*.py")):
+        for path in sorted([*PLUGIN.rglob("*.py"), *PLUGIN.rglob("*.py.j2")]):  # the scripts are *.py.j2 templates
             for name in read.findall(path.read_text(encoding="utf-8")):
                 found.setdefault(name, []).append(path.relative_to(PLUGIN).as_posix())
         self.assertEqual(sorted(set(found) - allowed), [], found)

@@ -17,7 +17,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
-sys.path.insert(0, str(SKILL / "scripts"))
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
+sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
 
 PLAN_ROLES = {"relevance": "relevant", "compliance": "addressed", "conflict": "contradicted"}

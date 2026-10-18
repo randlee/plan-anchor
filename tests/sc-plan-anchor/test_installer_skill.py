@@ -30,7 +30,6 @@ from test_install import (FakeRun, TempRepo, VERSION, _git, _has_commit, fake_wh
                           needs_wheel, other_tracker_mentions, sha)
 
 sys.path.insert(0, str(SCRIPTS))
-import anchor_tracker as tracker  # noqa: E402
 import plan_anchor_paths as paths  # noqa: E402
 
 HOOK = PLUGIN / "hooks" / "check_install.py"
@@ -76,6 +75,26 @@ def git_repo(path, backend=None, settings=None):
         (path / ".sc" / "plan-anchor").mkdir(parents=True)
         (path / ".sc" / "plan-anchor" / "settings.yaml").write_text(settings, encoding="utf-8")
     return path
+
+
+def installed_tracker(folder):
+    """The anchor_tracker module of the install in ``folder`` (its .claude copy).
+
+    Each install is rendered for one tracker, so the parent's br copy is imported
+    on its own, without disturbing the modules the suite already loaded from SCRIPTS.
+    """
+    scripts = str(Path(folder) / ".claude" / "skills" / "plan-anchoring" / "scripts")
+    names = ("result", "plan_anchor_paths", "plan_anchor_settings", "anchor_tracker")
+    saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    sys.path.insert(0, scripts)
+    try:
+        import importlib
+        return importlib.import_module("anchor_tracker")
+    finally:
+        sys.path.remove(scripts)
+        for name in names:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved)
 
 
 def write_lock(folder, version, tracker_name="br", targets=("claude",)):
@@ -201,30 +220,42 @@ class ParentFolderInstallTests(Scratch):
                 self.assertTrue(json.loads(proc.stdout)["success"])
 
     def test_settings_lookup_picks_the_nearest_file(self):
+        # The parent's install is rendered for br, so a child with its own file is a br child here;
+        # the bd child's own file is still the nearest, and the br copy refuses it instead of using the parent's.
+        installed = installed_tracker(self.parent)
+        br_own = git_repo(self.parent / "svc-br-own", backend="sqlite", settings="schema_version: 1\nanchor_tracker: br\n")
         with fake_home(self.home):
-            br = tracker.resolve(self.br_child / "src", which=fake_which)
-            bd = tracker.resolve(self.bd_child, which=fake_which)
-        self.assertTrue(br.ok and bd.ok, (br, bd))
+            br = installed.resolve(self.br_child / "src", which=fake_which)
+            mine = installed.resolve(br_own, which=fake_which)
+            bd = installed.resolve(self.bd_child, which=fake_which)
+        self.assertTrue(br.ok and mine.ok, (br, mine))
         parent_settings = self.parent / ".sc" / "plan-anchor" / "settings.yaml"
         self.assertEqual((br.value.tracker, br.value.settings_file), ("br", parent_settings))
         self.assertTrue(br.value.to_json()["settings_inherited"])
         self.assertIs(br.value.settings.allow_remote_judge, False)  # the parent's answer applies
-        own = self.bd_child / ".sc" / "plan-anchor" / "settings.yaml"
-        self.assertEqual((bd.value.tracker, bd.value.settings_file), ("bd", own))
-        self.assertFalse(bd.value.to_json()["settings_inherited"])
-        self.assertIsNone(bd.value.settings.allow_remote_judge)  # files are not merged: nearest wins whole
+        own = br_own / ".sc" / "plan-anchor" / "settings.yaml"
+        self.assertEqual((mine.value.tracker, mine.value.settings_file), ("br", own))
+        self.assertFalse(mine.value.to_json()["settings_inherited"])
+        self.assertIsNone(mine.value.settings.allow_remote_judge)  # files are not merged: nearest wins whole
+        self.assertFalse(bd.ok)
+        self.assertEqual(bd.error.code, "SETTINGS.INVALID_TRACKER")
+        # its own file (shown relative, as every repository's own file is), not the parent's
+        self.assertTrue(bd.error.message.startswith(".sc/plan-anchor/settings.yaml anchor_tracker is 'bd'"),
+                        bd.error.message)
 
     def test_br_setting_over_dolt_metadata_is_a_mismatch(self):
+        installed = installed_tracker(self.parent)
         with fake_home(self.home):
-            inherited = tracker.resolve(self.mismatch, which=fake_which)
+            inherited = installed.resolve(self.mismatch, which=fake_which)
         self.assertFalse(inherited.ok)
         self.assertEqual(inherited.error.code, "TRACKER.MISMATCH")
         parent_settings = self.parent / ".sc" / "plan-anchor" / "settings.yaml"
         self.assertEqual(inherited.error.message,  # names the parent's file, the one in effect
-                         f"{parent_settings} anchor_tracker selects br, but .beads/ is Dolt-backed (bd's workspace)")
+                         f"{parent_settings} anchor_tracker selects br, but .beads/ is Dolt-backed; "
+                         "this install is rendered for br")
         own = git_repo(self.parent / "svc-dolt-own-br", backend="dolt", settings="schema_version: 1\nanchor_tracker: br\n")
         with fake_home(self.home):
-            explicit = tracker.resolve(own, which=fake_which)
+            explicit = installed.resolve(own, which=fake_which)
         self.assertEqual(explicit.error.code, "TRACKER.MISMATCH")
         self.assertTrue(explicit.error.message.startswith(".sc/plan-anchor/settings.yaml anchor_tracker selects br"))
 

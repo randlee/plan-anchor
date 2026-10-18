@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-anchor_tuning_contract
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
 """Deterministic relational checks for anchor-tuning request/result contracts.
 

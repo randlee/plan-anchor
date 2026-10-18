@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-jev_judge
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
 """jev_judge.py - the deterministic half of plan anchoring.
 
@@ -38,7 +47,7 @@ Subcommands
   render          write anchors.md from anchors.json
   set-beads       record the anchor / plan-questions / dev-questions bead IDs
   promote         mark an anchor as promoted to an ADR (keeps its ID)
-  compose-item    build the labelled item text from `bd show --json` (and `bd children --json`)
+  compose-item    build the labelled item text from `{{ tracker }} show --json` (and `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %}`)
   agent-preflight validate and canonicalise agent paths and identifiers before any read or upload
   shape           size and shape metrics of plan beads (sections, code vs prose, references, repeated paragraphs); never gates
   judge           ask Jev about one item against one or more anchors, write a run; data.summary.pass
@@ -868,7 +877,7 @@ def exclusion_problems(aid: str, exclude) -> list:
     if exclude is None:
         return []
     if not isinstance(exclude, list):
-        return [f"{aid}: exclude must be a list of {{item, reason}} objects"]
+        return [f"{aid}: exclude must be a list of " "{item, reason} objects"]
     problems, seen = [], set()
     for n, x in enumerate(exclude):
         where = f"{aid}: exclude[{n}]"
@@ -1023,7 +1032,7 @@ def cmd_promote(args) -> Result[dict, JudgeError]:
 
 
 # --------------------------------------------------------------------------- #
-# item composition (from bd JSON; the script never runs bd)
+# item composition (from {{ tracker }} JSON; the script never runs {{ tracker }})
 # --------------------------------------------------------------------------- #
 SECTION_KEYS = tuple(k for k, _ in ITEM_SECTIONS)
 COMPOSE_FOR = {"plan": ("description", "acceptance_criteria"), "dev": SECTION_KEYS}  # plan: what Jev reads; verdicts matched the full text on 6/6 pairs
@@ -1046,15 +1055,15 @@ def demote_headings(body: str) -> str:
 
 
 def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeError]:
-    """Markdown item from bd JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
+    """Markdown item from {{ tracker }} JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
     if sections is not None:
         bad = [s for s in sections if s not in SECTION_KEYS]
         if bad:
             return fail("VALIDATION.INPUT", f"unknown section(s) {bad}; choose from {list(SECTION_KEYS)}")
     if isinstance(show, list):
         if len(show) != 1 or not isinstance(show[0], dict):
-            return fail("INPUT.MALFORMED", "bd show --json output must be a one-element array holding the bead object",
-                        action="Pass the unmodified output of `bd show <id> --json`.")
+            return fail("INPUT.MALFORMED", "{{ tracker }} show --json output must be a one-element array holding the bead object",
+                        action="Pass the unmodified output of `{{ tracker }} show <id> --json`.")
         show = show[0]
     if not isinstance(show, dict):
         return fail("INPUT.MALFORMED", "bead JSON must be an object or a one-element array")
@@ -1071,7 +1080,7 @@ def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeE
             sections_used.append(heading)
     if children is not None:
         if not isinstance(children, list):
-            return fail("INPUT.MALFORMED", "bd children --json output must be an array", action="Pass the unmodified output of `bd children <id> --json`.")
+            return fail("INPUT.MALFORMED", "{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %} output must be an array", action="Pass the unmodified output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`.")
         closed = [c for c in children if isinstance(c, dict) and c.get("status") == "closed"]
         if closed:
             rows = [f"- {c.get('id', '?')} {str(c.get('title') or '').strip()}: {str(c.get('close_reason') or '').strip()}".rstrip() for c in closed]
@@ -1082,13 +1091,13 @@ def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeE
 
 
 def cmd_compose_item(args) -> Result[dict, JudgeError]:
-    loaded = load_json(args.show_json, "bd show output")
+    loaded = load_json(args.show_json, "{{ tracker }} show output")
     if isinstance(loaded, Err):
         return loaded
     show = loaded.value
     children = None
     if args.children_json:
-        loaded = load_json(args.children_json, "bd children output")
+        loaded = load_json(args.children_json, "{% if tracker == "br" %}br show output (children){% elif tracker == "bd" %}bd children output{% endif %}")
         if isinstance(loaded, Err):
             return loaded
         children = loaded.value
@@ -1341,16 +1350,16 @@ def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, Judge
 
 
 def beads_from_json(obj, what: str) -> Result[list, JudgeError]:
-    """bd JSON in any of its shapes: one bead object, `bd show --json` (one-element array) or `bd children --json` (array)."""
+    """{{ tracker }} JSON in any of its shapes: one bead object, `{{ tracker }} show --json` (one-element array) or `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %}` (array)."""
     if isinstance(obj, dict):
         return Ok([obj])
     if isinstance(obj, list) and all(isinstance(b, dict) for b in obj):
         return Ok(obj)
-    return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified `bd show --json` / `bd children --json` output.")
+    return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified {% if tracker == "br" %}`br show --json`{% elif tracker == "bd" %}`bd show --json` / `bd children --json`{% endif %} output.")
 
 
 def load_beads(path: str, what: str) -> Result[list, JudgeError]:
-    """Read one bd JSON file and return its beads."""
+    """Read one {{ tracker }} JSON file and return its beads."""
     loaded = load_json(path, what)
     if isinstance(loaded, Err):
         return loaded
@@ -1450,11 +1459,11 @@ def cmd_shape(args) -> Result[Any, JudgeError]:
     if args.beads:
         d = pathlib.Path(args.beads)
         if not d.is_dir():
-            return fail("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `bd show --json` files.")
+            return fail("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `{{ tracker }} show --json` files.")
         sources += [(str(f), f"bead file {f.name}") for f in sorted(d.glob("*.json"))]
     if args.children_json:
-        sources.append((args.children_json, "bd children output"))
-    sources += [(path, "bd show output") for path in args.show_json or []]
+        sources.append((args.children_json, "{% if tracker == "br" %}br show output (children){% elif tracker == "bd" %}bd children output{% endif %}"))
+    sources += [(path, "{{ tracker }} show output") for path in args.show_json or []]
     beads = []
     for path, what in sources:
         loaded = load_beads(path, what)
@@ -2453,7 +2462,7 @@ def cmd_lint(args) -> Result[dict, JudgeError]:
 def plan_item_ids(args) -> Result[Any, JudgeError]:
     """Plan item ids for the exclusion check: --plan-item (repeatable) plus --plan-items FILE; None when neither is given.
 
-    FILE is `bd show --json` / `br show --json` output (one record or a list, each with `id`) or a JSON list of ids.
+    FILE is `{{ tracker }} show --json` output (one record or a list, each with `id`) or a JSON list of ids.
     """
     ids = [i for i in (getattr(args, "plan_item", None) or []) if i]
     path = getattr(args, "plan_items", "")
@@ -2465,8 +2474,8 @@ def plan_item_ids(args) -> Result[Any, JudgeError]:
         if isinstance(obj, dict):
             obj = [obj]
         if not isinstance(obj, list) or not all(isinstance(x, str) or (isinstance(x, dict) and isinstance(x.get("id"), str)) for x in obj):
-            return fail("INPUT.MALFORMED", "plan items file must be bd/br show JSON or a list of item ids",
-                        action="Pass `bd show --json` or `br show --json` output, or a JSON array of ids.")
+            return fail("INPUT.MALFORMED", "plan items file must be {{ tracker }} show JSON or a list of item ids",
+                        action="Pass `{{ tracker }} show --json` output, or a JSON array of ids.")
         ids.extend(x if isinstance(x, str) else x["id"] for x in obj)
     if not ids and not path:
         return Ok(None)
@@ -3163,7 +3172,7 @@ def build_parser() -> argparse.ArgumentParser:
     ln.add_argument("--anchors", required=True)
     ln.add_argument("--id", default="", help="one anchor id")
     ln.add_argument("--all", action="store_true", help="every non-retired anchor (the default when --id is not given)")
-    ln.add_argument("--plan-items", default="", help="bd/br show JSON or a JSON list of ids: warn on exclusions naming another item")
+    ln.add_argument("--plan-items", default="", help="{{ tracker }} show JSON or a JSON list of ids: warn on exclusions naming another item")
     ln.add_argument("--plan-item", action="append", help="a plan item id for the exclusion check; repeatable")
     ln.set_defaults(func=cmd_lint)
 
@@ -3212,9 +3221,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--adr", required=True)
     pr.set_defaults(func=cmd_promote)
 
-    ci = sub.add_parser("compose-item", help="build the labelled item text from bd JSON")
-    ci.add_argument("--show-json", required=True, help="output of `bd show <id> --json` (file, or - for stdin)")
-    ci.add_argument("--children-json", default="", help="output of `bd children <id> --json`; closed children are appended (ignored with --for plan)")
+    ci = sub.add_parser("compose-item", help="build the labelled item text from {{ tracker }} JSON")
+    ci.add_argument("--show-json", required=True, help="output of `{{ tracker }} show <id> --json` (file, or - for stdin)")
+    ci.add_argument("--children-json", default="", help="output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`; closed children are appended (ignored with --for plan)")
     ci.add_argument("--sections", default="", help=f"comma list from {list(SECTION_KEYS)}; default all non-empty sections")
     ci.add_argument("--for", dest="for_gate", choices=tuple(COMPOSE_FOR), default="",
                     help="plan: title, description and acceptance criteria (what Jev reads; identical verdicts to the full text, 2.6x fewer tokens); "
@@ -3234,9 +3243,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.set_defaults(func=cmd_agent_preflight)
 
     sh = sub.add_parser("shape", help="size and shape metrics of plan beads; informs, never gates")
-    sh.add_argument("--beads", default="", help="directory of `bd show --json` files")
-    sh.add_argument("--children-json", default="", help="output of `bd children <id> --json`: every child is shaped")
-    sh.add_argument("--show-json", action="append", help="output of `bd show <id> --json`; repeatable")
+    sh.add_argument("--beads", default="", help="directory of `{{ tracker }} show --json` files")
+    sh.add_argument("--children-json", default="", help="output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`: every child is shaped")
+    sh.add_argument("--show-json", action="append", help="output of `{{ tracker }} show <id> --json`; repeatable")
     sh.add_argument("--anchors", default="", help="anchors.json: report unknown ANC references and anchors no bead references")
     sh.add_argument("--max-code-lines", type=int, default=DEFAULT_MAX_CODE_LINES, help="chars_after_reduction reduces every fenced block longer than this (the plan gate's floor)")
     sh.add_argument("--format", choices=("json", "md"), default="json")

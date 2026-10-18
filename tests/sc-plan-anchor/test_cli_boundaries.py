@@ -15,13 +15,12 @@ import subprocess
 import sys
 import unittest
 
-from layout_support import rendered_skill
+from layout_support import SCRIPTS, rendered_skill
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
 SKILL = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring"
-SCRIPTS = SKILL / "scripts"
 CLEAN_ENV = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
 
 

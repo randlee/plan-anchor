@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-result
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 """Discriminated-union results for plan-anchoring scripts (Python 3.9 floor).
 
 A function that can fail in an expected way returns ``Result[T, E]``: either

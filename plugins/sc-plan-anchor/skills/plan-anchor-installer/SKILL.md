@@ -2,7 +2,7 @@
 name: plan-anchor-installer
 description: Install or upgrade plan-anchor (the plan-anchoring skill and its anchor-plan-review, anchor-sprint-review and anchor-tuning agents) into a repository or a parent folder of repositories, rendered for one anchor tracker (br or bd). Use when the user asks to install, set up, upgrade, reinstall or switch the tracker of plan-anchor or plan anchoring, or when the session-start notice says a newer plan-anchor is available. Never installs globally.
 metadata:
-  version: "0.8.1"
+  version: "0.8.2"
 ---
 
 # plan-anchor installer

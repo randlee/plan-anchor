@@ -161,12 +161,15 @@ redistribute or inherit this repository's test suite. They use fixture answers
 and a stub transport; they cover ID allocation, gating, overrides, retries and
 context shortening, response validation, report format, coverage and diffs,
 not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.9
-and the latest 3.x. A smoke run with no key (exits 0 with `data.summary.pass: false`, because the
-example gate fails by design):
+and the latest 3.x, once against the br render of the scripts and once against the bd render
+(CONTRIBUTING.md). The scripts are templates, so a smoke run installs first (it needs the
+sc-compose wheel) and then runs the installed copy with no key (exits 0 with `data.summary.pass: false`,
+because the example gate fails by design):
 
 ```bash
-S=plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/scripts/jev_judge.py
-X=plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/assets/examples
+D=$(mktemp -d) && python3 plugins/sc-plan-anchor/install.py --dest "$D" --tracker br --target claude --no-remote-judge
+S=$D/.claude/skills/plan-anchoring/scripts/jev_judge.py
+X=$D/.claude/skills/plan-anchoring/assets/examples
 python3 $S judge --anchors $X/anchors.example.json --gate plan --all --item-id smoke --item-file README.md \
   --answers-file $X/answers.fixture.json --out /tmp/anchor-smoke.json && python3 $S report --run /tmp/anchor-smoke.json --format md
 ```

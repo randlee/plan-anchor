@@ -1,27 +1,55 @@
+---
+name: sc-plan-anchor-script-anchor_tracker
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
-"""Select the anchor tracker (bd or br) for this repository's planning gate.
+"""Select the anchor tracker ({{ tracker }}) for this repository's planning gate.
 
 Selection rules
   1. An explicit ``anchor_tracker`` in the nearest .sc/plan-anchor/settings.yaml
      (the repository's own, else one in a parent folder) wins, but
-     is checked against disk: ``bd`` needs .beads/metadata.json with
-     ``"backend": "dolt"``; ``br`` needs a .beads/ that is not Dolt-backed (or
+{% if tracker == "br" %}
+     is checked against disk: ``br`` needs a .beads/ that is not Dolt-backed (or
      no .beads/ yet). A mismatch is an error, never a silent switch.
-  2. With no setting: a Dolt-backed .beads/ selects ``bd``; any other .beads/
-     selects ``br``; no .beads/ selects ``br``.
+  2. With no setting: this install selects ``br``, checked against disk the
+     same way. This install is rendered for br: a Dolt-backed .beads/ is
+     TRACKER.MISMATCH, fixed by rerunning plan-anchor-installer with the other
+     tracker (--tracker), never by a silent switch.
+  3. The selected CLI must be on PATH.
+
+Provisioning a Dolt-backed .beads/ is outside this skill. ``br init`` is the
+only bootstrap, and only ``write --init`` runs it.
+{% elif tracker == "bd" %}
+     is checked against disk: ``bd`` needs .beads/metadata.json with
+     ``"backend": "dolt"``. A mismatch is an error, never a silent switch.
+  2. With no setting: this install selects ``bd``, checked against disk the
+     same way. This install is rendered for bd: a .beads/ that is not
+     Dolt-backed (or no .beads/) is TRACKER.DOLT_REQUIRED, fixed by rerunning
+     plan-anchor-installer with the other tracker (--tracker), never by a
+     silent switch.
   3. The selected CLI must be on PATH.
 
 This tool never runs or recommends bd's init command. bd is supported only
 where a Dolt-backed .beads/ already exists; provisioning Dolt (DoltHub or a
-Dolt server) is outside this skill. ``br init`` is the only bootstrap, and only
-``write --init`` runs it.
+Dolt server) is outside this skill.
+{% endif %}
 
 Subcommands
   resolve   read-only: the tracker, its source (setting|detected), the
             settings path, and the evidence it rests on
+{% if tracker == "br" %}
   write     persist the selection to .sc/plan-anchor/settings.yaml (commit it);
             --tracker pins a choice, --init runs ``br init`` when there is no
             .beads/
+{% elif tracker == "bd" %}
+  write     persist the selection to .sc/plan-anchor/settings.yaml (commit it);
+            --tracker pins a choice
+{% endif %}
 
 Output is the JSON envelope {success, data, error}.
 
@@ -67,13 +95,19 @@ Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
 ERROR_EXIT = 2
+{% if tracker == "bd" %}
 DOLT_OUT_OF_SCOPE = (
     "bd is supported only where a Dolt-backed .beads/ already exists; "
     "provisioning Dolt (DoltHub or a Dolt server) is outside this skill."
 )
+{% endif %}
+OTHER_TRACKER = "rerun plan-anchor-installer with the other tracker (--tracker) to switch this install"
 INSTALL_HINT = {
+{% if tracker == "br" %}
     "br": "Install br (beads_rust) and put it on PATH; see references/installation-and-troubleshooting.md.",
+{% elif tracker == "bd" %}
     "bd": "Install bd and put it on PATH; see references/installation-and-troubleshooting.md.",
+{% endif %}
 }
 
 
@@ -132,7 +166,11 @@ def inspect_beads(root: Path) -> Result[BeadsState, ToolError]:
     metadata = beads / "metadata.json"
     if not metadata.exists():
         return Ok(BeadsState(exists=True, metadata_present=False, backend=None))
+{% if tracker == "br" %}
+    fix = f"Repair {METADATA_RELPATH} (a JSON object; Dolt-backed workspaces carry \"backend\": \"dolt\")."
+{% elif tracker == "bd" %}
     fix = f"Repair {METADATA_RELPATH} (a JSON object; bd's Dolt workspaces carry \"backend\": \"dolt\")."
+{% endif %}
     try:
         data: Any = json.loads(metadata.read_text(encoding="utf-8"))
     except (OSError, UnicodeError) as exc:
@@ -148,22 +186,27 @@ def inspect_beads(root: Path) -> Result[BeadsState, ToolError]:
 
 
 def detect(beads: BeadsState) -> str:
-    return "bd" if beads.dolt else "br"
+    return "{{ tracker }}"  # the tracker this install is rendered for; check_against_disk confirms .beads/ fits it
 
 
 def check_against_disk(tracker: str, beads: BeadsState, origin: str) -> Result[None, ToolError]:
+{% if tracker == "bd" %}
     if tracker == "bd" and not beads.dolt:
         found = "no .beads/" if not beads.exists else f".beads/ without a Dolt backend (backend {beads.backend!r})"
         return err("TRACKER.DOLT_REQUIRED",
                    f"{origin} selects bd, but the repository has {found}. {DOLT_OUT_OF_SCOPE}",
-                   f"Use br (set 'anchor_tracker: br' in {SETTINGS_RELPATH}), or point the repository at an "
-                   "existing Dolt-backed .beads/ provisioned outside this skill.",
+                   "This install is rendered for bd: point the repository at an existing Dolt-backed .beads/ "
+                   f"provisioned outside this skill, or {OTHER_TRACKER}.",
                    data={"evidence": beads.to_json()})
+{% endif %}
+{% if tracker == "br" %}
     if tracker == "br" and beads.dolt:
         return err("TRACKER.MISMATCH",
-                   f"{origin} selects br, but .beads/ is Dolt-backed (bd's workspace)",
-                   f"Set 'anchor_tracker: bd' in {SETTINGS_RELPATH}, or remove the setting to detect bd.",
+                   f"{origin} selects br, but .beads/ is Dolt-backed; this install is rendered for br",
+                   f"The .beads/ here is Dolt-backed: {OTHER_TRACKER}, or point the repository at a .beads/ "
+                   "that is not Dolt-backed.",
                    data={"evidence": beads.to_json()})
+{% endif %}
     return Ok(None)
 
 
@@ -190,9 +233,13 @@ def _choose(settings: Optional[Settings], pinned: Optional[str], beads: BeadsSta
         checked = check_against_disk(configured, beads, f"{shown} anchor_tracker")
         return checked if isinstance(checked, Err) else Ok((configured, "setting"))
     if pinned:
+        if pinned not in TRACKERS:
+            return err("VALIDATION.INPUT", f"--tracker {pinned!r}: this install is rendered for {{ tracker }} only",
+                       f"Pin {{ tracker }}, or {OTHER_TRACKER}.")
         checked = check_against_disk(pinned, beads, "--tracker")
         return checked if isinstance(checked, Err) else Ok((pinned, "setting"))
-    return Ok((detect(beads), "detected"))
+    checked = check_against_disk(detect(beads), beads, "this install")
+    return checked if isinstance(checked, Err) else Ok((detect(beads), "detected"))
 
 
 def resolve(start: Path, *, which: Which = shutil.which, pinned: Optional[str] = None) -> Result[Selection, ToolError]:
@@ -218,10 +265,12 @@ def resolve(start: Path, *, which: Which = shutil.which, pinned: Optional[str] =
                         beads=beads.value, cli_path=cli.value, settings_file=found.value.path))
 
 
+{% if tracker == "br" %}
 def init_br(tracker: str, cli_path: str, root: Path, run: Runner) -> Result[BeadsState, ToolError]:
     """Run ``br init`` with a fixed argv (no shell) and confirm a non-Dolt .beads/ appeared."""
     if tracker != "br":
-        return err("TRACKER.INIT_REFUSED", f"only br is ever initialized by this skill, not {tracker!r}. {DOLT_OUT_OF_SCOPE}")
+        return err("TRACKER.INIT_REFUSED", f"only br is ever initialized by this skill, not {tracker!r}. "
+                   "Provisioning a Dolt-backed .beads/ is outside this skill.")
     argv = [cli_path, "init"]
     try:
         proc = run(argv, cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
@@ -247,6 +296,7 @@ def init_br(tracker: str, cli_path: str, root: Path, run: Runner) -> Result[Bead
     return after
 
 
+{% endif %}
 _git_ignored = git_ignored  # shared with plan_anchor_settings.py set
 
 
@@ -258,11 +308,13 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     sel = selected.value
     initialized = False
     beads = sel.beads
+{% if tracker == "br" %}
     if init and not beads.exists:
         after = init_br(sel.tracker, sel.cli_path, sel.root, run)
         if isinstance(after, Err):
             return after
         beads, initialized = after.value, True
+{% endif %}
     written = False
     path = settings_path(sel.root)
     if sel.settings is None or sel.settings.anchor_tracker is None:
@@ -280,10 +332,12 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     actions = []
     if written:
         actions.append(f"Commit {SETTINGS_RELPATH} so every clone selects {sel.tracker}.")
+{% if tracker == "br" %}
     if initialized:
         actions.append("Run 'br sync --flush-only', then commit .beads/ (beads.db stays gitignored by design).")
     elif not beads.exists:
         actions.append("No .beads/ yet: rerun with --init to run 'br init' (the only bootstrap this skill performs).")
+{% endif %}
     if ignored:
         actions.append(f"{SETTINGS_RELPATH} is gitignored; un-ignore it so the selection is committed.")
     elif isinstance(checked, Err):
@@ -333,7 +387,9 @@ def _parser() -> argparse.ArgumentParser:
     wr = sub.add_parser("write", help=f"persist the selection to {SETTINGS_RELPATH}")
     wr.add_argument("--repository-root", default=".", help="any path inside the repository (default: .)")
     wr.add_argument("--tracker", choices=TRACKERS, help="pin this tracker instead of detecting (checked against disk)")
+{% if tracker == "br" %}
     wr.add_argument("--init", action="store_true", help="run 'br init' when br is selected and there is no .beads/")
+{% endif %}
     return parser
 
 
@@ -350,7 +406,11 @@ def main(argv: Optional[list] = None, *, which: Which = shutil.which, run: Runne
         if args.command == "resolve":
             outcome: Result[Any, ToolError] = resolve(start, which=which)
         else:
+{% if tracker == "br" %}
             outcome = write(start, pinned=args.tracker, init=args.init, which=which, run=run)
+{% elif tracker == "bd" %}
+            outcome = write(start, pinned=args.tracker, which=which, run=run)
+{% endif %}
         envelope, code = _envelope(outcome)
     except Exception as exc:  # a bug, not an expected failure
         envelope = {"success": False, "data": None, "error": ToolError(

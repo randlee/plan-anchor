@@ -22,7 +22,7 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
-SCRIPTS = SKILL / "scripts"
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 SCRIPT_IN_WORKSPACE = ".claude/skills/plan-anchoring/scripts/jev_judge.py"  # installed by PreflightContracts
 sys.path.insert(0, str(SCRIPTS))
 import anchor_runner_contract as rc  # noqa: E402
