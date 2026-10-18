@@ -109,7 +109,7 @@ from plan_anchor_settings import (  # noqa: E402
     read_settings,
     write_settings,
 )
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
 
 PACKAGE = "sc-plan-anchor"
 LEGACY_PATH = INSTALL_DIR / "legacy-owned.json"
@@ -727,7 +727,11 @@ class Options:
 
 def check_dest(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[Path, ToolError]:
     """The destination folder, resolved; a global harness location or the plugin itself is refused."""
-    dest = dest.expanduser()
+    try:
+        dest = dest.expanduser()
+    except (KeyError, RuntimeError):  # "~" with no determinable home directory
+        return err("INSTALL.DEST", f"--dest {str(dest)!r} starts with '~' but the home directory cannot be determined",
+                   "Pass the folder as an absolute path.")
     if not dest.is_dir():
         return err("INSTALL.DEST", f"--dest {str(dest)!r} is not a directory",
                    "Pass an existing folder: a repository, or a parent folder holding repositories.")
@@ -960,4 +964,5 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     sys.exit(main())

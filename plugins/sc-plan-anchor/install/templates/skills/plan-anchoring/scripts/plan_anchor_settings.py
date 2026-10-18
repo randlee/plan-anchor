@@ -50,7 +50,7 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from plan_anchor_paths import find_settings  # noqa: E402
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
@@ -433,4 +433,5 @@ def main(argv: Optional[list] = None) -> int:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     sys.exit(main())

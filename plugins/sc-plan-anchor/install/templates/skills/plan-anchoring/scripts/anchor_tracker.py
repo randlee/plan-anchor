@@ -59,7 +59,7 @@ from plan_anchor_settings import (  # noqa: E402
     settings_path,
     write_settings,
 )
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
 
 Which = Callable[[str], Optional[str]]
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -224,7 +224,7 @@ def init_br(tracker: str, cli_path: str, root: Path, run: Runner) -> Result[Bead
         return err("TRACKER.INIT_REFUSED", f"only br is ever initialized by this skill, not {tracker!r}. {DOLT_OUT_OF_SCOPE}")
     argv = [cli_path, "init"]
     try:
-        proc = run(argv, cwd=str(root), capture_output=True, text=True, check=False,
+        proc = run(argv, cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                    stdin=subprocess.DEVNULL, timeout=INIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return err("TRACKER.INIT_FAILED", f"br init did not finish within {INIT_TIMEOUT_SECONDS} s",
@@ -362,4 +362,5 @@ def main(argv: Optional[list] = None, *, which: Which = shutil.which, run: Runne
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     sys.exit(main())

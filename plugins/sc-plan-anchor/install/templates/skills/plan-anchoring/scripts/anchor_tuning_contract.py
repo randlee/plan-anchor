@@ -20,7 +20,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
 
 
 FORBIDDEN_FIELDS = {"desired_verdict", "requested_disposition", "proposed_question_text"}
@@ -342,4 +342,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     sys.exit(main())

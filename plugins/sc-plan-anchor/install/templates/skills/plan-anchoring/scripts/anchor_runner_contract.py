@@ -39,7 +39,7 @@ import tempfile
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from result import Err, Ok, Result, ToolError, err  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
 
 
 SCHEMA_VERSION = "1.0.0"
@@ -474,4 +474,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     raise SystemExit(main())

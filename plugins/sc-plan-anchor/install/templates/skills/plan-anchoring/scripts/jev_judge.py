@@ -101,7 +101,7 @@ import urllib.request
 from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from result import Err, Ok, Result  # noqa: E402
+from result import Err, Ok, Result, utf8_stdio  # noqa: E402
 
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"  # tests redirect by patching this constant in-process
@@ -3295,4 +3295,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    utf8_stdio()
     sys.exit(main())

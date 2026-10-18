@@ -73,4 +73,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    try:
+        from result import utf8_stdio
+
+        utf8_stdio()
+    except Exception:  # never break the session over output encoding
+        pass
     sys.exit(main())
