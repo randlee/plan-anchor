@@ -7,8 +7,9 @@ entry is derived from an existing source; nothing here is new scope.
   (`ANC-NNN`), the [Phase A intent](plans/phase-a/intent.md) (`INTENT`), a
   document, or an operator decision (`OPERATOR`). Retired anchors are cited only
   where their retirement reason says the requirement itself remains.
-- **Status** describes the system at the top of the 0.7.0 stack: `shipped`
-  (built there) or `planned` (decided, not built there).
+- **Status** describes the code on `main` at 0.8.1: `shipped` (built),
+  `planned` (decided, not built) or `retired` (withdrawn; the entry stays
+  listed and its number is not reused).
 - **Verified** names the test that exercises the requirement, as
   `file::Class.test`, with files under `tests/sc-plan-anchor/`; a bare
   `Class.test` is in the file named just before it. `none` means no test was
@@ -80,9 +81,9 @@ Verified: `test_jev_judge.py::ReportTests.test_line_format_quotes_the_statement`
 
 ## Data leaving the machine and configuration
 
-**REQ-015** Live Jev calls shall fail closed without a TypeSafe API key and an explicit remote-judge opt-in, and send nothing in that case.
+**REQ-015** Live Jev calls shall fail closed without a TypeSafe API key and a recorded `allow_remote_judge: true` (REQ-065), and send nothing in that case.
 Source: PRD "Jev data handling"; `design/architecture-and-call-graphs.md` §6. Status: shipped.
-Verified: `test_jev_judge.py::FailClosedTests.test_missing_key_and_missing_opt_in` (asserts zero transport calls).
+Verified: `test_jev_judge.py::FailClosedTests.test_missing_key_and_missing_consent` (asserts zero transport calls).
 
 **REQ-016** `--dry-run` and `--answers-file` execution shall make zero network calls.
 Source: INTENT "Success"; retired ANC-006 (requirement retained). Status: shipped.
@@ -93,10 +94,10 @@ Source: ANC-012. Status: shipped.
 Verified: `test_jev_judge.py::FailClosedTests.test_every_emitted_value_redacts_the_live_key_and_bearer_tokens`, `FailClosedTests.test_key_format_checked_and_never_echoed`, `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 
 **REQ-018** Plan-anchor shall not read runtime configuration from environment variables other than `TYPESAFE_API_KEY`.
-Source: ANC-005; INTENT "Success". Status: shipped (not met; see note).
-Verified: none. Note: `jev_judge.py` reads `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE`, `PLAN_ANCHOR_JEV_URL`, `PLAN_ANCHOR_JEV_MODEL`, `PLAN_ANCHOR_CONFIDENCE_THRESHOLD`, `PLAN_ANCHOR_CONFIRM_NEAR`, `PLAN_ANCHOR_MAX_ITEM_CHARS` and `PLAN_ANCHOR_MAX_CODE_LINES`, and `test_jev_judge.py::ErrorHandlingTests.test_env_numbers_are_checked` exercises them. ADR-016 (REQ-065) removes `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE`; the rest remain.
+Source: ANC-005; INTENT "Success". Status: shipped (met since 0.7.3).
+Verified: `test_no_plugin_env_vars.py::ShippedTreeNamesNoRetiredVariable.test_only_typesafe_key_is_read_from_the_environment`, `ShippedTreeNamesNoRetiredVariable.test_no_plan_anchor_prefix_in_shipped_files`, `RetiredVariablesHaveNoEffect.test_dry_run_output_and_requests_are_unchanged`, `RetiredVariablesHaveNoEffect.test_live_request_url_and_behaviour_are_unchanged`. Note: the remote-judge opt-in moved to settings in 0.7.1 (REQ-065) and the other six `PLAN_ANCHOR_*` variables were removed in 0.7.3; their values are defaults with CLI flags. The only other variable read is `USER`, as the default for `add --stated-by` (provenance, not configuration).
 
-**REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys, committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
+**REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys (`schema_version`, `anchor_tracker`, `allow_remote_judge`), committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
 Source: OPERATOR. Status: shipped.
 Verified: `test_anchor_tracker.py::MalformedInputTests` (`test_unknown_keys_are_rejected`, `test_schema_version_must_be_integer_one`, `test_tracker_value_must_be_bd_or_br`), `RepositoryContractTests.test_settings_file_is_not_gitignored`, `WriteAndInitTests.test_write_produces_committed_format`.
 
@@ -110,7 +111,7 @@ Verified: none.
 Source: OPERATOR; INTENT "Success"; retired ANC-007 (requirement retained). Status: shipped.
 Verified: `test_anchor_tracker.py::SelectionRuleTests`, `test_gate_prompts.py::GatePromptTests.test_both_gates_resolve_the_tracker_for_question_beads`, `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_development_gate_resolves_tracker_and_takes_caller_text`, `test_install.py::RenderingTests.test_both_gates_render_the_selected_tracker`.
 
-**REQ-022** Tracker selection shall be: an explicit `anchor_tracker` in the committed settings wins and is validated against disk; otherwise a Dolt-backed `.beads/` selects `bd`, any other `.beads/` selects `br`, and no `.beads/` selects `br`; a mismatch is an error, never a silent switch.
+**REQ-022** Tracker selection shall be: an explicit `anchor_tracker` in the settings file in effect (the nearest, REQ-070) wins and is validated against disk; otherwise a Dolt-backed `.beads/` selects `bd`, any other `.beads/` selects `br`, and no `.beads/` selects `br`; a mismatch is an error, never a silent switch.
 Source: OPERATOR. Status: shipped.
 Verified: `test_anchor_tracker.py::SelectionRuleTests` (all), `SelectionRuleTests.test_selection_never_switches_to_the_other_cli`.
 
@@ -119,8 +120,8 @@ Source: OPERATOR. Status: shipped.
 Verified: `test_anchor_tracker.py::WriteAndInitTests.test_bd_is_never_initialized`, `WriteAndInitTests.test_init_runs_br_init_with_fixed_argv_and_no_shell`, `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_no_text_recommends_bd_init`, `TrackerPromptRegressionTests.test_tracker_script_never_builds_a_bd_init_argv`, `test_install.py::InstallTests.test_bd_refused_without_dolt`, `InstallTests.test_no_beads_without_init_flag_is_typed_error`.
 
 **REQ-024** The plan-anchor repository itself shall pin `anchor_tracker: br`.
-Source: OPERATOR. Status: shipped.
-Verified: `test_anchor_tracker.py::RepositoryContractTests.test_this_repository_pins_br`.
+Source: OPERATOR. Status: shipped. It also records `allow_remote_judge: true`.
+Verified: `test_anchor_tracker.py::RepositoryContractTests.test_this_repository_pins_br_and_allows_remote_judging`.
 
 **REQ-025** Both gate reviewers shall take the tracker from `anchor_tracker.py resolve`, never from a default, and reject a mismatch with a supplied value.
 Source: OPERATOR; SKILL.md Step 1. Status: shipped.
@@ -138,7 +139,7 @@ REQ-027 to REQ-029 (plan sources) are retired with ADR-005 and ADR-014; the numb
 Source: ANC-002; `references/agent-delegation-workflow.md`. Status: shipped.
 Verified: none (instruction text only; no test asserts it).
 
-**REQ-031** Each agent definition shall reside in its harness directory (`.claude/agents`, `.codex/agents`, `.cursor/agents`), with bodies identical across harnesses after frontmatter and registries identical after the harness path.
+**REQ-031** Each agent definition shall be installed in its harness directory (`.claude/agents`, `.codex/agents`, `.cursor/agents`) from one body template plus per-harness frontmatter (`install/harness/<target>/agents/`), with bodies identical across harnesses after frontmatter and registries identical after the harness path.
 Source: ANC-009. Status: shipped.
 Verified: `test_harness_agent_drift.py::HarnessAgentDriftTests`, `test_anchor_runner_contract.py::RunnerContractTests.test_resolves_real_claude_and_codex_registries`.
 
@@ -206,21 +207,21 @@ Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.9 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing. The installer is the exception (REQ-059).
+**REQ-047** Skill scripts shall use the standard library on Python 3.9 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
 Source: OPERATOR; ADR-006. Status: shipped.
 Verified: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only`, `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`; CI `dependency-floor` job.
 
 **REQ-048** Functions that can fail in an expected way shall return `Result[T, E]` (frozen `Ok`/`Err` with a literal `ok` discriminant) rather than raise; exceptions are for bugs and are converted to `SCRIPT.INTERNAL` at the CLI boundary.
-Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py`, except that `anchor_runner_contract.py` converts only I/O errors (`SCRIPT.IO`) and lets other exceptions escape.
-Verified: `test_result.py::ResultHelperTests`, `ScriptErrValueTests`, `JevPropagationTests.test_main_reports_an_unexpected_exception_as_script_internal`, `test_anchor_tracker.py::CliTests.test_unexpected_exception_becomes_script_internal`, `test_error_contracts.py::TuningContractCli.test_unexpected_failure_is_script_internal`, `test_jev_judge.py::ErrorHandlingTests.test_unexpected_exceptions_become_script_internal`.
+Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py` (`anchor_runner_contract.py` since 0.7.1; it keeps `SCRIPT.IO` for unreadable input).
+Verified: `test_result.py::ResultHelperTests`, `ScriptErrValueTests`, `JevPropagationTests.test_main_reports_an_unexpected_exception_as_script_internal`, `test_anchor_tracker.py::CliTests.test_unexpected_exception_becomes_script_internal`, `test_error_contracts.py::TuningContractCli.test_unexpected_failure_is_script_internal`, `test_jev_judge.py::ErrorHandlingTests.test_unexpected_exceptions_become_script_internal`, `test_cli_boundaries.py::RunnerInternalBoundaryTests.test_unexpected_exception_is_script_internal`, `RunnerInternalBoundaryTests.test_unreadable_file_is_still_script_io`.
 
 **REQ-049** Every error shall be printed as the JSON envelope `{success: false, data, error: {code, message, recoverable, suggested_action}}`, never a traceback.
-Source: OPERATOR; ADR-007. Status: shipped, except argparse usage errors in `jev_judge.py`, `anchor_runner_contract.py` and `anchor_tuning_contract.py`, which are plain text on stderr.
-Verified: `test_error_contracts.py::JevJudgeErrorContracts.test_every_offline_error_code_keeps_its_exact_envelope`, `RunnerContractErrorContracts.test_fence_error_envelopes`, `RunnerContractErrorContracts.test_resolve_error_envelopes`, `TuningContractCli.test_cli_reports_every_error_as_an_envelope_with_exit_two`, `test_jev_judge.py::ErrorHandlingTests.test_every_file_argument_yields_json_errors`, `test_anchor_tracker.py::CliTests.test_envelope_and_exit_codes`, `CliTests.test_usage_errors_are_json`, `test_install.py::InstallTests.test_cli_envelope_and_exit_codes`.
+Source: OPERATOR; ADR-007. Status: shipped; argparse usage errors are `VALIDATION.INPUT` envelopes on stdout in every CLI since 0.7.1 (`--help` still prints text, exit 0).
+Verified: `test_error_contracts.py::JevJudgeErrorContracts.test_every_offline_error_code_keeps_its_exact_envelope`, `RunnerContractErrorContracts.test_fence_error_envelopes`, `RunnerContractErrorContracts.test_resolve_error_envelopes`, `TuningContractCli.test_cli_reports_an_unreadable_file_as_an_error_with_exit_two`, `test_cli_boundaries.py::UsageErrorEnvelopeTests.test_usage_errors_are_validation_input_on_stdout`, `test_jev_judge.py::ErrorHandlingTests.test_every_file_argument_yields_json_errors`, `test_anchor_tracker.py::CliTests.test_envelope_and_exit_codes`, `CliTests.test_usage_errors_are_json`, `test_install.py::InstallTests.test_cli_envelope_and_exit_codes`.
 
-**REQ-050** Exit codes shall be 0 for success, 1 only for a completed run with a negative result, and 2 for any error. A `judge` run whose cells include `verdict: error` is a completed run with a negative result (exit 1); errors that stop a run exit 2.
-Source: OPERATOR; ADR-007. Status: shipped, except `jev_judge.py validate`, which exits 1 with a `success: false` error envelope.
-Verified: `test_error_contracts.py::JevJudgeErrorContracts.test_fixture_missing_is_a_per_anchor_error_verdict`, `JevTransportErrorContracts.test_401_aborts_the_run_with_body_withheld`, `JevTransportErrorContracts.test_transient_codes_retry_three_times_then_record_an_error_verdict`, `test_anchor_tracker.py::CliTests.test_fatal_codes_exit_two`, `test_jev_judge.py::ErrorHandlingTests.test_exit_codes`. `test_error_contracts.py::JevJudgeErrorContracts.test_validate_problems_and_lint_warnings_exit_one` pins the `validate` deviation.
+**REQ-050** Exit codes shall be 0 when a command ran, with negative results in `data` (`summary.pass`, `valid`, `clean`, `pass`, `mismatches`, `likely_duplicates`, `added`/`updated` with `refused`, `violation`, `state`); 2 with the typed error envelope when the tool could not do its job; 130 on interrupt; never 1. A `judge` run whose cells include `verdict: error` ran (exit 0, `summary.pass: false`); errors that stop a run exit 2. The repository CI scripts' drift and staleness checks also exit 2.
+Source: OPERATOR (0.7.2); ADR-007. Status: shipped.
+Verified: `test_exit_convention.py::JevJudgeNegativeOutcomes` (all), `JevJudgeErrors.test_each_subcommand`, `OtherScripts` (all), `NoExitOneInShippedText.test_no_prompt_or_reference_says_exit_1`, `test_error_contracts.py::JevJudgeErrorContracts.test_validate_problems_and_lint_warnings_exit_zero`, `JevJudgeErrorContracts.test_add_refusals_are_negative_answers_with_exit_zero`, `JevJudgeErrorContracts.test_fixture_missing_is_a_per_anchor_error_verdict`, `JevTransportErrorContracts.test_401_aborts_the_run_with_body_withheld`, `test_anchor_tracker.py::CliTests.test_fatal_codes_exit_two`, `test_jev_judge.py::ErrorHandlingTests.test_exit_codes`. Partial: no test runs `check_version_sync.py`, `gen_install_data.py --check` or `install_sc_compose_ci.py` to assert exit 2; that is read from the code.
 
 **REQ-051** Every agent or stand-in launch shall report a typed failure reason, and failures shall never fall back silently; a stand-in launch failure shall exit 2 with a typed error envelope.
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures". Status: shipped for runner contract failures; planned for stand-in launches.
@@ -258,13 +259,13 @@ Verified: `test_version_ssot.py::VersionSingleSourceOfTruthTests.test_every_ship
 
 ## Installer
 
-**REQ-059** `install.py` shall run through `uv run` with PEP 723 metadata (PyYAML, `sc-compose` >=1.7.0,<2, Python 3.11 pin) and render each tracker-naming file strictly for the selected tracker, so a `br` install names no `bd` command and a `bd` install no `br` command; the committed plugin tree shall be the templates' `neutral` render.
-Source: OPERATOR; ADR-015. Status: shipped.
-Verified: `test_install.py::RenderingTests.test_br_and_bd_installs_name_one_tracker`, `RenderingTests.test_committed_tree_is_the_neutral_render`, `RenderingTests.test_every_template_renders_strictly_for_each_tracker`, `RenderingTests.test_planted_negatives`, `InstallTests.test_missing_sc_compose_is_typed_error`.
+**REQ-059** `install.py` shall run through `uv run` with PEP 723 metadata (PyYAML, `sc-compose` >=1.7.0,<2, Python 3.11 pin) and render every prompt file (SKILL.md, each reference, the `.md` assets, each agent body) as an `sc-compose` template strictly for the selected tracker, so a `br` install names no `bd` command and a `bd` install no `br` command. There shall be no neutral render and no committed rendered tree; scripts, schemas, JSON assets and the skill's runtime templates shall be copied verbatim.
+Source: OPERATOR; ADR-015. Status: shipped (no neutral render since 0.8.0).
+Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree`, `RenderingTests.test_every_prompt_source_is_a_template`, `RenderingTests.test_every_template_renders_strictly_for_each_tracker`, `RenderingTests.test_runtime_templates_are_copied_verbatim`, `RenderingTests.test_br_and_bd_installs_name_one_tracker`, `RenderingTests.test_planted_negatives`, `InstallTests.test_missing_sc_compose_is_typed_error`.
 
 **REQ-060** An install shall record version, tracker, targets and a sha256 per file in `.sc/plan-anchor/install-lock.json`; a rerun of the same version shall change nothing, and an upgrade shall remove unchanged files the new version no longer ships while keeping files it does not own.
 Source: OPERATOR; ADR-015. Status: shipped.
-Verified: `test_install.py::InstallTests.test_rerun_is_idempotent`, `InstallTests.test_upgrade_removes_retired_files_and_keeps_others`, `InstallTests.test_invalid_lock_is_typed_error`, `HistoryMigrationTests.test_migrate_0_6_0_removes_plan_source`.
+Verified: `test_install.py::InstallTests.test_rerun_is_idempotent`, `InstallTests.test_upgrade_removes_retired_files_and_keeps_others`, `InstallTests.test_invalid_lock_is_typed_error`, `HistoryMigrationTests.test_migrate_0_6_0_removes_plan_source`, `test_installer_skill.py::UpgradeFromMarketplaceReleaseTests.test_rerun_upgrades_and_removes_retired_files_per_the_lock`.
 
 **REQ-061** The installer shall refuse, before writing anything, a modified, modified-retired, unowned or foreign file (`INSTALL.CONFLICT` naming each path), and `--overwrite` shall move each to `.backup/<UTC>/<path>` before replacing it.
 Source: OPERATOR; ADR-015. Status: shipped.
@@ -272,7 +273,7 @@ Verified: `test_install.py::InstallTests.test_modified_file_is_refused_then_back
 
 **REQ-062** A repository vendored before the lock existed shall be adopted once: a file is owned only when its bytes match a file an earlier version shipped, as recorded in `install/legacy-owned.json`, which is generated from git history and checked in CI.
 Source: OPERATOR; ADR-015. Status: shipped.
-Verified: `test_install.py::HistoryMigrationTests.test_migrate_0_3_0`, `HistoryMigrationTests.test_migrate_0_4_0_removes_retired_agent_and_tests`, `HistoryMigrationTests.test_edited_legacy_file_is_not_owned`, `GeneratedDataTests.test_manifest_and_legacy_are_in_sync`, `GeneratedDataTests.test_legacy_covers_retired_files`.
+Verified: `test_install.py::HistoryMigrationTests.test_migrate_0_3_0`, `HistoryMigrationTests.test_migrate_0_4_0_removes_retired_agent_and_tests`, `HistoryMigrationTests.test_edited_legacy_file_is_not_owned`, `GeneratedDataTests.test_legacy_is_in_sync`, `GeneratedDataTests.test_legacy_covers_retired_files`.
 
 **REQ-063** Tracker switching shall follow ADR-004's rules: a detected tracker that differs from the installed one is `TRACKER.MISMATCH` until `--tracker` names it; a switch re-renders every locked target, updates `anchor_tracker`, and states that issue data is not migrated; `bd` requires a Dolt-backed `.beads/` (`TRACKER.DOLT_REQUIRED`), and no `.beads/` requires `--init-br` (`TRACKER.NOT_INITIALIZED`).
 Source: OPERATOR; ADR-015. Status: shipped.
@@ -284,10 +285,40 @@ Verified: `test_install.py::InstallTests.test_dry_run_writes_nothing`.
 
 ## Remote-judge consent
 
-**REQ-065** Consent to send plan text to TypeSafe shall be `allow_remote_judge: true|false` in the committed `.sc/plan-anchor/settings.yaml`, never an environment variable and never inferred from past runs; with the key absent, `judge` shall refuse and send nothing, and the user is asked once and the answer recorded.
-Source: OPERATOR (2026-10-17); ADR-016. Status: planned.
-Verified: none.
+**REQ-065** Consent to send plan text to TypeSafe shall be `allow_remote_judge: true|false` in the committed `.sc/plan-anchor/settings.yaml` (the nearest file), never an environment variable and never inferred from past runs; with the key absent or `false`, every live subcommand shall refuse with `POLICY.REMOTE_JUDGE_DISABLED` (exit 2) and send nothing, and the user is asked once and the answer recorded with `plan_anchor_settings.py set allow_remote_judge true|false`.
+Source: OPERATOR (2026-10-17); ADR-016. Status: shipped (0.7.1).
+Verified: `test_remote_judge_setting.py::LiveCallConsentTests` (all, including `test_every_live_subcommand_is_refused_without_an_answer`, `test_old_variable_has_no_effect`, `test_old_flag_is_a_usage_error_on_every_live_subcommand`, `test_dry_run_and_fixture_answers_need_no_setting`), `SetCommandTests` (all), `PromptAndDocsTests.test_gate_agents_carry_the_rule`, `PromptAndDocsTests.test_skill_asks_once_and_never_infers`. Asking the user once is a skill instruction; the test checks the text.
 
-**REQ-066** The installer shall take `--allow-remote-judge` / `--no-remote-judge` and record the answer in the settings file.
-Source: OPERATOR (2026-10-17); ADR-016. Status: planned.
-Verified: none.
+**REQ-066** The installer shall take `--allow-remote-judge` / `--no-remote-judge` and record the answer in the settings file; a rerun without either shall keep the recorded value.
+Source: OPERATOR (2026-10-17); ADR-016. Status: shipped (0.7.1).
+Verified: `test_install.py::InstallTests.test_remote_judge_flags_write_the_setting_and_reruns_keep_it`, `InstallTests.test_switching_tracker_keeps_the_remote_judge_answer`.
+
+## Per-folder installs (0.8.0)
+
+**REQ-067** The marketplace plugin shall ship one skill, `plan-anchor-installer`, and no agents; the skill and `install.py` shall read only files inside the plugin directory. The skill shall compare versions first (`install.py --dest <folder> --status`, read-only) and stop when the folder's install is newer, ask the user once for a setting the folder does not record (tracker; remote-judge consent), never infer consent, never run or recommend `bd init`, and upgrade by rerunning the same command in each install folder.
+Source: OPERATOR; ADR-015. Status: shipped.
+Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree`, `test_installer_skill.py::InstallerSkillTextTests` (all), `StatusTests.test_states_and_message`, `StatusTests.test_status_takes_only_dest`, `SelfContainedPluginTests.test_a_copy_of_the_plugin_alone_installs`. Partial: the skill's behavior is instruction text; tests check the text, not a harness run.
+
+**REQ-068** `install.py --dest` shall accept any existing folder (a repository, a folder inside one, or a parent folder of repositories) and refuse global locations with `INSTALL.DEST_GLOBAL` and exit 2: the home directory, anything inside `~/.claude`, `~/.codex`, `~/.cursor` or `~/.agents` (plugin caches included), `/etc/codex`, Claude Code's managed-settings directories, and the plugin directory. A non-directory is `INSTALL.DEST`; a folder that is not a repository and has no `.beads/` needs `--tracker` or a settings file (`TRACKER.REQUIRED`).
+Source: OPERATOR; ADR-015. Status: shipped.
+Verified: `test_installer_skill.py::GlobalDestinationTests` (all), `ParentFolderInstallTests.test_install_writes_the_parent_and_no_child`, `ParentFolderInstallTests.test_a_parent_folder_needs_a_tracker`, `test_install.py::InstallTests.test_dest_may_be_a_folder_inside_a_repository`, `InstallTests.test_dest_must_be_an_existing_directory`.
+
+**REQ-069** `agent-preflight` and both gate agents shall accept only the canonical `jev_judge.py` of the nearest install, walking up from the working directory and stopping before the home directory; a copy in a global location, a farther install's copy or the source tree shall be `VALIDATION.PATH`. There shall be no plugin-root or manifest fallback.
+Source: OPERATOR; ADR-015 (supersedes the fallbacks in ADR-008's 0.7.0 form). Status: shipped.
+Verified: `test_jev_judge.py::ScriptTrustRuleTests.test_a_parent_folder_install_is_trusted_from_a_child_repository`, `ScriptTrustRuleTests.test_only_the_nearest_install_is_trusted`, `ScriptTrustRuleTests.test_a_copy_only_in_the_global_claude_dir_is_refused`, `ScriptTrustRuleTests.test_the_source_tree_is_not_an_install`, `test_installer_skill.py::ParentFolderInstallTests.test_trust_lookup_finds_the_parent_copy_from_each_child`, `test_error_contracts.py::JevJudgeErrorContracts.test_preflight_error_envelopes_from_an_installed_copy`. The gate agents' copy of the rule is prompt text.
+
+**REQ-070** The nearest `.sc/plan-anchor/settings.yaml` at or above the repository shall win whole, with no merging across files; `resolve` and `plan_anchor_settings.py show` shall report `settings_path` and `settings_inherited`. The disk rule shall still apply to an inherited setting, and `TRACKER.MISMATCH` shall name the file in effect.
+Source: OPERATOR; ADR-015. Status: shipped.
+Verified: `test_installer_skill.py::ParentFolderInstallTests.test_settings_lookup_picks_the_nearest_file`, `ParentFolderInstallTests.test_br_setting_over_dolt_metadata_is_a_mismatch`, `ParentFolderInstallTests.test_a_child_install_overrides_the_parent`, `test_remote_judge_setting.py::LiveCallConsentTests.test_true_is_found_from_a_subdirectory`.
+
+**REQ-071** Each target's agent registry shall be installed at `<dest>/.<target>/skills/plan-anchoring/registry.yaml`, and `anchor_runner_contract.py resolve` shall read it through `--install-root` (`--plugin-root` accepted as an alias).
+Source: OPERATOR; ADR-015. Status: shipped.
+Verified: `test_anchor_runner_contract.py::RunnerContractTests.test_resolves_real_claude_and_codex_registries`, `test_error_contracts.py::RunnerContractErrorContracts.test_resolve_error_envelopes`.
+
+**REQ-072** A SessionStart hook shall print one line when the nearest install lock is older than the plugin and otherwise stay silent (no lock, current or newer, or anything unreadable); it shall write nothing, use no network and exit 0.
+Source: OPERATOR; ADR-015. Status: shipped.
+Verified: `test_installer_skill.py::SessionStartHookTests` (all).
+
+**REQ-073** Every plan-anchor CLI and the SessionStart hook shall read and write UTF-8 on stdin, stdout and stderr on every platform, and the nearest-install, settings and lock lookups, the global-location refusal and `install.py`'s destination check shall work when the home directory cannot be determined (the walk then ends at the filesystem root; a `--dest` starting with `~` is `INSTALL.DEST`).
+Source: OPERATOR (0.8.1). Status: shipped.
+Verified: `test_windows_portability.py::NoHomeDirectoryTests` (all), `Utf8OutputTests` (all).

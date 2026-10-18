@@ -8,10 +8,11 @@ the record schema, verdict table and anchor lifecycle are in
 records only the decisions and why; requirements are in
 [requirements.md](requirements.md).
 
-Statuses describe the system at the top of the 0.7.0 stack: `accepted` (built
-and in force), `partial` (built, with the named deviations), `planned`
-(decided, not built), or `superseded`. Dates are when the decision first
-landed or was made.
+Statuses describe the code on `main` at 0.8.1: `accepted` (built and in
+force), `partial` (built, with the named deviations), `planned` (decided, not
+built), `superseded` (replaced by the named ADR) or `retired` (withdrawn).
+Superseded and retired ADRs stay listed and their numbers are not reused.
+Dates are when the decision first landed or was made.
 
 ## ADR-001 Exact work in the script, judgment in the session and Jev
 
@@ -82,8 +83,11 @@ checked against disk. Otherwise a Dolt-backed `.beads/` selects `bd`, any other
 `.beads/` selects `br`, and none selects `br` (`write --init` may run
 `br init`). The skill never runs or recommends `bd init`. A mismatch is a typed
 error; there is no fallback to the other CLI. Both gate reviewers re-resolve
-and reject a mismatch. plan-anchor itself pins `br`. The installer (ADR-015)
-applies the same rules when it renders and writes the setting.
+and reject a mismatch. plan-anchor itself pins `br`. The settings file in
+effect is the nearest one at or above the repository (ADR-015); the disk check
+runs in every repository, including against an inherited setting. The
+installer (ADR-015) applies the same rules when it renders and writes the
+setting.
 
 Consequences: Anchor storage and both gates are tracker-neutral. REQ-021 to
 REQ-025.
@@ -106,13 +110,14 @@ installer removes them from earlier installs. REQ-027 to REQ-029 are retired.
 
 ## ADR-006 Python: stdlib, 3.9 floor, Result for expected failures
 
-Status: partial. Date: 2026-10-17.
+Status: accepted (was partial until 0.7.1). Date: 2026-10-17.
 
 Context: Scripts run inside agent sessions on any developer machine, and the
 calling agent needs a typed failure, not a traceback.
 
-Decision: Standard library only on Python 3.9+, except PyYAML for settings,
-imported lazily. Expected failures are returned as `Result[T, E]` from
+Decision: Standard library only on Python 3.9+, except PyYAML for settings
+(`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily;
+`jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and a `ToolError {code, message, action, data}`. Exceptions are
 for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
@@ -122,36 +127,45 @@ and PyYAML-floor job, and a 3.11 installer job. The installer alone runs on a
 
 Consequences: Every skill script and the installer return `Result` for
 expected failures and share `result.py`; `JudgeError` is a value, not an
-exception. Deviation: `anchor_runner_contract.py` converts only `OSError` and
-`UnicodeError` at its CLI boundary (`SCRIPT.IO`); any other unexpected
-exception is a traceback, not `SCRIPT.INTERNAL`. REQ-047, REQ-048, REQ-052.
+exception. Every CLI boundary, `anchor_runner_contract.py` included since
+0.7.1, maps an unexpected exception to `SCRIPT.INTERNAL`
+(`anchor_runner_contract.py` keeps `SCRIPT.IO` for unreadable input). The
+SessionStart hook and `plan_anchor_paths.py` are standard library only.
+REQ-047, REQ-048, REQ-052.
 
-## ADR-007 CLI contract: JSON envelope, exit 2 for errors
+## ADR-007 CLI contract: JSON envelope; exit 0 when it ran, 2 when it could not
 
-Status: partial. Date: 2026-10-17.
+Status: accepted (rewritten for 0.7.2; was partial). Date: 2026-10-17.
 
-Context: Agents branch on exit code and parse stdout; an error that looks like
-a negative answer, or a non-JSON error, sends them down the wrong path.
+Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
+meant "ran, negative answer", so a caller could not tell a failing gate from a
+broken tool by exit code alone, and some commands broke the rule (`validate`
+exited 1 with `success: false`; argparse errors were plain text).
 
-Decision: Every command prints `{success, data, error}`; errors carry
-`{code, message, recoverable, suggested_action}`. Exit 0 is success, exit 1 is
-only a completed run whose answer is negative (failing gate, lint warnings,
-fixture mismatch), and exit 2 is any error. A `judge` run in which some cells
-end as `verdict: error` (transport failures after the retries, a missing
-fixture entry, per-cell `PLAN.TOO_LARGE`) is a completed run with a negative
-result: the run file is written, the other cells keep their verdicts (ADR-001,
-REQ-011), each errored cell carries its typed `error`, and the gate does not
-pass, so it exits 1. Errors that stop the run (401, missing opt-in, invalid
-record, an oversize item refused before sending) exit 2. Agent launches report
-a typed failure reason.
+Decision: Every command prints `{success, data, error}`. Exit 0 means the
+command ran: `success: true`, and `data` carries the outcome, negative ones
+included (`judge` `summary.pass`, `check-fixtures` `pass`/`mismatches`,
+`validate` `valid`/`problems`, `lint` `clean`, `rubric` `pass`, `dedupe`
+`likely_duplicates`, `add`/`update` `added`/`updated` false with `refused`,
+`validate-fence` and `anchor_tuning_contract.py` `valid`/`violation`,
+`install.py --status` `state`). A `judge` run with `verdict: error` cells
+(transport failures after the retries, a missing fixture entry, a per-cell
+`PLAN.TOO_LARGE`) ran: the run file is written, other cells keep their
+verdicts, and `summary.pass` is false. Exit 2 means the tool could not do its
+job: `success: false`, `data: null` (or diagnostic data) and
+`error {code, message, recoverable, suggested_action}`, for bad arguments
+(`VALIDATION.INPUT`, argparse included), unreadable files, invalid settings,
+`POLICY.REMOTE_JUDGE_DISABLED`, 401, a missing dependency or `SCRIPT.INTERNAL`.
+`jev_judge.py` returns 130 on interrupt. No command exits 1. The repository's
+CI scripts (`check_version_sync.py` drift, `gen_install_data.py --check`
+staleness, `install_sc_compose_ci.py` failures) also exit 2, since their job
+is to fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
+stdin, stdout and stderr to UTF-8 at entry (`result.utf8_stdio()`), on every
+platform. Agent launches report a typed failure reason.
 
-Consequences: `anchor_tracker.py`, `anchor_tuning_contract.py`,
-`anchor_runner_contract.py`, `jev_judge.py` and `install.py` print the
-envelope and exit 2 on errors. Deviations: argparse usage errors in
-`jev_judge.py`, `anchor_runner_contract.py` and `anchor_tuning_contract.py`
-are plain text on stderr (exit 2, no envelope); `jev_judge.py validate` with
-problems prints a `success: false` envelope with `VALIDATION.ANCHORS` and
-exits 1. REQ-049 to REQ-051.
+Consequences: Callers read the outcome field, not the exit code; the gate
+agents, skill and references say so, and a test fails if shipped prompt text
+mentions exit 1. Scripting on exit 1 broke in 0.7.2. REQ-049 to REQ-051.
 
 ## ADR-008 Harness-specific agents behind one trusted runner
 
@@ -167,10 +181,13 @@ the tuner uses Opus, Sol or Grok at high effort. Claude and Codex launch with
 the Agent tool, Cursor with its Task tool. `anchor_runner_contract.py` resolves
 path, version, model and hash once, and every invocation and result is one
 fenced JSON object; agent inputs carry validated identifiers, never command
-strings. See §5 of the call-graph document.
+strings. Which `jev_judge.py` an agent may run is ADR-015's trust rule (the
+nearest per-folder install), which replaced the per-harness path allowlists
+and plugin-root fallbacks in 0.8.0. See §5 of the call-graph document.
 
-Consequences: Drift between harness copies fails CI. Agents contain no
-installation search. REQ-030 to REQ-034.
+Consequences: Drift between harness copies (`install/harness/<target>/` and
+the rendered agent bodies) fails CI. The registry and agent identity are
+resolved by the runner, not the agents. REQ-030 to REQ-034.
 
 ## ADR-009 Separate planning and code-review gates
 
@@ -262,12 +279,18 @@ YAML, snake_case, committed, never secrets, `schema_version: 1`, strict
 validation (unknown and duplicate keys and wrong types rejected), modeled on
 pydantic strictness but implemented with the standard library.
 
-Consequences: A typo never falls back to a default. `TYPESAFE_API_KEY` stays an
-environment variable because it is a secret. `install.py` writes
-`anchor_tracker` and keeps `install-lock.json` beside the settings. Several
-`PLAN_ANCHOR_*` environment variables are still read by `jev_judge.py`,
-contrary to ANC-005; ADR-016 moves the remote-judge opt-in, and the rest are
-candidates for CLI flags or settings. REQ-018, REQ-019.
+Consequences: A typo never falls back to a default. The keys are
+`schema_version`, `anchor_tracker` and `allow_remote_judge` (ADR-016); the
+nearest file at or above the repository wins whole (ADR-015).
+`TYPESAFE_API_KEY` stays an environment variable because it is a secret, and
+since 0.7.3 it is the only one the plugin reads for configuration: the
+`PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
+six in 0.7.3), their values are checked-in defaults with
+CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
+`--no-confirm`; the Jev endpoint has no override), and `USER` is read only as
+the default for `add --stated-by`. `install.py` writes `anchor_tracker` and
+`allow_remote_judge` and keeps `install-lock.json` beside the settings.
+REQ-018, REQ-019.
 
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
@@ -296,52 +319,115 @@ tracker are independent choices. `judge` keeps its size cap
 the skill; the plan's author owns it. `plan_source.py` and its contract are
 not shipped. REQ-021, REQ-057.
 
-## ADR-015 Installer: tracker-rendered copies with lock-file ownership
+## ADR-015 Installer: per-folder, tracker-rendered copies with lock-file ownership
 
-Status: accepted. Date: 2026-10-17.
+Status: accepted (0.7.0; rewritten for 0.8.0). Date: 2026-10-17.
 
 Context: Consumers vendored the skill by copying files, so upgrades left
 retired files behind, local edits were overwritten silently, and installed
-text named both trackers.
+text named both trackers. 0.7.0 added `install.py` but still shipped a
+committed `neutral` render that marketplace installs read, and the gates
+trusted a plugin-root copy of `jev_judge.py`.
 
-Decision: `uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker
-br|bd] [--target claude,codex,cursor] [--init-br] [--overwrite] [--dry-run]`.
-PEP 723 metadata supplies PyYAML and `sc-compose`; it pins Python 3.11
-because `sc-compose` 1.7.0 publishes 3.11 wheels only (the code runs on 3.9+).
-Tracker-naming files are `sc-compose` templates under `install/templates/`,
-rendered strictly as `br` or `bd`; the committed plugin tree is the `neutral`
-render, read by marketplace installs. `.sc/plan-anchor/install-lock.json`
-records version, tracker, targets and a sha256 per file. A rerun replaces or
-removes a file only when its bytes match the lock; files this version no
-longer ships are removed when unchanged; a modified, foreign or unowned file
-fails the whole install (`INSTALL.CONFLICT`) unless `--overwrite` moves it to
-`.backup/<UTC>/<path>`. A repository vendored before the lock is adopted once:
-a file is owned when its bytes match something an earlier version shipped
-(`install/legacy-owned.json`, generated from git history). Tracker choice uses
-ADR-004's rules; `bd` needs a Dolt-backed `.beads/`, a missing `.beads/` needs
-`--init-br`, and `bd init` is never run. Rerunning with another `--tracker`
-re-renders every locked target and updates the setting; it never migrates
-issue data. Every check runs before anything is written; `--dry-run` stops
-there.
+Decision:
+
+- **Plugin.** The marketplace plugin's only skill is `plan-anchor-installer`;
+  it registers no agents. The skill runs `uv run
+  "${CLAUDE_PLUGIN_ROOT}/install.py"` and everything it and the installer read
+  is inside the plugin directory. It first runs `install.py --dest <folder>
+  --status` (read-only; `data.state` is `not_installed`, `older`, `current` or
+  `newer`, and it stops on `newer`), asks the user once for a setting the
+  folder does not record (tracker; remote-judge consent), never infers
+  consent, and never runs or recommends `bd init`. Upgrading is rerunning it in
+  each install folder.
+- **Rendering.** Every prompt file (SKILL.md, each reference, the `.md`
+  assets, each agent body) is an `sc-compose` template under
+  `install/templates/`, rendered strictly for `br` or `bd`; there is no neutral
+  render and no committed rendered tree. Scripts, schemas, JSON assets and the
+  skill's runtime `templates/*.md.j2` are copied verbatim. Agent frontmatter and
+  registries live in `install/harness/<target>/`. PEP 723 metadata supplies
+  PyYAML and `sc-compose` >=1.7.0,<2 and pins Python 3.11 (the code runs on
+  3.9+).
+- **Destination.** `--dest` is any folder: a repository, a folder inside one,
+  or a parent folder of many repositories (a non-repository with no `.beads/`
+  needs `--tracker` or a settings file, else `TRACKER.REQUIRED`). Global
+  locations are refused with `INSTALL.DEST_GLOBAL`, exit 2: the home
+  directory, anything inside `~/.claude`, `~/.codex`, `~/.cursor`, `~/.agents`
+  (plugin caches included), `/etc/codex`, Claude Code's managed-settings
+  directories and the plugin directory. Each target writes
+  `<dest>/.<target>/skills/plan-anchoring/` (with that target's
+  `registry.yaml`, read by `anchor_runner_contract.py resolve --install-root`;
+  `--plugin-root` is an alias) and `<dest>/.<target>/agents/`.
+- **Trust rule.** `agent-preflight` and both gate agents accept only the
+  canonical `jev_judge.py` of the nearest install, found by walking up from
+  the working directory (from the repository root when the working directory is
+  outside it) and stopping before the home directory
+  (`plan_anchor_paths.py`). A copy in a global location, a farther install's
+  copy or the source tree is `VALIDATION.PATH`. This supersedes the plugin-root
+  and manifest fallbacks. With no determinable home directory the walk ends at
+  the filesystem root and the machine-wide directories are still refused.
+- **Settings.** The nearest `.sc/plan-anchor/settings.yaml` at or above the
+  repository wins whole; files are never merged. `resolve` reports
+  `settings_path` and `settings_inherited`. The disk rule still applies to an
+  inherited setting: `br` over a Dolt-backed `.beads/` is `TRACKER.MISMATCH`,
+  and the message names the file in effect.
+- **Ownership.** `.sc/plan-anchor/install-lock.json` records version,
+  tracker, targets and a sha256 per file. A rerun replaces or removes a file
+  only when its bytes match the lock; files this version no longer ships are
+  removed when unchanged; a modified, foreign or unowned file fails the whole
+  install (`INSTALL.CONFLICT`) unless `--overwrite` moves it to
+  `.backup/<UTC>/<path>`. A pre-lock vendored copy is adopted once by matching
+  bytes against `install/legacy-owned.json`, generated from git history.
+  Tracker choice uses ADR-004's rules; `bd` needs a Dolt-backed `.beads/`, a
+  repository with no `.beads/` needs `--init-br`, and `bd init` is never run.
+  Another `--tracker` re-renders every locked target and updates the setting
+  without migrating issue data. Every check runs before anything is written;
+  `--dry-run` stops there.
+- **SessionStart hook.** `hooks/hooks.json` registers `hooks/check_install.py`
+  (standard library) for SessionStart. It prints one line when the nearest
+  lock is older than the plugin (`plan-anchor <installed> installed,
+  <available> available: run plan-anchor-installer (<folder>)`) and is
+  otherwise silent (no lock, current or newer, unreadable). It writes nothing,
+  uses no network and always exits 0.
 
 Consequences: Upgrades are safe to rerun and remove `plan_source.py` and other
-retired files. A drifted committed file or stale `manifest.json` fails CI.
-REQ-059 to REQ-064.
+retired files. A drifted template version or a stale `legacy-owned.json` fails
+CI. Known limitations:
+
+- Claude Code and Codex document skill discovery only up to the git root, so a
+  parent-folder install may not be visible from a session started inside a
+  child repository. Not verified in a harness.
+- Installed prompts name one tracker, so a `bd` repository under a `br`
+  parent install needs its own install (nearest wins); otherwise the gate
+  agents return `VALIDATION.TRACKER` or `resolve` returns `TRACKER.MISMATCH`.
+- Open decision, not changed: Codex documents `.agents/skills` as its
+  repository skill directory, while `--target codex` installs `.codex/skills`.
+  The trust rule already accepts a copy under `.agents/`.
+
+REQ-059 to REQ-064, REQ-067 to REQ-072.
 
 ## ADR-016 Remote-judge consent is a committed setting
 
-Status: planned. Date: 2026-10-17.
+Status: accepted (built in 0.7.1; was planned). Date: 2026-10-17.
 
-Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it is
+Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it was
 the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
-`--allow-remote`, which is per machine, invisible in review and contrary to
+`--allow-remote`, which was per machine, invisible in review and contrary to
 ANC-005.
 
 Decision: Consent is `allow_remote_judge: true|false` in the committed
-`.sc/plan-anchor/settings.yaml`. When the key is absent, `judge` refuses; the
-user is asked once and the answer is recorded. Consent is never inferred from
-past runs. The installer takes `--allow-remote-judge` / `--no-remote-judge`.
-The environment variable and `--allow-remote` are removed.
+`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). Only `true` lets
+a live Jev call through (`judge`, `check-fixtures`, `dedupe --jev`, `rubric`,
+`add --rubric`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
+(exit 2, nothing sent), and the absent case's action says to ask the user once
+and record the answer with `plan_anchor_settings.py set allow_remote_judge
+true|false`. A non-bool is `SETTINGS.INVALID_REMOTE_JUDGE`. `--dry-run` and
+`--answers-file` need no answer. Agents never write the key; the skill and the
+installer skill ask once and never infer consent from past runs. The installer
+takes `--allow-remote-judge` / `--no-remote-judge`; a rerun without either
+keeps the recorded value. The environment variable is ignored and
+`--allow-remote` is a `VALIDATION.INPUT` usage error.
 
-Consequences: Consent is per repository and visible in review. Fail-closed
-behavior (REQ-015) is unchanged. REQ-018, REQ-065, REQ-066.
+Consequences: Consent is per repository (or per parent folder) and visible in
+review. Fail-closed behavior (REQ-015) is unchanged. This repository records
+`allow_remote_judge: true`. REQ-018, REQ-065, REQ-066.

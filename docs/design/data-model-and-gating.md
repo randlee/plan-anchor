@@ -116,7 +116,7 @@ One anchor, one item, three or four questions. Nothing else.
   "model": "jev-latest",
   "state": {
     "anchor": {"id": "ANC-012", "statement": "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code", "scope": "the runtime crates sprint and any bead that creates the core library implementation"},
-    "item": {"id": "bd-42", "title": "Sprint 2 runtime", "text": "# Sprint 2 runtime\n\n## Description\n..."}
+    "item": {"id": "ex-42", "title": "Sprint 2 runtime", "text": "# Sprint 2 runtime\n\n## Description\n..."}
   },
   "questions": {
     "relevant":     {"type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}},
@@ -179,12 +179,12 @@ Before editing on any failing verdict, the caller re-reads the exact text that w
 
 ```mermaid
 flowchart LR
-    R1["run: plan × bd-41"] --> M
-    R2["run: plan × bd-42"] --> M
-    R3["run: plan × bd-43"] --> M
+    R1["run: plan × ex-41"] --> M
+    R2["run: plan × ex-42"] --> M
+    R3["run: plan × ex-43"] --> M
     M["coverage: latest run per (gate, item)<br/>anchors × items matrix, columns gate:item"] --> U["uncovered anchors:<br/>no item is satisfied"]
-    Prev["run N-1 (bd-42)"] --> D["diff: changed / added / removed<br/>regressions, pass before → after"]
-    Next["run N (bd-42)"] --> D
+    Prev["run N-1 (ex-42)"] --> D["diff: changed / added / removed<br/>regressions, pass before → after"]
+    Next["run N (ex-42)"] --> D
 ```
 
 Jev cannot count or compare across beads, so "is ANC-012 satisfied anywhere" and "what did my edit change" are answered from run files by the script. An anchor that is `not_applicable` to every bead is reported as uncovered on purpose: either its scope is wrong or the plan lacks the bead that should carry it.

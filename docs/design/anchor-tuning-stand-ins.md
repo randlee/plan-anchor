@@ -1,7 +1,9 @@
 # Anchor tuning with fast-agent stand-ins (design draft)
 
 Status: draft. Anchor exclusions and the `Result` conversion are built
-(0.7.0); stand-ins, `follow-up` and the tuning prompt are not (ADR-011).
+(0.7.0); stand-ins, `follow-up`, `fast_agents` and the tuning prompt are not
+built on `main` at 0.8.1 (ADR-011), and the settings schema still rejects a
+`fast_agents` key.
 
 ## Goal
 
@@ -123,8 +125,9 @@ reports a typed reason.
   - Each result entry gains
     `stand_ins: [{profile, ok, session_id, cwd, answers, agrees_with_jev} | {profile, ok: false, error}]`.
   - Gating is unchanged.
-  - A stand-in error is an error, not a negative result: the run exits 2
-    with a typed error envelope (ADR-007).
+  - A stand-in launch failure means the tool could not do its job: the run
+    exits 2 with a typed error envelope (ADR-007), not exit 0 with a
+    negative result.
 - **`follow-up --run <file> --cell <anchor>:<item> --profile <name> --question <text> [--attach-item <file>]`**
   - Resumes that cell's own session.
   - Appends the turn to the run's transcript file.
