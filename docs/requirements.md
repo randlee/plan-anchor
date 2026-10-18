@@ -131,7 +131,17 @@ Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test
 Source: ANC-018. Status: shipped.
 Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_installation_doc_covers_br_and_selection`.
 
-REQ-027 to REQ-029 (plan sources) are retired with ADR-005 and ADR-014; the numbers are not reused.
+**REQ-027** The planning gate shall accept a Markdown phase plan and its copy in a tracker, and both shall normalize to the same ordered sprint items and byte-identical Jev request JSON.
+Source: ANC-016; INTENT "Success". Status: retired (0.7.0; superseded by ADR-014 and REQ-057, `plan_source.py` is no longer shipped).
+Verified: n/a (the tests were removed with `plan_source.py`).
+
+**REQ-028** Markdown plan review shall require tracker records only for an anchor root and its plan-question and dev-question children.
+Source: ANC-017. Status: retired (0.7.0; superseded by ADR-014 and REQ-057).
+Verified: n/a.
+
+**REQ-029** A phase plan shall be a phase index linking separate authoritative sprint documents; malformed structures, duplicate IDs, symlink escapes, copy drift and digest mismatches shall fail before delegation.
+Source: ANC-015; INTENT "Out of scope". Status: retired (0.7.0; superseded by ADR-014 and REQ-057).
+Verified: n/a.
 
 ## Agents and runner
 
