@@ -2,7 +2,7 @@
 name: sc-plan-anchor-development-review-workflow
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
   - version
@@ -19,4 +19,4 @@ Read `references/development-gate.md` and `references/triage-and-iteration.md`. 
 
 ### E. Report
 
-Reports quote the user's own words back (`references/report-format.md`). Post the markdown from `report --run <run> --format md` as a comment on the judged bead {% if tracker == "br" %}(`br comments add <id> --file <report.md>`){% elif tracker == "bd" %}(`bd comment <id> --file <report.md>`){% else %}(with the selected tracker: `br comments add <id> --file <report.md>` or `bd comment <id> --file <report.md>`){% endif %} or on the PR. Posting happens in the main session; agents never write to beads.
+Reports quote the user's own words back (`references/report-format.md`). Post the markdown from `report --run <run> --format md` as a comment on the judged bead {% if tracker == "br" %}(`br comments add <id> --file <report.md>`){% elif tracker == "bd" %}(`bd comment <id> --file <report.md>`){% endif %} or on the PR. Posting happens in the main session; agents never write to beads.

@@ -14,11 +14,13 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+
+from layout_support import rendered_skill
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
+SKILL = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring"
 SCRIPTS = SKILL / "scripts"
 CLEAN_ENV = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
 
@@ -69,7 +71,7 @@ class RunnerInternalBoundaryTests(unittest.TestCase):
         buf = io.StringIO()
         with mock.patch.object(contract, "resolve_agent", side_effect=RuntimeError("boom")), \
                 contextlib.redirect_stdout(buf):
-            code = contract.main(["resolve", "--plugin-root", str(PLUGIN), "--harness", "codex",
+            code = contract.main(["resolve", "--install-root", str(PLUGIN), "--harness", "codex",
                                   "--agent", next(iter(contract.AGENT_MODELS))])
         envelope = json.loads(buf.getvalue())
         self.assertEqual((code, envelope["success"], envelope["error"]["code"]), (2, False, "SCRIPT.INTERNAL"))
@@ -81,18 +83,22 @@ class RunnerInternalBoundaryTests(unittest.TestCase):
         self.assertEqual((code, json.loads(out)["error"]["code"]), (2, "SCRIPT.IO"))
 
 
-class NeutralRenderTests(unittest.TestCase):
-    """The committed tree is the tracker-neutral render; the br and bd renders are checked by test_install."""
+class RenderedTrackerTextTests(unittest.TestCase):
+    """Each render names its own tracker's commands (formerly checked on the committed neutral render)."""
 
-    def test_neutral_skill_has_no_bd_default(self):
-        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        self.assertNotIn("Tracker command examples use `bd`", text)
-        self.assertIn('Tracker commands below are written for the selected tracker, `"$ANCHOR_TRACKER"`', text)
+    def test_skill_has_no_other_tracker_default(self):
+        for tracker, other in (("br", "bd"), ("bd", "br")):
+            with self.subTest(tracker=tracker):
+                text = (rendered_skill(tracker) / "SKILL.md").read_text(encoding="utf-8")
+                self.assertNotIn(f"Tracker command examples use `{other}`", text)
 
-    def test_neutral_review_workflow_names_both_trackers(self):
-        text = (SKILL / "references" / "development-review-workflow.md").read_text(encoding="utf-8")
-        self.assertIn("br comments add <id> --file <report.md>", text)
-        self.assertIn("bd comment <id> --file <report.md>", text)
+    def test_review_workflow_names_the_rendered_tracker(self):
+        forms = {"br": "br comments add <id> --file <report.md>", "bd": "bd comment <id> --file <report.md>"}
+        for tracker, other in (("br", "bd"), ("bd", "br")):
+            with self.subTest(tracker=tracker):
+                text = (rendered_skill(tracker) / "references" / "development-review-workflow.md").read_text(encoding="utf-8")
+                self.assertIn(forms[tracker], text)
+                self.assertNotIn(forms[other], text)
 
 
 if __name__ == "__main__":

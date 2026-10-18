@@ -20,7 +20,7 @@ from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubri
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPTS = PLUGIN / "skills" / "plan-anchoring" / "scripts"
+SCRIPTS = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
 JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only adds a status command and its tests.\n" * 3

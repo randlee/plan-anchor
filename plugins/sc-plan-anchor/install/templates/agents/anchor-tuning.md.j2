@@ -2,7 +2,7 @@
 name: sc-plan-anchor-anchor-tuning
 version: 1.0.0
 format: markdown
-description: sc-plan-anchor install-time text; tracker is neutral (the committed plugin tree), br, or bd.
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
 required_variables:
   - tracker
 ---
@@ -122,7 +122,7 @@ text, a target pass rate, or any instruction to produce a pass.
    semantic score, confidence diagnostics, and source-neutral tuning-history
    digest. Unselected candidates remain evidence and never enter production
    review payloads. The history object must be canonical byte-identical JSON for
-{% if tracker == "br" %}   Markdown and `br`;{% elif tracker == "bd" %}   Markdown and `bd`;{% else %}   Markdown and `bd`/`br`;{% endif %} source paths, tracker IDs/revisions, timestamps,
+{% if tracker == "br" %}   Markdown and `br`;{% elif tracker == "bd" %}   Markdown and `bd`;{% endif %} source paths, tracker IDs/revisions, timestamps,
    credentials, and source kind belong only in local bindings outside it.
    Production questions contain no confidence target, verdict mapping, or
    instruction to classify other roles; each asks only its named judgment.

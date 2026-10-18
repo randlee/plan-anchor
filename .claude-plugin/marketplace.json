@@ -10,7 +10,7 @@
       "name": "sc-plan-anchor",
       "displayName": "Plan Anchor",
       "description": "Keep plans and delivered work aligned with user-approved anchors.",
-      "version": "0.7.2",
+      "version": "0.8.1",
       "author": {
         "name": "randlee"
       },

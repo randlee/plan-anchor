@@ -31,7 +31,7 @@ Not for: general code review, style review, or plan hardening without anchors. I
 
 ## Installation
 
-The fully qualified plugin is `sc-plan-anchor`; its skill remains `plan-anchoring`.
+**0.8.0 changes how plan-anchor is installed.** The marketplace plugin `sc-plan-anchor` now exposes one skill, `plan-anchor-installer`, which installs plan-anchor into a folder you choose. The `plan-anchoring` skill and its agents run from that install, not from the plugin, and every installed file names only your tracker (`br` or `bd`).
 
 Claude Code:
 
@@ -40,25 +40,21 @@ Claude Code:
 /plugin install sc-plan-anchor@plan-anchor
 ```
 
-Invoke it as `/sc-plan-anchor:plan-anchoring`. Claude loads the Sonnet/Opus agent definitions declared by the plugin manifest.
+Codex: `codex plugin marketplace add randlee/plan-anchor`, then open `/plugins` and install **Plan Anchor**. Cursor: in Customize, import this GitHub repository (it reads `.cursor-plugin/marketplace.json`), then install **Plan Anchor**.
 
-Codex:
-
-```bash
-codex plugin marketplace add randlee/plan-anchor
-```
-
-Then open `/plugins` and install **Plan Anchor**. Codex discovers the skill from the portable root manifest; the skill explicitly launches the bundled Luna/Sol definitions through the Agent tool because Codex does not auto-register plugin-owned custom agent profiles.
-
-Cursor: in Customize, import this GitHub repository (it reads `.cursor-plugin/marketplace.json`), then install **Plan Anchor**. The slash command is `/plan-anchoring`. Gate subagents pin Composer (`model: composer`). The tuner pins Grok at high effort with the version left off (`model: grok[effort=high]`). The skill launches them with the Task tool and does not pass a model override.
-
-To vendor the skill and agents into a repository instead (rendered for that repository's tracker, so the installed text names only `br` or only `bd`), run the installer from a checkout of this repository:
+Then ask the agent to install plan-anchor, or run the `plan-anchor-installer` skill. It reports the installed and available versions, asks once for any setting the folder does not record yet (the tracker, and whether plan text may be sent to TypeSafe), and runs:
 
 ```bash
-uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd] [--target claude,codex,cursor] [--allow-remote-judge | --no-remote-judge] [--dry-run]
+uv run "${CLAUDE_PLUGIN_ROOT}/install.py" --dest <folder> --tracker br|bd --allow-remote-judge|--no-remote-judge [--target claude,codex,cursor]
 ```
 
-Rerun it to upgrade or, with the other `--tracker`, to switch trackers (switching re-renders the text and updates `.sc/plan-anchor/settings.yaml`; it does not migrate issue data). It owns only the files recorded in `<repo>/.sc/plan-anchor/install-lock.json`, removes files a newer version no longer ships, and refuses to overwrite modified or foreign files without `--overwrite`. Details: `references/installation-and-troubleshooting.md`.
+From a checkout of this repository the same command is `uv run plugins/sc-plan-anchor/install.py ...`; `--status --dest <folder>` reports the versions without writing.
+
+- **Destination.** Any folder: a repository, or a parent folder holding several repositories (a folder that is not a repository needs `--tracker`). Global locations are refused with `INSTALL.DEST_GLOBAL` (exit 2): the home directory, `~/.claude`, `~/.codex`, `~/.cursor`, `~/.agents` and the plugin caches under them. The install writes `<folder>/.claude/`, `.codex/` and `.cursor/` (skill under `skills/plan-anchoring/`, agents under `agents/`) and `<folder>/.sc/plan-anchor/`.
+- **Which install runs.** The gates accept only the `jev_judge.py` of the nearest install, walking up from the working directory and stopping before the home directory; a copy in a global location is refused with `VALIDATION.PATH`. The nearest `.sc/plan-anchor/settings.yaml` wins, so a child repository can override a parent folder's tracker with its own file. A `br` setting over a Dolt-backed `.beads/` is still `TRACKER.MISMATCH`; a bd repository under a br parent install needs its own install, because the installed prompts name one tracker. Harnesses discover project skills from the session's directory up to the git root, so a parent-folder install is picked up by a session started in the parent folder.
+- **Upgrade.** Rerun the installer (or the skill) for the folder. It replaces only the files recorded in `<folder>/.sc/plan-anchor/install-lock.json`, removes files the new version no longer ships, and refuses to overwrite modified or foreign files without `--overwrite`. `--tracker` with the other value switches trackers: it re-renders the text and updates the settings file, and does not migrate issue data. On Claude Code (and Codex, once its hooks are trusted) a SessionStart hook prints one line when the nearest install is older than the plugin; it writes nothing and uses no network.
+
+Details: the installed `references/installation-and-troubleshooting.md` (source `plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/references/installation-and-troubleshooting.md.j2`).
 
 Hermes distribution is likewise deferred; it has no marketplace manifest and this package has not been landed in its registry.
 
@@ -68,14 +64,14 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Export it in the shell that launches Claude Code, Codex, or Cursor |
-| `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 plugins/sc-plan-anchor/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false`; commit the file. Absent or `false`: live calls are refused |
+| `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
 
 ## Quick start
 
 ```bash
-S=plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py
+S=.claude/skills/plan-anchoring/scripts/jev_judge.py   # in the install folder (or .codex/, .cursor/)
 A=doc/plan/phase-current/anchors.json
 
 # lock the first anchor (creates anchors.json) after the live Jev rubric, then render the human view
@@ -123,17 +119,17 @@ docs/
 .cursor-plugin/marketplace.json            Cursor marketplace catalog
 plugins/sc-plan-anchor/
 ├── plugin.json                            portable Agent Plugins manifest
-├── .claude-plugin/plugin.json             Claude manifest and agent registration
+├── .claude-plugin/plugin.json             Claude manifest
 ├── .codex-plugin/plugin.json              Codex compatibility/presentation overlay
-├── .cursor-plugin/plugin.json             Cursor manifest: skills and agents
-├── .claude/agents/                        Claude gates: Sonnet; independent tuner: Opus
-├── .codex/agents/                         Codex gates: Luna; independent tuner: Sol
-├── .cursor/agents/                        Cursor gates: Composer; independent tuner: Grok high
-└── skills/plan-anchoring/
-    ├── SKILL.md                           entry point and table of contents
-    ├── references/                        capture, gates, tuning, reports, Jev API
-    ├── scripts/jev_judge.py               deterministic core (see below)
-    └── assets/                            questions, templates, and realistic fixtures
+├── .cursor-plugin/plugin.json             Cursor manifest
+├── skills/plan-anchor-installer/SKILL.md  the only skill the plugin exposes
+├── hooks/                                 SessionStart version check (check_install.py)
+├── install.py                             the installer
+└── install/
+    ├── templates/skills/plan-anchoring/   SKILL.md, references (sc-compose templates), scripts, assets
+    ├── templates/agents/                  agent bodies (sc-compose templates)
+    ├── harness/{claude,codex,cursor}/     agent frontmatter and registry per harness
+    └── legacy-owned.json                  bytes of earlier releases, for pre-lock upgrades
 ```
 
 ### The script
@@ -169,8 +165,8 @@ and the latest 3.x. A smoke run with no key (exits 0 with `data.summary.pass: fa
 example gate fails by design):
 
 ```bash
-S=plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py
-X=plugins/sc-plan-anchor/skills/plan-anchoring/assets/examples
+S=plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/scripts/jev_judge.py
+X=plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/assets/examples
 python3 $S judge --anchors $X/anchors.example.json --gate plan --all --item-id smoke --item-file README.md \
   --answers-file $X/answers.fixture.json --out /tmp/anchor-smoke.json && python3 $S report --run /tmp/anchor-smoke.json --format md
 ```
@@ -185,7 +181,7 @@ Revision 0.4 builds on the first real multi-sprint use and 245 live Jev requests
 - Per-anchor question tuning is an independent higher-reasoning agent's job. It freezes an intent-derived oracle before its first Jev call and iterates wording without access to a plan-pass objective.
 - Near-threshold cells are re-asked once because run-to-run noise flipped one cell in six; every cell reports its leaning.
 
-The offline suite runs on Linux, macOS and Windows in CI. The repository is a Claude, Codex, and Cursor marketplace containing the `sc-plan-anchor` plugin; the shared skill body is packaged once, with separate harness-owned agent definitions.
+The offline suite runs on Linux, macOS and Windows in CI. The repository is a Claude, Codex, and Cursor marketplace containing the `sc-plan-anchor` plugin; the plugin ships the installer, which renders the shared skill body and separate harness-owned agent definitions into a folder.
 
 ## Versioning
 

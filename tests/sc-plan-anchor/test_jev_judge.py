@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring"
+SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 sys.path.insert(0, str(SKILL / "scripts"))
 import jev_judge as jj  # noqa: E402
 
@@ -160,7 +160,7 @@ class Judged:
         self.anchors_path = write(d, "anchors.json", record(*(anchors or [anchor()])))
         self.item_path = write(d, "item.txt", item_text)
         self.sleeps = []
-        argv = ["judge", "--anchors", self.anchors_path, "--gate", gate, "--all", "--item-id", "bd-42",
+        argv = ["judge", "--anchors", self.anchors_path, "--gate", gate, "--all", "--item-id", "ex-42",
                 "--item-file", self.item_path, "--run-dir", str(Path(d) / "runs"), *extra_args]
         with contextlib.ExitStack() as stack:
             stack.enter_context(env(**(LIVE_ENV if env_values is None else env_values)))
@@ -282,7 +282,7 @@ class QuoteTests(unittest.TestCase):
             self.assertEqual((code, out["success"], out["error"], out["data"]["valid"]), (0, True, None, False))
             self.assertIn("ANC-001: quote missing; record the user's verbatim words", out["data"]["problems"])
             # an old run file: the report falls back to the statement as the quote
-            run = make_run(d, "old-run.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed", "REQ-014": "contradicted"}, with_quote=False)
+            run = make_run(d, "old-run.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed", "REQ-014": "contradicted"}, with_quote=False)
             code, md = run_cli(["report", "--run", run, "--format", "md"])
             self.assertIn(f'Anchor: {STATEMENT} You said (planning session, Oct 9): "{STATEMENT}" This bead', md)
             self.assertIn(f"Anchor: {REQ_STATEMENT} This bead proposes", md)
@@ -300,7 +300,7 @@ class QuoteTests(unittest.TestCase):
             anchors_path = write(d, "a.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy crates.")
             with env():
-                code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", item, "--dry-run",
+                code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-1", "--item-file", item, "--dry-run",
                                      "--out", str(Path(d) / "dry.json")])
             self.assertEqual(out["data"]["requests"][0]["state"]["anchor"], {"id": "ANC-001", "statement": STATEMENT, "scope": "the runtime crates"})
             with env():
@@ -855,7 +855,7 @@ class KindTests(unittest.TestCase):
             code, md = run_cli(["report", "--run", j.run["path"], "--format", "md"])
             self.assertNotIn("ANC-002", md)  # non-failing: hidden without --all
             code, md = run_cli(["report", "--run", j.run["path"], "--format", "md", "--all"])
-            self.assertIn("> **bd-42 · ANC-002 · deterministic only** Anchor: Every sprint bead names one architectural layer (a)-(d). You said", md)
+            self.assertIn("> **ex-42 · ANC-002 · deterministic only** Anchor: Every sprint bead names one architectural layer (a)-(d). You said", md)
             # dry run sends nothing for it either
             j = Judged(d, Transport(), anchors=anchors, extra_args=["--dry-run"])
             self.assertEqual((len(j.run["requests"]), {r["anchor_id"]: r["verdict"] for r in j.run["results"]}), (1, {"ANC-001": None, "ANC-002": "deterministic_only"}))
@@ -882,7 +882,7 @@ class KindTests(unittest.TestCase):
             item = write(d, "item.txt", "Sprint 2 copies the crates and adds no dependencies.")
             answers = write(d, "answers.json", {"*": plan_answers(comp="no", conf="no")})
             with env():
-                code, out = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", item, "--answers-file", answers,
+                code, out = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "ex-1", "--item-file", item, "--answers-file", answers,
                                      "--run-dir", str(Path(d) / "runs")])
             self.assertEqual((code, out["data"]["results"][0]["verdict"], out["data"]["results"][0]["kind"]), (0, "satisfied", "prohibition"))
             with env():
@@ -905,7 +905,7 @@ class LeaningTests(unittest.TestCase):
             item = write(d, "item.txt", "Sprint 2 copies the crates.")
             answers = write(d, "answers.json", {"ANC-001": plan_answers(comp="no", comp_p=0.45), "ANC-002": plan_answers()})
             with env():
-                code, out = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", item, "--answers-file", answers,
+                code, out = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "ex-1", "--item-file", item, "--answers-file", answers,
                                      "--run-dir", str(Path(d) / "runs")])
             run = out["data"]
             by_id = {r["anchor_id"]: r for r in run["results"]}
@@ -919,7 +919,7 @@ class LeaningTests(unittest.TestCase):
             self.assertIn("the anchor or the bead may be underspecified. (leaning: not_addressed)", md)
             self.assertIn(">   Low: compliance `addressed` answered no at 0.45.", md)
             self.assertNotIn("(leaning: satisfied)", md)
-            old = make_run(d, "old.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "underspecified"})  # pre-leaning run files
+            old = make_run(d, "old.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "underspecified"})  # pre-leaning run files
             code, md = run_cli(["report", "--run", old, "--format", "md"])
             self.assertNotIn("leaning", md)
 
@@ -967,14 +967,15 @@ class ConfirmTests(unittest.TestCase):
             j = Judged(d, t, extra_args=["--no-confirm"])
         self.assertEqual((j.result["attempts"], j.result["verdict"]), (1, "satisfied"))
         self.assertNotIn("near_threshold", j.result)
-        with tempfile.TemporaryDirectory() as d:  # env off, flag on wins
+        with tempfile.TemporaryDirectory() as d:  # the retired PLAN_ANCHOR_CONFIRM_NEAR=0 has no effect; only --no-confirm turns it off
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.65)})
             j = Judged(d, t, env_values=dict(LIVE_ENV, PLAN_ANCHOR_CONFIRM_NEAR="0"))
-            self.assertEqual(j.result["attempts"], 1)
+            self.assertEqual(j.result["attempts"], 2)
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.65)})
-            j = Judged(d, t, env_values=dict(LIVE_ENV, PLAN_ANCHOR_CONFIRM_NEAR="0"), extra_args=["--confirm-near-threshold"])
+            j = Judged(d, t, extra_args=["--confirm-near-threshold"])
             self.assertEqual(j.result["attempts"], 2)
         self.assertTrue(jj.confirm_enabled(jj.argparse.Namespace()))
+        self.assertTrue(jj.confirm_enabled(jj.argparse.Namespace(confirm_near_threshold=True)))
         self.assertFalse(jj.confirm_enabled(jj.argparse.Namespace(no_confirm=True, confirm_near_threshold=True)))
         # a prohibition does not re-judge for a near-threshold compliance answer it ignores
         self.assertFalse(jj.near_threshold(plan_answers(comp_p=0.62), PLAN_ROLES, 0.6, "prohibition"))
@@ -1218,7 +1219,7 @@ class OverrideTests(unittest.TestCase):
             anchors_path = write(d, "anchors.json", record(a))
             fixture_path = write(d, "answers.json", {"*": plan_answers()})
             item_path = write(d, "item.txt", "Sprint 2 copies the legacy crates.")
-            common = ["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "bd-42", "--item-file", item_path,
+            common = ["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", item_path,
                       "--answers-file", fixture_path, "--dry-run"]
             code, out = run_cli(common + ["--out", str(Path(d) / "r1.json")])
             self.assertEqual(out["data"]["requests"][0]["questions"]["addressed"]["instructions"], "from record")
@@ -1255,7 +1256,7 @@ class JudgeFixtureTests(unittest.TestCase):
 
     def judge(self, *extra):
         with env():
-            return run_cli(["judge", "--anchors", self.anchors, "--gate", "plan", "--item-id", "bd-42", "--item-file", self.item,
+            return run_cli(["judge", "--anchors", self.anchors, "--gate", "plan", "--item-id", "ex-42", "--item-file", self.item,
                             "--run-dir", self.run_dir, *extra])
 
     def test_fixture_answers_by_id_and_star(self):
@@ -1273,7 +1274,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(run["results"][0]["attempts"], 1)
         self.assertEqual(run["path"], run["run_path"])
         self.assertTrue(Path(run["path"]).is_file())
-        self.assertTrue(Path(run["path"]).name.startswith("plan-") and Path(run["path"]).name.endswith("-bd-42.json"))
+        self.assertTrue(Path(run["path"]).name.startswith("plan-") and Path(run["path"]).name.endswith("-ex-42.json"))
 
     def test_passing_run_exits_zero(self):
         fixture = write(self.d.name, "answers.json", {"*": plan_answers()})
@@ -1323,7 +1324,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertTrue(run["dry_run"])
         self.assertFalse(run["summary"]["pass"])
         self.assertEqual(len(run["requests"]), 2)
-        self.assertEqual(run["requests"][0]["state"]["item"]["id"], "bd-42")
+        self.assertEqual(run["requests"][0]["state"]["item"]["id"], "ex-42")
         self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})
         self.assertEqual(run["totals"]["requests"], 2)
         self.assertEqual(run["totals"]["bytes"], sum(len(jj.encode_body(b)) for b in run["requests"]))
@@ -1347,7 +1348,7 @@ class JudgeFixtureTests(unittest.TestCase):
 
     def test_read_item_truncates_and_rejects_empty(self):
         long_item = write(self.d.name, "long.txt", "x" * 100)
-        ns = jj.argparse.Namespace(item_file=long_item, item_id="bd-1", item_title="", max_item_chars=40)
+        ns = jj.argparse.Namespace(item_file=long_item, item_id="ex-1", item_title="", max_item_chars=40)
         item = ok(jj.read_item(ns))
         self.assertTrue(item["truncated"])
         self.assertTrue(item["text"].startswith("x" * 40) and item["text"].endswith(jj.TRUNCATION_MARKER))
@@ -1411,60 +1412,146 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(json.loads(rendered), {"message": "key=<redacted>", "header": "Bearer <redacted>"})
 
 
+def run_installed(script, argv, cwd, home=None):
+    """Run an installed copy of jev_judge.py as an agent does (a process, from ``cwd``); (exit code, JSON)."""
+    import subprocess
+    environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+    if home is not None:
+        environment["HOME"] = environment["USERPROFILE"] = str(home)  # expanduser("~") on POSIX / Windows
+    proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
+                          capture_output=True, text=True, encoding="utf-8")
+    try:
+        return proc.returncode, json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise AssertionError(f"no JSON envelope: {proc.stdout!r} {proc.stderr!r}")
+
+
 class AgentPreflightTests(unittest.TestCase):
+    """agent-preflight runs from the installed copy the trust rule selects, as the gate agents run it."""
+
+    def install(self, folder, target="claude"):
+        from layout_support import installed_scripts
+        return installed_scripts(Path(folder), target) / "jev_judge.py"
+
     def test_normalises_workspace_paths_and_identifiers(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "repo"
+            root = (Path(d) / "repo").resolve()
             root.mkdir()
+            script = self.install(root)
             anchors = write(root, "doc/plan/phase-current/anchors.json", record(anchor()))
             evidence = write(root, "reports/sprint.md", "done")
-            code, out = run_cli([
-                "agent-preflight", "--workspace-root", str(root), "--script", jj.__file__,
+            code, out = run_installed(script, [
+                "agent-preflight", "--workspace-root", str(root), "--script", str(script),
                 "--anchors", "doc/plan/phase-current/anchors.json", "--run-dir", "doc/plan/phase-current/runs",
                 "--evidence", evidence, "--identifier", "proj-s2", "--pr-number", "12",
                 "--correlation-id", "proj-s2:dev",
-            ])
-            self.assertEqual(code, 0)
+            ], cwd=root)
+            self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["anchors_path"], str(Path(anchors).resolve()))
             self.assertEqual(out["data"]["evidence"], [str(Path(evidence).resolve())])
             self.assertEqual(out["data"]["work_key"], "proj-s2_dev")
 
     def test_rejects_paths_outside_the_workspace(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "repo"
+            root = (Path(d) / "repo").resolve()
             root.mkdir()
+            script = self.install(root)
             anchors = write(root, "anchors.json", record(anchor()))
             outside = write(d, "secret.txt", "do not upload")
-            code, out = run_cli([
-                "agent-preflight", "--workspace-root", str(root), "--script", jj.__file__,
+            code, out = run_installed(script, [
+                "agent-preflight", "--workspace-root", str(root), "--script", str(script),
                 "--anchors", anchors, "--evidence", outside,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("outside the repository", out["error"]["message"])
 
     def test_rejects_unsafe_ids_pr_numbers_and_script_mismatch(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
+            root = Path(d).resolve()
+            script = self.install(root)
             anchors = write(root, "anchors.json", record(anchor()))
-            base = ["agent-preflight", "--workspace-root", str(root), "--script", jj.__file__, "--anchors", anchors]
-            code, out = run_cli([*base, "--identifier", "../../secret"])
+            base = ["agent-preflight", "--workspace-root", str(root), "--script", str(script), "--anchors", anchors]
+            code, out = run_installed(script, [*base, "--identifier", "../../secret"], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.ID"))
-            code, out = run_cli([*base, "--pr-number", "12oops"])
+            code, out = run_installed(script, [*base, "--pr-number", "12oops"], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.ID"))
             other = write(root, "other.py", "pass")
-            code, out = run_cli([
+            code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", other, "--anchors", anchors,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
-            code, out = run_cli([
+            code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", str(root / "missing.py"),
                 "--anchors", anchors,
-            ])
+            ], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("script could not be resolved", out["error"]["message"])
-            code, out = run_cli([*base, "--run-dir", write(root, "not-a-directory", "x")])
+            code, out = run_installed(script, [*base, "--run-dir", write(root, "not-a-directory", "x")], cwd=root)
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
             self.assertIn("run directory is not a directory", out["error"]["message"])
+
+
+class ScriptTrustRuleTests(unittest.TestCase):
+    """The nearest per-folder install at or above the working directory is trusted; nothing global is."""
+
+    def preflight(self, script, repo, cwd=None, home=None):
+        anchors = write(repo, "anchors.json", record(anchor()))
+        return run_installed(script, ["agent-preflight", "--workspace-root", str(repo), "--script", str(script),
+                                      "--anchors", anchors], cwd=cwd or repo, home=home)
+
+    def test_a_parent_folder_install_is_trusted_from_a_child_repository(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d).resolve() / "work"
+            repo = parent / "child"
+            (repo / "src").mkdir(parents=True)
+            script = installed_scripts(parent, "codex") / "jev_judge.py"
+            code, out = self.preflight(script, repo, cwd=repo / "src")
+            self.assertEqual((code, out["success"]), (0, True), out)
+
+    def test_only_the_nearest_install_is_trusted(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d).resolve() / "work"
+            repo = parent / "child"
+            repo.mkdir(parents=True)
+            far = installed_scripts(parent) / "jev_judge.py"
+            installed_scripts(repo, "cursor")
+            code, out = self.preflight(far, repo)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn(f"the nearest install is {repo}", out["error"]["message"])
+
+    def test_a_copy_only_in_the_global_claude_dir_is_refused(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d).resolve() / "home"
+            repo = home / "src" / "repo"
+            repo.mkdir(parents=True)
+            script = installed_scripts(home, "claude") / "jev_judge.py"  # ~/.claude/skills/plan-anchoring
+            code, out = self.preflight(script, repo, home=home)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn("global location", out["error"]["message"])
+            self.assertIn(str(home / ".claude"), out["error"]["message"])
+
+    def test_the_walk_stops_before_home(self):
+        from layout_support import installed_scripts
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d).resolve() / "home"
+            repo = home / "repo"
+            repo.mkdir(parents=True)
+            script = installed_scripts(home, "agents") / "jev_judge.py"  # ~/.agents/skills/plan-anchoring
+            code, out = self.preflight(script, repo, home=home)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+
+    def test_the_source_tree_is_not_an_install(self):
+        """The old marketplace and source-checkout fallbacks are gone: the plugin's own copy is not trusted."""
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d).resolve()
+            anchors = write(repo, "anchors.json", record(anchor()))
+            code, out = run_cli(["agent-preflight", "--workspace-root", str(repo), "--script", jj.__file__,
+                                 "--anchors", anchors])
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.PATH"))
+            self.assertIn("untrusted plan-anchoring script", out["error"]["message"])
 
 
 class TransportPolicyTests(unittest.TestCase):
@@ -1725,7 +1812,7 @@ class PlanSizeTests(unittest.TestCase):
             t = Transport()
             j = Judged(d, t, item_text="# T\n\n## Description\n\n" + "prose " * 5000)
         self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-        self.assertTrue(j.out["error"]["message"].startswith("plan bead bd-42 is 30021 characters after long code was reduced to signatures (30021 prose, 0 code; by section: Description 30017, (title) 5); "))
+        self.assertTrue(j.out["error"]["message"].startswith("plan bead ex-42 is 30021 characters after long code was reduced to signatures (30021 prose, 0 code; by section: Description 30017, (title) 5); "))
         self.assertIn("the plan-gate item budget is --max-item-chars 24000", j.out["error"]["message"])
         action = j.out["error"]["suggested_action"]
         self.assertIn("judge its cause", action)
@@ -1735,7 +1822,7 @@ class PlanSizeTests(unittest.TestCase):
         self.assertEqual(t.bodies, [])
         # the error carries the same numbers `shape` would report
         data = j.out["data"]
-        self.assertEqual(data["item_id"], "bd-42")
+        self.assertEqual(data["item_id"], "ex-42")
         self.assertEqual(data["size"], jj.size_breakdown("# T\n\n## Description\n\n" + "prose " * 5000))
         self.assertEqual((data["shape"]["sections"], data["shape"]["prose_chars"], data["shape"]["chars_before_reduction"]),
                          ({"title": 5, "description": 30017}, 30021, 30021))
@@ -1804,12 +1891,12 @@ class ShapeTests(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory()
         beads = Path(self.d.name) / "beads"
-        self.b1 = write(beads, "bd-1.json", bead_json("bd-1", "Sprint 1 runtime crates", description="Copy the crates per ANC-001 and REQ-014.\n\n" + SHARED_PARAGRAPH,
+        self.b1 = write(beads, "ex-1.json", bead_json("ex-1", "Sprint 1 runtime crates", description="Copy the crates per ANC-001 and REQ-014.\n\n" + SHARED_PARAGRAPH,
                                                       design="Design:\n\n" + RUST_BLOCK + "\n\n- copy\n- delete atm_* modules\n- run tests",
                                                       acceptance="| Check | Result |\n| --- | --- |\n| builds | yes |\n| tests | yes |", kind="sprint"))
-        self.b2 = write(beads, "bd-2.json", bead_json("bd-2", "CLI thinning", description=SHARED_PARAGRAPH + "\n\nFixes #42 and ADR-0007; see github.com/acme/repo/issues/77.",
+        self.b2 = write(beads, "ex-2.json", bead_json("ex-2", "CLI thinning", description=SHARED_PARAGRAPH + "\n\nFixes #42 and ADR-0007; see github.com/acme/repo/issues/77.",
                                                       acceptance="1. prints JSON\n2. exits 0"))
-        self.b3 = write(beads, "bd-3.json", bead_json("bd-3", "Docs pass", notes="Short note without any reference to an issue or an anchor."))
+        self.b3 = write(beads, "ex-3.json", bead_json("ex-3", "Docs pass", notes="Short note without any reference to an issue or an anchor."))
         self.anchors = write(self.d.name, "anchors.json", record(anchor(), anchor("ANC-002", statement="The CLI layer only parses arguments and prints JSON.", quote="keep the CLI thin")))
 
     def tearDown(self):
@@ -1835,31 +1922,31 @@ class ShapeTests(unittest.TestCase):
         code, out = run_cli(["shape", "--beads", str(Path(self.d.name) / "beads"), "--anchors", self.anchors])
         self.assertEqual(code, 0, out)
         data = out["data"]
-        self.assertEqual([b["id"] for b in data["beads"]], ["bd-1", "bd-2", "bd-3"])
+        self.assertEqual([b["id"] for b in data["beads"]], ["ex-1", "ex-2", "ex-3"])
         by_id = {b["id"]: b for b in data["beads"]}
-        self.assertTrue(by_id["bd-1"]["is_sprint"] and not by_id["bd-2"]["is_sprint"])
-        self.assertEqual(by_id["bd-2"]["references"], {"github": ["#42", "#77"], "req": [], "adr": ["ADR-0007"], "anc": []})
-        self.assertEqual((by_id["bd-3"]["no_issue_reference"], by_id["bd-3"]["sections"]), (True, {"title": 13, "notes": 70}))
-        self.assertNotIn("paragraphs", by_id["bd-1"])
+        self.assertTrue(by_id["ex-1"]["is_sprint"] and not by_id["ex-2"]["is_sprint"])
+        self.assertEqual(by_id["ex-2"]["references"], {"github": ["#42", "#77"], "req": [], "adr": ["ADR-0007"], "anc": []})
+        self.assertEqual((by_id["ex-3"]["no_issue_reference"], by_id["ex-3"]["sections"]), (True, {"title": 13, "notes": 70}))
+        self.assertNotIn("paragraphs", by_id["ex-1"])
         self.assertEqual(len(data["duplicated_paragraphs"]), 1)
         dup = data["duplicated_paragraphs"][0]
-        self.assertEqual((dup["paragraph"], dup["chars"], dup["beads"]), (SHARED_PARAGRAPH.lower()[:80], len(SHARED_PARAGRAPH), ["bd-1", "bd-2"]))
+        self.assertEqual((dup["paragraph"], dup["chars"], dup["beads"]), (SHARED_PARAGRAPH.lower()[:80], len(SHARED_PARAGRAPH), ["ex-1", "ex-2"]))
         t = data["totals"]
         self.assertEqual((t["beads"], t["sprints"], t["fenced_blocks"], t["no_issue_reference"], t["duplicated_paragraphs"]), (3, 1, 1, 1, 1))
         self.assertEqual(t["chars"], sum(b["chars"] for b in data["beads"]))
         self.assertLess(t["chars_after_reduction"], t["chars"])
-        self.assertEqual((by_id["bd-1"]["unknown_anchor_references"], data["anchors_not_referenced"]), ([], ["ANC-002"]))
+        self.assertEqual((by_id["ex-1"]["unknown_anchor_references"], data["anchors_not_referenced"]), ([], ["ANC-002"]))
 
     def test_sprint_detection_and_plan_gate_columns(self):
         self.assertTrue(jj.is_sprint_bead({"issue_type": "sprint"}, "x", "y"))
         self.assertTrue(jj.is_sprint_bead({"labels": ["stage:sprint", "area:cli"]}, "x", "y"))
         self.assertTrue(jj.is_sprint_bead({}, "proj-h-3", "h-3: CLI thinning"))
-        self.assertTrue(jj.is_sprint_bead({}, "bd-77", "h-14: last one"))
+        self.assertTrue(jj.is_sprint_bead({}, "ex-77", "h-14: last one"))
         self.assertTrue(jj.is_sprint_bead({}, "proj-h-3", "anything"))
-        self.assertTrue(jj.is_sprint_bead({}, "bd-1", "Sprint 1 runtime"))
-        self.assertFalse(jj.is_sprint_bead({"labels": ["stage:plan"]}, "bd-1", "CLI thinning"))
-        self.assertFalse(jj.is_sprint_bead({}, "bd-1", "h3 has no dash so it is a plain title"))
-        self.assertFalse(jj.is_sprint_bead({}, "bd-1", "Follow-up 3: the space before the number breaks the prefix rule"))
+        self.assertTrue(jj.is_sprint_bead({}, "ex-1", "Sprint 1 runtime"))
+        self.assertFalse(jj.is_sprint_bead({"labels": ["stage:plan"]}, "ex-1", "CLI thinning"))
+        self.assertFalse(jj.is_sprint_bead({}, "ex-1", "h3 has no dash so it is a plain title"))
+        self.assertFalse(jj.is_sprint_bead({}, "ex-1", "Follow-up 3: the space before the number breaks the prefix rule"))
         beads = [{"id": f"proj-h-{n}", "title": f"h-{n}: sprint {n}", "description": "d" * 100, "design": "x" * 300, "acceptance_criteria": "a" * 50} for n in range(1, 4)]
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "children.json", beads)
@@ -1878,18 +1965,18 @@ class ShapeTests(unittest.TestCase):
     def test_shape_other_sources_markdown_and_errors(self):
         children = write(self.d.name, "children.json", [json.loads(Path(self.b2).read_text())[0], json.loads(Path(self.b3).read_text())[0]])
         code, out = run_cli(["shape", "--children-json", children, "--show-json", self.b1, "--max-code-lines", "20"])
-        self.assertEqual((code, [b["id"] for b in out["data"]["beads"]]), (0, ["bd-2", "bd-3", "bd-1"]))
+        self.assertEqual((code, [b["id"] for b in out["data"]["beads"]]), (0, ["ex-2", "ex-3", "ex-1"]))
         self.assertEqual(out["data"]["beads"][2]["code_reduced"], {"blocks": 0, "lines": 0})
         self.assertNotIn("anchors_not_referenced", out["data"])
         code, md = run_cli(["shape", "--beads", str(Path(self.d.name) / "beads"), "--format", "md"])
         self.assertEqual(code, 0)
         self.assertIn("| Bead | Title | Chars | Desc chars | AC chars | Design ratio | After reduction | Code lines | Prose lines | Blocks | Bullets | Table rows | References |", md)
-        self.assertIn("| bd-1 | Sprint 1 runtime crates | ", md)
-        self.assertRegex(md, r"\| bd-3 \| Docs pass \| 82 \| 0 \| 0 \| 0\.00 \| 82 \| ")
-        self.assertIn("| bd-3 | Docs pass | ", md)
+        self.assertIn("| ex-1 | Sprint 1 runtime crates | ", md)
+        self.assertRegex(md, r"\| ex-3 \| Docs pass \| 82 \| 0 \| 0 \| 0\.00 \| 82 \| ")
+        self.assertIn("| ex-3 | Docs pass | ", md)
         self.assertIn("REQ-014, ANC-001 |", md)
         self.assertIn("### Paragraphs repeated across beads", md)
-        self.assertIn(f"| {SHARED_PARAGRAPH.lower()[:80]} | {len(SHARED_PARAGRAPH)} | bd-1, bd-2 |", md)
+        self.assertIn(f"| {SHARED_PARAGRAPH.lower()[:80]} | {len(SHARED_PARAGRAPH)} | ex-1, ex-2 |", md)
         self.assertIn("3 bead(s), 1 sprint(s)", md)
         code, out = run_cli(["shape", "--beads", str(Path(self.d.name) / "nowhere")])
         self.assertEqual((code, out["error"]["code"]), (2, "INPUT.MISSING"))
@@ -2038,8 +2125,8 @@ class RetireUpdateTests(unittest.TestCase):
     def test_promote_and_set_beads(self):
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "anchors.json", record(anchor()))
-            code, out = run_cli(["set-beads", "--anchors", path, "--id", "ANC-001", "--anchor-bead", "bd-10", "--plan-bead", "bd-11"])
-            self.assertEqual(out["data"]["beads"], {"anchor": "bd-10", "plan_questions": "bd-11", "dev_questions": None})
+            code, out = run_cli(["set-beads", "--anchors", path, "--id", "ANC-001", "--anchor-bead", "ex-10", "--plan-bead", "ex-11"])
+            self.assertEqual(out["data"]["beads"], {"anchor": "ex-10", "plan_questions": "ex-11", "dev_questions": None})
             code, out = run_cli(["promote", "--anchors", path, "--id", "ANC-001", "--adr", "ADR-0007"])
             a = json.loads(Path(path).read_text())["anchors"][0]
             self.assertEqual((a["status"], a["promoted_to"], a["version"]), ("promoted", "ADR-0007", 2))
@@ -2048,17 +2135,17 @@ class RetireUpdateTests(unittest.TestCase):
             self.assertIn(f"Anchor: {STATEMENT}\n\n> {QUOTE}\n\nSaid by the user, planning session, 2026-10-09.", md)
             self.assertIn("| ID | Status | Summary | Stated |", md)
             self.assertIn("promoted to ADR-0007", md)
-            self.assertIn("Beads: anchor `bd-10`", md)
+            self.assertIn("Beads: anchor `ex-10`", md)
 
 
 class ComposeItemTests(unittest.TestCase):
-    SHOW = [{"id": "bd-42", "title": "Sprint 2 runtime", "description": "Copy the legacy crates.", "acceptance_criteria": "- builds\n- tests pass", "notes": ""}]
+    SHOW = [{"id": "ex-42", "title": "Sprint 2 runtime", "description": "Copy the legacy crates.", "acceptance_criteria": "- builds\n- tests pass", "notes": ""}]
 
     def test_sections_in_order_and_empty_omitted(self):
         composed = ok(jj.compose_item_text(self.SHOW))
         self.assertEqual(composed["sections"], ["Description", "Acceptance criteria"])
         self.assertEqual(composed["text"], "# Sprint 2 runtime\n\n## Description\n\nCopy the legacy crates.\n\n## Acceptance criteria\n\n- builds\n- tests pass\n")
-        self.assertEqual((composed["item_id"], composed["chars"]), ("bd-42", len(composed["text"])))
+        self.assertEqual((composed["item_id"], composed["chars"]), ("ex-42", len(composed["text"])))
         self.assertEqual(ok(jj.compose_item_text(self.SHOW[0]))["title"], "Sprint 2 runtime")  # bare object accepted
         with_design = dict(self.SHOW[0], design="Keep the trait object-safe.")
         self.assertEqual(ok(jj.compose_item_text(with_design))["sections"], ["Description", "Design", "Acceptance criteria"])
@@ -2072,7 +2159,7 @@ class ComposeItemTests(unittest.TestCase):
         self.assertEqual(caught.code, "VALIDATION.INPUT")
         with tempfile.TemporaryDirectory() as d:
             show = write(d, "show.json", [full])
-            children = write(d, "children.json", [{"id": "bd-43", "title": "t", "status": "closed", "close_reason": "r"}])
+            children = write(d, "children.json", [{"id": "ex-43", "title": "t", "status": "closed", "close_reason": "r"}])
             code, out = run_cli(["compose-item", "--show-json", show, "--children-json", children, "--for", "plan"])
             self.assertEqual((code, out["data"]["sections"]), (0, ["Description", "Acceptance criteria"]))
             self.assertEqual(out["data"]["composition"], {"for": "plan", "sections_requested": ["description", "acceptance_criteria"], "children": False})
@@ -2092,22 +2179,22 @@ class ComposeItemTests(unittest.TestCase):
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
 
     def test_closed_children_appended(self):
-        children = [{"id": "bd-43", "title": "copy crates", "status": "closed", "close_reason": "done in 3f2a"},
-                    {"id": "bd-44", "title": "open one", "status": "open"},
-                    {"id": "bd-45", "title": "no reason", "status": "closed"}]
+        children = [{"id": "ex-43", "title": "copy crates", "status": "closed", "close_reason": "done in 3f2a"},
+                    {"id": "ex-44", "title": "open one", "status": "open"},
+                    {"id": "ex-45", "title": "no reason", "status": "closed"}]
         composed = ok(jj.compose_item_text(self.SHOW, children))
         self.assertEqual(composed["sections"][-1], "Closed beads")
-        self.assertIn("## Closed beads\n\n- bd-43 copy crates: done in 3f2a\n- bd-45 no reason:\n", composed["text"])
-        self.assertNotIn("bd-44", composed["text"])
+        self.assertIn("## Closed beads\n\n- ex-43 copy crates: done in 3f2a\n- ex-45 no reason:\n", composed["text"])
+        self.assertNotIn("ex-44", composed["text"])
         self.assertEqual(ok(jj.compose_item_text(self.SHOW, []))["sections"], ["Description", "Acceptance criteria"])
 
     def test_cli_out_file_stdin_and_bad_shapes(self):
         with tempfile.TemporaryDirectory() as d:
             show = write(d, "show.json", self.SHOW)
-            children = write(d, "children.json", [{"id": "bd-43", "title": "t", "status": "closed", "close_reason": "r"}])
+            children = write(d, "children.json", [{"id": "ex-43", "title": "t", "status": "closed", "close_reason": "r"}])
             out_path = str(Path(d) / "item.txt")
             code, out = run_cli(["compose-item", "--show-json", show, "--children-json", children, "--out", out_path])
-            self.assertEqual((code, out["data"]["path"], out["data"]["item_id"], out["data"]["title"]), (0, out_path, "bd-42", "Sprint 2 runtime"))
+            self.assertEqual((code, out["data"]["path"], out["data"]["item_id"], out["data"]["title"]), (0, out_path, "ex-42", "Sprint 2 runtime"))
             self.assertEqual(out["data"]["sections"], ["Description", "Acceptance criteria", "Closed beads"])
             self.assertEqual(Path(out_path).read_text(), ok(jj.compose_item_text(self.SHOW, json.loads(Path(children).read_text())))["text"])
             self.assertNotIn("text", out["data"])
@@ -2116,11 +2203,11 @@ class ComposeItemTests(unittest.TestCase):
             self.assertTrue(out["data"]["text"].startswith("# Sprint 2 runtime"))
             with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(self.SHOW))):
                 code, out = run_cli(["compose-item", "--show-json", "-"])
-            self.assertEqual(out["data"]["item_id"], "bd-42")
+            self.assertEqual(out["data"]["item_id"], "ex-42")
             two = write(d, "two.json", self.SHOW + self.SHOW)
             code, out = run_cli(["compose-item", "--show-json", two])
             self.assertEqual((code, out["error"]["code"]), (2, "INPUT.MALFORMED"))
-            not_array = write(d, "obj.json", {"id": "bd-43"})
+            not_array = write(d, "obj.json", {"id": "ex-43"})
             code, out = run_cli(["compose-item", "--show-json", show, "--children-json", not_array])
             self.assertEqual((code, out["error"]["code"]), (2, "INPUT.MALFORMED"))  # children must be an array
 
@@ -2151,23 +2238,23 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
 class ReportTests(unittest.TestCase):
     def test_line_format_quotes_the_statement(self):
         with tempfile.TemporaryDirectory() as d:
-            path = make_run(d, "r.json", "plan", "bd-42", "2026-10-09T18:30:00+00:00",
+            path = make_run(d, "r.json", "plan", "ex-42", "2026-10-09T18:30:00+00:00",
                             {"ANC-012": "not_addressed", "REQ-014": "contradicted", "ANC-013": "satisfied", "ANC-014": "not_applicable"}, title="Sprint 2 runtime")
             code, md = run_cli(["report", "--run", path, "--format", "md"])
             self.assertEqual(code, 0)
-            self.assertIn("## Anchor gate: plan · bd-42 - Sprint 2 runtime", md)
-            self.assertIn("Run `plan-2026-10-09T18:30:00+00:00-bd-42`, model `jev-1.13.0`, threshold 0.6.", md)
-            self.assertIn(f'> **bd-42 · ANC-012 · not addressed** Anchor: {STATEMENT} You said (planning session, Oct 9): "{QUOTE}." This bead does not carry the directive forward.', md)
+            self.assertIn("## Anchor gate: plan · ex-42 - Sprint 2 runtime", md)
+            self.assertIn("Run `plan-2026-10-09T18:30:00+00:00-ex-42`, model `jev-1.13.0`, threshold 0.6.", md)
+            self.assertIn(f'> **ex-42 · ANC-012 · not addressed** Anchor: {STATEMENT} You said (planning session, Oct 9): "{QUOTE}." This bead does not carry the directive forward.', md)
             # register text: the quote is the statement, so the says-clause is skipped
-            self.assertIn(f'> **bd-42 · REQ-014 · contradicted** Anchor: {REQ_STATEMENT} This bead proposes something the anchor rules out.', md)
+            self.assertIn(f'> **ex-42 · REQ-014 · contradicted** Anchor: {REQ_STATEMENT} This bead proposes something the anchor rules out.', md)
             self.assertNotIn("says:", md)
             self.assertNotIn("ANC-013", md)
             code, out = run_cli(["report", "--run", path])
             self.assertEqual((out["data"]["pass"], out["data"]["failing"]), (False, ["ANC-012", "REQ-014"]))
             self.assertEqual(out["data"]["markdown"], md.rstrip("\n") + "\n")  # print() adds one newline
             code, md_all = run_cli(["report", "--run", path, "--format", "md", "--all"])
-            self.assertIn("> **bd-42 · ANC-013 · satisfied**", md_all)
-            self.assertIn("> **bd-42 · ANC-014 · not applicable**", md_all)
+            self.assertIn("> **ex-42 · ANC-013 · satisfied**", md_all)
+            self.assertIn("> **ex-42 · ANC-014 · not applicable**", md_all)
 
     def test_register_names_dev_checks_and_errors(self):
         self.assertEqual(jj.quote_statement("ends with ?"), '"ends with ?"')
@@ -2190,7 +2277,7 @@ class ReportTests(unittest.TestCase):
 
     def test_all_passing_message_and_bad_inputs(self):
         with tempfile.TemporaryDirectory() as d:
-            path = make_run(d, "r.json", "plan", "bd-1", "2026-10-09T18:30:00+00:00", {"ANC-001": "satisfied"})
+            path = make_run(d, "r.json", "plan", "ex-1", "2026-10-09T18:30:00+00:00", {"ANC-001": "satisfied"})
             code, md = run_cli(["report", "--run", path, "--format", "md"])
             self.assertIn("All judged anchors are satisfied or not applicable.", md)
             code, out = run_cli(["report", "--run", ""])
@@ -2206,32 +2293,32 @@ class CoverageTests(unittest.TestCase):
     def test_uncovered_latest_wins_and_dry_runs_ignored(self):
         with tempfile.TemporaryDirectory() as d:
             runs = Path(d) / "runs"
-            make_run(runs, "a1.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
-            make_run(runs, "a2.json", "plan", "bd-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "not_applicable", "ANC-003": "satisfied"})
-            make_run(runs, "b.json", "plan", "bd-2", "2026-10-09T10:30:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
-            make_run(runs, "dev.json", "dev", "bd-2", "2026-10-09T12:00:00+00:00", {"ANC-002": "satisfied"})
-            dry = json.loads(Path(make_run(runs, "dry.json", "plan", "bd-3", "2026-10-09T13:00:00+00:00", {"ANC-002": "satisfied"})).read_text())
+            make_run(runs, "a1.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
+            make_run(runs, "a2.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "not_applicable", "ANC-003": "satisfied"})
+            make_run(runs, "b.json", "plan", "ex-2", "2026-10-09T10:30:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
+            make_run(runs, "dev.json", "dev", "ex-2", "2026-10-09T12:00:00+00:00", {"ANC-002": "satisfied"})
+            dry = json.loads(Path(make_run(runs, "dry.json", "plan", "ex-3", "2026-10-09T13:00:00+00:00", {"ANC-002": "satisfied"})).read_text())
             dry["dry_run"] = True
             write(runs, "dry.json", dry)
             write(runs, "junk.json", "{not json")
             write(runs, "other.json", {"schema": "x"})
             code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan"])
             data = out["data"]
-            self.assertEqual((code, data["items"], data["runs_considered"]), (0, ["bd-1", "bd-2"], 2))
-            self.assertEqual(data["matrix"]["ANC-001"], {"bd-1": "not_addressed", "bd-2": "satisfied"})  # a2 (later) replaced a1
+            self.assertEqual((code, data["items"], data["runs_considered"]), (0, ["ex-1", "ex-2"], 2))
+            self.assertEqual(data["matrix"]["ANC-001"], {"ex-1": "not_addressed", "ex-2": "satisfied"})  # a2 (later) replaced a1
             self.assertEqual(data["uncovered_anchors"], ["ANC-002"])  # not_applicable everywhere is uncovered on purpose
-            self.assertEqual(data["contradicted"], {"ANC-003": ["bd-2"]})
+            self.assertEqual(data["contradicted"], {"ANC-003": ["ex-2"]})
             code, md = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--format", "md"])
-            self.assertIn("| Anchor | bd-1 | bd-2 | Covered |", md)
+            self.assertIn("| Anchor | ex-1 | ex-2 | Covered |", md)
             self.assertIn("| ANC-001 | not addressed | satisfied | yes |", md)
             self.assertIn("| ANC-002 | not applicable | not applicable | no |", md)
             self.assertIn("Uncovered anchors (no item satisfies them): ANC-002", md)
             code, out = run_cli(["coverage", "--runs", str(runs)])
-            self.assertEqual(out["data"]["items"], ["dev:bd-2", "plan:bd-1", "plan:bd-2"])  # gates never overwrite each other
-            self.assertEqual(out["data"]["matrix"]["ANC-002"]["dev:bd-2"], "satisfied")
+            self.assertEqual(out["data"]["items"], ["dev:ex-2", "plan:ex-1", "plan:ex-2"])  # gates never overwrite each other
+            self.assertEqual(out["data"]["matrix"]["ANC-002"]["dev:ex-2"], "satisfied")
             self.assertNotIn("ANC-002", out["data"]["uncovered_anchors"])
             code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "dev", "--format", "json"])
-            self.assertEqual(out["data"]["items"], ["bd-2"])
+            self.assertEqual(out["data"]["items"], ["ex-2"])
             code, out = run_cli(["coverage", "--runs", str(Path(d) / "nowhere")])
             self.assertEqual((code, out["error"]["code"]), (2, "RUNS.NONE"))
 
@@ -2239,9 +2326,9 @@ class CoverageTests(unittest.TestCase):
 class DiffTests(unittest.TestCase):
     def test_regressions_added_removed(self):
         with tempfile.TemporaryDirectory() as d:
-            prev = make_run(d, "p.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00",
+            prev = make_run(d, "p.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00",
                             {"ANC-001": "satisfied", "ANC-002": "not_addressed", "ANC-003": "satisfied", "ANC-004": "contradicted", "ANC-005": "satisfied"})
-            nxt = make_run(d, "n.json", "plan", "bd-1", "2026-10-09T11:00:00+00:00",
+            nxt = make_run(d, "n.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00",
                            {"ANC-001": "contradicted", "ANC-002": "satisfied", "ANC-003": "error", "ANC-004": "error", "ANC-006": "satisfied"})
             nxt_data = json.loads(Path(nxt).read_text())
             nxt_data["item"]["chars"] = 34
@@ -2260,13 +2347,13 @@ class DiffTests(unittest.TestCase):
             self.assertNotIn("expected", data)
             self.assertEqual(data["added"], [{"anchor_id": "ANC-006", "verdict": "satisfied"}])
             self.assertEqual(data["removed"], [{"anchor_id": "ANC-005", "verdict": "satisfied"}])
-            self.assertEqual((data["pass_before"], data["pass_after"], data["item"]), (False, False, "bd-1"))
+            self.assertEqual((data["pass_before"], data["pass_after"], data["item"]), (False, False, "ex-1"))
             self.assertEqual(data["item_size"], {"before_chars": 10, "after_chars": 34, "delta_chars": 24, "grew": True})
 
     def test_diff_prefers_pre_reduction_size_and_reports_cuts(self):
         with tempfile.TemporaryDirectory() as d:
-            prev = make_run(d, "p.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed"})
-            nxt = make_run(d, "n.json", "plan", "bd-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "satisfied"})
+            prev = make_run(d, "p.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed"})
+            nxt = make_run(d, "n.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "satisfied"})
             p, n = json.loads(Path(prev).read_text()), json.loads(Path(nxt).read_text())
             p["item"].update({"chars": 800, "chars_before_reduction": 1200})
             n["item"].update({"chars": 900, "chars_before_reduction": 1100})
@@ -2279,8 +2366,8 @@ class DiffTests(unittest.TestCase):
 
     def test_expected_verdicts_tell_corrections_from_regressions(self):
         with tempfile.TemporaryDirectory() as d:
-            prev = make_run(d, "p.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "satisfied", "ANC-003": "not_addressed", "ANC-004": "satisfied"})
-            nxt = make_run(d, "n.json", "plan", "bd-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "not_addressed", "ANC-003": "not_addressed", "ANC-004": "satisfied"})
+            prev = make_run(d, "p.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "satisfied", "ANC-003": "not_addressed", "ANC-004": "satisfied"})
+            nxt = make_run(d, "n.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "not_addressed", "ANC-003": "not_addressed", "ANC-004": "satisfied"})
             expected = write(d, "expected.json", {"ANC-001": "not_addressed", "ANC-002": "satisfied", "ANC-003": "satisfied", "ANC-004": "satisfied", "ANC-009": "not_applicable"})
             code, out = run_cli(["diff", "--prev", prev, "--next", nxt, "--expected", expected])
             self.assertEqual(code, 0, out)
@@ -2300,9 +2387,9 @@ class DiffTests(unittest.TestCase):
 
     def test_mismatched_runs_refused(self):
         with tempfile.TemporaryDirectory() as d:
-            a = make_run(d, "a.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
-            b = make_run(d, "b.json", "dev", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
-            c = make_run(d, "c.json", "plan", "bd-2", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
+            a = make_run(d, "a.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
+            b = make_run(d, "b.json", "dev", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
+            c = make_run(d, "c.json", "plan", "ex-2", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
             code, out = run_cli(["diff", "--prev", a, "--next", b])
             self.assertEqual((code, out["error"]["code"]), (2, "RUNS.MISMATCH"))
             code, out = run_cli(["diff", "--prev", a, "--next", c])
@@ -2351,23 +2438,17 @@ class ErrorHandlingTests(unittest.TestCase):
             code, out = run_cli(["validate", "--anchors", "x"])
         self.assertEqual((code, out["canceled"]), (130, True))
 
-    def test_env_numbers_are_checked(self):
-        with env(PLAN_ANCHOR_CONFIDENCE_THRESHOLD="high"):
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf), self.assertRaises(SystemExit) as cm:
-                jj._env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float)
-            self.assertEqual(cm.exception.code, 2)
-            self.assertEqual(json.loads(buf.getvalue())["error"]["code"], "VALIDATION.INPUT")
-        with env(PLAN_ANCHOR_CONFIDENCE_THRESHOLD="0.7"):
-            self.assertEqual(jj._env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float), 0.7)
-        with env():
-            self.assertEqual(jj._env_number("PLAN_ANCHOR_CONFIDENCE_THRESHOLD", 0.6, float), 0.6)
-        with env(PLAN_ANCHOR_MAX_ITEM_CHARS="12.5"):
-            bad = jj.parse_env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int)
-            self.assertIsInstance(bad, jj.Err)
-            self.assertEqual((bad.error.code, bad.error.message), ("VALIDATION.INPUT", "PLAN_ANCHOR_MAX_ITEM_CHARS='12.5' is not a number"))
-        with env(PLAN_ANCHOR_MAX_ITEM_CHARS="  "):
-            self.assertEqual(jj.parse_env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int), jj.Ok(24000))
+    def test_numeric_flags_are_checked(self):
+        for flag, value in (("--threshold", "high"), ("--max-item-chars", "12.5"), ("--max-code-lines", "lots")):
+            with env():
+                code, out = run_cli(["judge", "--anchors", "x", "--gate", "plan", "--all", "--item-id", "ex-1", "--item-text", "t",
+                                     "--dry-run", flag, value])
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), flag)
+            self.assertIn(f"argument {flag}: invalid", out["error"]["message"])
+        self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD, jj.DEFAULT_MAX_ITEM_CHARS, jj.DEFAULT_MAX_CODE_LINES),
+                         ("jev-latest", 0.6, 24000, 8))
+        self.assertEqual(jj.JEV_URL, "https://api.typesafe.ai/v1/systemone")
+        self.assertFalse(hasattr(jj, "parse_env_number") or hasattr(jj, "_env_number"))
 
     def test_exit_codes(self):
         # A command that ran exits 0 whatever its answer; only a failure to run is nonzero, and never 1.

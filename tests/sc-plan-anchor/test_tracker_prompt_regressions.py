@@ -4,10 +4,11 @@ from pathlib import Path
 import re
 import unittest
 
+from layout_support import SKILL_SRC, TRACKERS, rendered_agent, rendered_skill
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
 HARNESSES = ("claude", "codex", "cursor")
 TEXT_SUFFIXES = {".md", ".py", ".j2", ".json", ".yaml", ".yml", ".txt"}
 NEGATION = re.compile(r"\b(never|not|no|outside)\b", re.IGNORECASE)
@@ -32,19 +33,28 @@ class TrackerPromptRegressionTests(unittest.TestCase):
         self.assertEqual(offenders, [], "bd init must never be recommended")
 
     def test_tracker_script_never_builds_a_bd_init_argv(self):
-        source = (SKILL / "scripts" / "anchor_tracker.py").read_text(encoding="utf-8")
+        source = (SKILL_SRC / "scripts" / "anchor_tracker.py").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"""["']bd["']\s*,\s*["']init["']""")
         self.assertIn('argv = [cli_path, "init"]', source)
         self.assertIn('if tracker != "br":', source)
 
     def test_hardcoded_tracker_assignment_is_gone(self):
-        paths = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
-        paths += [PLUGIN / f".{h}" / "agents" / n for h in HARNESSES for n in ("anchor-plan-review.md", "anchor-sprint-review.md")]
+        paths = []
+        for tracker in TRACKERS:
+            skill = rendered_skill(tracker)
+            paths += [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]
+            paths += [rendered_agent(tracker, h, n) for h in HARNESSES for n in ("anchor-plan-review.md", "anchor-sprint-review.md")]
         for path in paths:
-            with self.subTest(path=path.name):
+            with self.subTest(path=path.relative_to(path.parents[3]).as_posix()):
                 self.assertNotRegex(path.read_text(encoding="utf-8"), r"ANCHOR_TRACKER=(bd|br)\b")
 
     def test_planning_gate_obtains_tracker_from_resolve(self):
+        for tracker in TRACKERS:
+            with self.subTest(tracker=tracker):
+                self._planning_gate_obtains_tracker_from_resolve(tracker)
+
+    def _planning_gate_obtains_tracker_from_resolve(self, tracker):
+        SKILL = rendered_skill(tracker)
         skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn('python3 "$T" resolve', skill)
         self.assertIn("jq -r '.data.tracker // empty'", skill)
@@ -54,14 +64,14 @@ class TrackerPromptRegressionTests(unittest.TestCase):
                 self.assertIn("anchor_tracker.py resolve", (SKILL / "references" / name).read_text(encoding="utf-8"))
         for harness in HARNESSES:
             with self.subTest(harness=harness):
-                prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-plan-review.md").read_text(encoding="utf-8")
+                prompt = rendered_agent(tracker, harness, "anchor-plan-review.md").read_text(encoding="utf-8")
                 self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
 
     def test_development_gate_resolves_tracker_and_takes_caller_text(self):
         """REQ-057 / ADR-014: the development gate selects the tracker like the planning gate and judges the caller's text."""
-        for harness in HARNESSES:
-            with self.subTest(harness=harness):
-                prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-sprint-review.md").read_text(encoding="utf-8")
+        for tracker, harness in ((t, h) for t in TRACKERS for h in HARNESSES):
+            with self.subTest(tracker=tracker, harness=harness):
+                prompt = rendered_agent(tracker, harness, "anchor-sprint-review.md").read_text(encoding="utf-8")
                 self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
                 self.assertIn('when `anchor_tracker` was supplied and differs', prompt)
                 self.assertIn('"$ANCHOR_TRACKER" show "$qb" --json', prompt)
@@ -74,7 +84,7 @@ class TrackerPromptRegressionTests(unittest.TestCase):
         self.assertIn("REQ-057", entry)
 
     def test_installation_doc_covers_br_and_selection(self):
-        doc = (SKILL / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")
+        doc = (rendered_skill("br") / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")
         for needle in ("br init", "br sync --flush-only", "beads.db", "0.7.x", "PyYAML",
                        "python3 -m pip install pyyaml", ".sc/plan-anchor/settings.yaml",
                        "Dolt provisioning is outside this skill", "## Anchor tracker selection"):

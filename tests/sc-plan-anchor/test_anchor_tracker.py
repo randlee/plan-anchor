@@ -14,7 +14,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring" / "scripts"
+SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
 TRACKER_SCRIPT = SCRIPTS / "anchor_tracker.py"
 
 if str(SCRIPTS) not in sys.path:

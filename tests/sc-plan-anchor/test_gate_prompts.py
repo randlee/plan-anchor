@@ -12,12 +12,13 @@ import sys
 import tempfile
 import unittest
 
+from layout_support import SKILL_SRC, TRACKERS, rendered_agent, rendered_skill
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
-SCRIPT = SKILL / "scripts" / "jev_judge.py"
-EXAMPLE_ANCHORS = SKILL / "assets" / "examples" / "anchors.example.json"
+SCRIPT = SKILL_SRC / "scripts" / "jev_judge.py"
+EXAMPLE_ANCHORS = SKILL_SRC / "assets" / "examples" / "anchors.example.json"
 HARNESSES = ("claude", "codex", "cursor")
 GATES = ("anchor-plan-review.md", "anchor-sprint-review.md")
 RETIRED = re.compile(r"plan_source|plan-source|descriptor|discover-|item_path|SOURCE\.DESCRIPTOR|sprint_id|bead_id")
@@ -41,9 +42,11 @@ Store anchors with their exclusions in the record.
 
 
 def prompts():
-    for harness in HARNESSES:
-        for name in GATES:
-            yield harness, name, (PLUGIN / f".{harness}" / "agents" / name).read_text(encoding="utf-8")
+    """Every gate prompt as installed, for each tracker and harness (fresh renders)."""
+    for tracker in TRACKERS:
+        for harness in HARNESSES:
+            for name in GATES:
+                yield f"{tracker}/{harness}", name, rendered_agent(tracker, harness, name).read_text(encoding="utf-8")
 
 
 class GatePromptTests(unittest.TestCase):
@@ -71,15 +74,21 @@ class GatePromptTests(unittest.TestCase):
                 self.assertNotRegex(prompt, r"ANCHOR_TRACKER=(bd|br)\b")
 
     def test_sprint_review_passes_excluded_cells_through(self):
-        for harness in HARNESSES:
-            prompt = (PLUGIN / f".{harness}" / "agents" / "anchor-sprint-review.md").read_text(encoding="utf-8")
+        for harness, name, prompt in prompts():
+            if name != "anchor-sprint-review.md":
+                continue
             with self.subTest(harness=harness):
                 self.assertIn("An `excluded` cell (`summary.excluded`) was not judged and passes", prompt)
 
     def test_plan_source_is_not_shipped(self):
-        self.assertFalse((SKILL / "scripts" / "plan_source.py").exists())
-        self.assertFalse((SKILL / "references" / "plan-source-contract.md").exists())
-        shipped = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
+        self.assertFalse((SKILL_SRC / "scripts" / "plan_source.py").exists())
+        self.assertFalse((SKILL_SRC / "references" / "plan-source-contract.md.j2").exists())
+        shipped = []
+        for tracker in TRACKERS:
+            skill = rendered_skill(tracker)
+            self.assertFalse((skill / "scripts" / "plan_source.py").exists())
+            self.assertFalse((skill / "references" / "plan-source-contract.md").exists())
+            shipped += [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]
         for path in shipped:
             with self.subTest(path=path.name):
                 self.assertNotRegex(path.read_text(encoding="utf-8"), r"plan_source|plan-source-contract|discover-(markdown|tracker)")

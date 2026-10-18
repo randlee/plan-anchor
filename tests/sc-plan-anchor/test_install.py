@@ -1,4 +1,4 @@
-"""plugins/sc-plan-anchor/install.py: rendering, ownership, upgrades, tracker switching, envelope.
+"""plugins/sc-plan-anchor/install.py: rendering, destinations, ownership, upgrades, tracker switching, envelope.
 
 Tests that render need the sc-compose wheel (CPython 3.11 wheels on PyPI) and
 PyYAML; without them they skip with the reason. CI's installer job sets
@@ -6,6 +6,7 @@ PLAN_ANCHOR_REQUIRE_SC_COMPOSE=1, which turns those skips into failures.
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import importlib
 import importlib.util
@@ -24,7 +25,6 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
 TEMPLATES = PLUGIN / "install" / "templates"
 INSTALLER = PLUGIN / "install.py"
 GENERATOR = ROOT / "scripts" / "gen_install_data.py"
@@ -82,11 +82,20 @@ def sha(data):
 
 # ---------------------------------------------------------------- single-tracker text
 
-BD_WORD = re.compile(r"(?<![\w./<-])bd(?![\w-])")
-BR_WORD = re.compile(r"(?<![\w./<-])br(?![\w-])")
-# The install reference documents choosing and switching trackers, so every
-# rendering names both; it is the one file exempt from the single-tracker rule.
-MIXED_BY_DESIGN = {"references/installation-and-troubleshooting.md"}
+# Whole-word tracker names, including example ids such as bd-42; a path segment
+# (scripts/bd_x.py, .beads/) is not a mention.
+BD_WORD = re.compile(r"(?<![\w./<-])bd(?!\w)")
+BR_WORD = re.compile(r"(?<![\w./<-])br(?!\w)")
+# Installed files that may name both trackers, each with its reason. Every
+# other installed file (prompt text and data alike) names only the selected one.
+MIXED_BY_DESIGN = {
+    "references/installation-and-troubleshooting.md": "the install guide explains choosing and switching trackers",
+    "scripts/*.py": "code, not prompt text: the scripts support both trackers at run time",
+}
+
+
+def mixed_by_design(rel):
+    return any(fnmatch.fnmatchcase(rel, pattern) for pattern in MIXED_BY_DESIGN)
 
 
 def other_tracker_mentions(text, tracker):
@@ -166,32 +175,52 @@ class RenderingTests(unittest.TestCase):
         self.assertIsInstance(out, inst.Ok, getattr(out, "error", None))
         return out.value
 
-    def test_committed_tree_is_the_neutral_render(self):
-        for rel in sorted(self.package.skill_templates):
-            text = self.render(TEMPLATES / "skills" / "plan-anchoring" / f"{rel}.j2", "neutral")
-            self.assertEqual((SKILL / rel).read_text(encoding="utf-8"), text,
-                             f"skills/plan-anchoring/{rel} differs from its template's neutral render")
-        for name in sorted(self.package.agent_templates):
-            body = self.render(TEMPLATES / "agents" / f"{name}.j2", "neutral")
-            for target in inst.TARGETS:
-                committed = (PLUGIN / f".{target}" / "agents" / name).read_text(encoding="utf-8")
-                front, _ = inst._split_frontmatter(committed)
-                self.assertEqual(committed, front + body, f".{target}/agents/{name} differs from the neutral render")
+    def test_plugin_ships_only_the_installer_skill_and_no_rendered_tree(self):
+        self.assertEqual(sorted(p.name for p in (PLUGIN / "skills").iterdir()), ["plan-anchor-installer"])
+        for gone in (".claude", ".codex", ".cursor", "skills/plan-anchoring", "install/manifest.json"):
+            self.assertFalse((PLUGIN / gone).exists(), gone)
+        with self.assertRaises(ValueError):  # there is no neutral render any more
+            inst.render_template(self.sc, TEMPLATES / "skills" / "plan-anchoring" / "SKILL.md.j2", "neutral", VERSION)
+
+    def test_every_prompt_source_is_a_template(self):
+        """Every .md the skill installs is rendered for one tracker; none is copied verbatim."""
+        copied_md = [rel for rel in self.package.skill if rel.endswith(".md") and rel not in self.package.rendered]
+        self.assertEqual(copied_md, [])
+        source = TEMPLATES / "skills" / "plan-anchoring"
+        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md"}
+        expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
+        self.assertEqual(set(self.package.rendered), expected)
+        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 22)
+        self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
-        for template in sorted(TEMPLATES.rglob("*.j2")):
+        templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
+        self.assertEqual(len(templates), 3 + 3 + 22)  # agents, SKILL.md + 2 assets templates, references
+        for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
+
+    def test_runtime_templates_are_copied_verbatim(self):
+        """The skill's own templates/*.md.j2 are sc-compose inputs at run time, not install templates."""
+        source = TEMPLATES / "skills" / "plan-anchoring"
+        runtime = sorted(t.relative_to(source).as_posix() for t in TEMPLATES.rglob("*.j2") if not inst.is_install_template(t))
+        self.assertEqual(runtime, [f"templates/{n}.md.j2" for n in ("agent-invocation", "anchor-tuning-result",
+                                                                     "anchor-tuning-review-feedback",
+                                                                     "anchor-tuning-testability-request",
+                                                                     "anchor-tuning-tune-request")])
+        for rel in runtime:
+            for tracker in inst.TRACKERS:
+                self.assertEqual(self.renderer.skill_file(rel, tracker, "claude").value, (source / rel).read_bytes(), rel)
 
     def test_br_and_bd_installs_name_one_tracker(self):
         for tracker in inst.TRACKERS:
             for target in inst.TARGETS:
                 for rel in self.package.skill:
-                    if not rel.endswith(".md") or rel in MIXED_BY_DESIGN:
+                    if mixed_by_design(rel):
                         continue
-                    text = self.renderer.skill_file(rel, tracker).value.decode("utf-8")
+                    text = self.renderer.skill_file(rel, tracker, target).value.decode("utf-8")
                     self.assertEqual(other_tracker_mentions(text, tracker), [], f"{tracker} render of {rel}")
-                for name in self.package.agents[target]:
+                for name in self.package.agents:
                     text = self.renderer.agent_file(target, name, tracker).value.decode("utf-8")
                     self.assertEqual(other_tracker_mentions(text, tracker), [], f"{tracker} .{target}/agents/{name}")
 
@@ -208,8 +237,8 @@ class RenderingTests(unittest.TestCase):
                         self.assertNotIn("PREREQ.TRACKER", text)
 
     def test_tracker_command_forms(self):
-        br = self.renderer.skill_file("references/bead-layout.md", "br").value.decode("utf-8")
-        bd = self.renderer.skill_file("references/bead-layout.md", "bd").value.decode("utf-8")
+        br = self.renderer.skill_file("references/bead-layout.md", "br", "claude").value.decode("utf-8")
+        bd = self.renderer.skill_file("references/bead-layout.md", "bd", "claude").value.decode("utf-8")
         self.assertIn("br create", br)
         self.assertIn("br update", br)
         self.assertIn("bd create", bd)
@@ -221,11 +250,15 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(other_tracker_mentions("use bd here\n", "br"))
         self.assertTrue(other_tracker_mentions("run br ready\n", "bd"))
         self.assertTrue(other_tracker_mentions("the gate requires bd and a Dolt-backed `.beads/`\n", "br"))
-        self.assertEqual(other_tracker_mentions("IDs look like bd-42 in scripts/bd_x.py\n", "br"), [])
-        # A drifted committed file is caught by the neutral comparison.
-        rel = "references/bead-layout.md"
-        text = self.render(TEMPLATES / "skills" / "plan-anchoring" / f"{rel}.j2", "neutral")
-        self.assertNotEqual(text + "drift\n", (SKILL / rel).read_text(encoding="utf-8"))
+        self.assertTrue(other_tracker_mentions("the item is bd-42\n", "br"))
+        self.assertTrue(other_tracker_mentions("the item is br-42\n", "bd"))
+        self.assertEqual(other_tracker_mentions("IDs look like ex-42 in scripts/bd_x.py and .beads/\n", "br"), [])
+        self.assertTrue(mixed_by_design("scripts/jev_judge.py"))
+        self.assertFalse(mixed_by_design("references/jev-api.md"))
+        self.assertFalse(mixed_by_design("assets/schemas/anchor-tuning-request.schema.json"))
+        # A br render that slipped a bd command in is caught.
+        text = self.renderer.skill_file("references/bead-layout.md", "br", "claude").value.decode("utf-8")
+        self.assertTrue(other_tracker_mentions(text + "then run `bd ready`\n", "br"))
         # Strict rendering refuses an undeclared variable.
         with tempfile.TemporaryDirectory() as tmp:
             bad = Path(tmp) / "bad.md.j2"
@@ -244,19 +277,10 @@ class GeneratedDataTests(unittest.TestCase):
         if not _has_commit(gen.BASE):
             self.skipTest(f"history commit {gen.BASE} absent (shallow clone); CI checks out with fetch-depth 0")
 
-    def test_manifest_and_legacy_are_in_sync(self):
+    def test_legacy_is_in_sync(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(gen.main(["--check"]), 0, err.getvalue())
-
-    def test_stale_manifest_is_detected(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            stale = Path(tmp) / "manifest.json"
-            data = json.loads(gen.MANIFEST.read_text(encoding="utf-8"))
-            data["skill"].remove("SKILL.md")
-            stale.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-            with mock.patch.object(gen, "MANIFEST", stale), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(gen.main(["--check"]), 2)  # stale fails CI, and like every CLI here never exits 1
 
     def test_legacy_lacking_history_is_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -272,9 +296,9 @@ class GeneratedDataTests(unittest.TestCase):
         self.assertIn("anchor-question-tune.md", legacy["agents"]["claude"])
         self.assertIn("tests/test_jev_judge.py", legacy["skill"])
         self.assertNotIn("registry.yaml", legacy["agents"]["claude"])
-        manifest = json.loads(gen.MANIFEST.read_text(encoding="utf-8"))
-        self.assertNotIn("anchor-question-tune.md", manifest["agents"]["claude"])
-        self.assertFalse([p for p in manifest["skill"] if p.startswith("tests/")])
+        package = inst.load_package().value
+        self.assertNotIn("anchor-question-tune.md", package.agents)
+        self.assertFalse([p for p in package.skill if p.startswith("tests/")])
 
 
 # ---------------------------------------------------------------- install
@@ -307,11 +331,11 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((lock["version"], lock["tracker"], lock["targets"]), (VERSION, tracker, list(targets)))
         for key, digest in lock["files"].items():
             self.assertEqual(sha(repo.path(key).read_bytes()), digest, key)
-        manifest = json.loads((PLUGIN / "install" / "manifest.json").read_text(encoding="utf-8"))
+        package = inst.load_package().value
         for target in targets:
-            for rel in manifest["skill"]:
+            for rel in package.skill:
                 self.assertIn(f".{target}/skills/plan-anchoring/{rel}", lock["files"])
-            for name in manifest["agents"][target]:
+            for name in package.agents:
                 self.assertIn(f".{target}/agents/{name}", lock["files"])
         self.assertEqual(self.tracker_setting(repo), f"anchor_tracker: {tracker}")
         layout = repo.path(".claude/skills/plan-anchoring/references/bead-layout.md").read_text(encoding="utf-8")
@@ -333,6 +357,9 @@ class InstallTests(unittest.TestCase):
         self.assert_installed(repo, "bd", ["claude", "codex", "cursor"])
         self.assertTrue(repo.path(".cursor/agents/anchor-tuning.md").is_file())
         self.assertFalse(repo.path(".claude/agents/registry.yaml").exists())
+        for target in ("claude", "codex", "cursor"):  # the runner contract's registry lives in the skill
+            registry = repo.path(f".{target}/skills/plan-anchoring/registry.yaml").read_text(encoding="utf-8")
+            self.assertIn(f"path: .{target}/agents/anchor-tuning.md", registry)
 
     def test_rerun_is_idempotent(self):
         repo = TempRepo(self, beads="sqlite")
@@ -495,11 +522,18 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(data["plan"]["replace"])
         self.assertEqual(repo2.snapshot(), before)
 
-    def test_dest_must_be_repository_root(self):
+    def test_dest_may_be_a_folder_inside_a_repository(self):
         repo = TempRepo(self, beads="sqlite")
         repo.path("sub").mkdir()
-        result = inst.install(inst.Options(dest=repo.path("sub"), tracker=None, targets=["claude"]), which=fake_which)
-        self.refused(result, "INSTALL.DEST")
+        data = self.ok(inst.install(inst.Options(dest=repo.path("sub"), tracker="br", targets=["claude"]),
+                                    which=fake_which, run=FakeRun()))
+        self.assertEqual(data["install_root"], str(repo.path("sub")))
+        self.assertTrue(repo.path("sub/.claude/skills/plan-anchoring/SKILL.md").is_file())
+
+    def test_dest_must_be_an_existing_directory(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.refused(inst.install(inst.Options(dest=repo.path("nope"), tracker="br", targets=["claude"]),
+                                  which=fake_which), "INSTALL.DEST")
 
     def test_invalid_lock_is_typed_error(self):
         repo = TempRepo(self, beads="sqlite")
