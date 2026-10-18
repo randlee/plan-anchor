@@ -1,6 +1,6 @@
 ---
 name: planning-gate
-version: 0.7.1
+version: 0.7.2
 description: Running the planning gate end to end - what to pass, what Jev sees, the command and exit codes, and how to read results for one sprint item and a whole phase.
 ---
 
@@ -41,8 +41,7 @@ python3 "$S" judge --anchors "$A" --gate plan --all --item-id <sprint-id> --item
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Every anchor `satisfied`, `not_applicable`, `deterministic_only` or `excluded`, or a dry run |
-| 1 | At least one `contradicted`, `not_addressed`, `underspecified` or `error` verdict; the run file was written |
+| 0 | The run completed; read `data.summary.pass`: true when every anchor is `satisfied`, `not_applicable`, `deterministic_only` or `excluded` (or a dry run, `data.dry_run`), false on at least one `contradicted`, `not_addressed`, `underspecified` or `error` verdict; the run file was written |
 | 2 | Fatal before judging: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, or `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`) |
 
 Then, across all sprint items:
@@ -67,7 +66,7 @@ To mark an anchor not relevant to one sprint item when its scope is right, use `
 | `error` | Jev could not be asked after retries | `results[].error.code` | Fix the cause; re-run that bead |
 | `PLAN.TOO_LARGE` | The sprint does not fit one request | `shape` on the sprint text; scope-anchor verdicts | Judge the cause: unapproved work, then prose and ceremony, then split (`plan-size-and-shape.md`) |
 
-The gate passes when every sprint's latest run exits 0 and `coverage` lists no
+The gate passes when every sprint's latest run has `summary.pass: true` and `coverage` lists no
 uncovered locked anchor. An anchor uncovered everywhere has the wrong scope, or
 the phase lacks the sprint that should carry it. Triage and stop conditions:
 `triage-and-iteration.md`.

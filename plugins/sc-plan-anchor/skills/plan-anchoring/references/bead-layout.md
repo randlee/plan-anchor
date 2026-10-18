@@ -1,6 +1,6 @@
 ---
 name: bead-layout
-version: 0.7.1
+version: 0.7.2
 description: The anchor bead tree in beads (br or bd), the commands to create it, labels, how question overrides live in the child beads, how agents read beads, and how reports are posted back.
 ---
 

@@ -1,5 +1,5 @@
 ---
-version: 0.7.1
+version: 0.7.2
 ---
 
 # Capture and maintenance workflow
@@ -43,7 +43,7 @@ python3 "$S" add --anchors "$A" --quote "<the user's exact words>" \
   --kind directive|prohibition|structural --stated-by "<name>" --context "planning session" --summary "<short label>" \
   --scope "<bead-level signals: adds a CLI subcommand, edits Cargo.toml, touches crates/x>" \
   --deterministic-check "<diff, git log, grep or test that proves it literally>" --status locked   # first add creates anchors.json
-  # add runs the testability lint and refuses near-duplicates (ANCHOR.DUPLICATE_CANDIDATE); see references/anchor-capture.md
+  # add runs the testability lint and refuses near-duplicates (data.added false, data.refused.code ANCHOR.DUPLICATE_CANDIDATE); see references/anchor-capture.md
 python3 "$S" update --anchors "$A" --id ANC-001 --fixture-pass "<a sentence a bead would say if it satisfied this>" \
   --fixture-fail "<a sentence that would violate it>"                                              # draft, then get the user's approval
 python3 "$S" validate --anchors "$A" && python3 "$S" render --anchors "$A"

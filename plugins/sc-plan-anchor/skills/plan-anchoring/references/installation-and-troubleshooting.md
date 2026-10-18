@@ -1,6 +1,6 @@
 ---
 name: installation-and-troubleshooting
-version: 0.7.1
+version: 0.7.2
 description: Installing the plugin into a repository (install.py), how the anchor tracker (br or bd) is chosen and switched, the CLIs and credentials plan-anchoring depends on (python3, PyYAML, br or bd, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
 ---
 
@@ -44,7 +44,7 @@ The installer applies the same rules. Without `--tracker` it uses the resolved t
 
 `resolve` is read-only and never initializes. `write` records the result in the settings file (`--tracker br|bd` pins a choice, checked the same way; an existing setting is never rewritten, and a different pin is `SETTINGS.CONFLICT`). `write --init` also runs `br init` when br is selected and there is no `.beads/`. Commit what `write` reports in `commit_paths`.
 
-Exit codes follow the plugin convention shared with `jev_judge.py`: 0 selected; 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
+Exit codes follow the plugin convention shared by every script: 0 the command ran (selected); 2 any error, invalid arguments included (`VALIDATION.INPUT`), with the typed error object on stdout. The only exit codes are 0, 2 and 130 (interrupt); a negative answer from a command that ran is exit 0 with the outcome in `data`. Act on the error code (`SETTINGS.*`, `BEADS.*`, `TRACKER.*`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`, `SCRIPT.INTERNAL`), not the exit status. Output is always the JSON envelope `{success, data, error}`; the reported `cli_path` is absolute.
 
 **Settings file.** Synaptic Canvas packages keep repository settings at `<repository root>/.sc/<package>/settings.yaml`: YAML, snake_case keys, committed to git, never secrets. The repository root is `git rev-parse --show-toplevel` (falling back to the nearest ancestor with `.git`), never the working directory. For this package:
 
@@ -150,13 +150,13 @@ S="<skill dir>/scripts/jev_judge.py"; X="<skill dir>/assets/examples"
 python3 "$S" --help
 python3 "$S" validate --anchors "$X/anchors.example.json"
 python3 "$S" judge --anchors "$X/anchors.example.json" --gate plan --all --item-id smoke --item-file "<skill dir>/SKILL.md" \
-  --answers-file "$X/answers.fixture.json" --out /tmp/anchor-smoke.json; echo "exit $?"
+  --answers-file "$X/answers.fixture.json" --out /tmp/anchor-smoke.json | jq '{exit_ok: .success, pass: .data.summary.pass, failing: .data.summary.failing}'
 python3 "$S" report --run /tmp/anchor-smoke.json --format md
 # Maintainer source checkout only; the marketplace plugin excludes this suite.
 python3 -m unittest discover -s "<repository root>/tests/sc-plan-anchor"
 ```
 
-The smoke `judge` runs the full gating path offline: expect `not_addressed` for ANC-012, `not_applicable` for REQ-014, and **exit 1**, because the gate fails by design. In a maintainer source checkout, the repository-level test suite reports `OK`; it is not included in marketplace installations.
+The smoke `judge` runs the full gating path offline: expect `not_addressed` for ANC-012, `not_applicable` for REQ-014, and **exit 0 with `data.summary.pass: false`**, because the gate fails by design; a failing gate is a completed run, not a tool failure. `validate` exits 0 with `data.valid: true`. In a maintainer source checkout, the repository-level test suite reports `OK`; it is not included in marketplace installations.
 
 ## Known issues
 

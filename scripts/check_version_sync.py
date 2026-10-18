@@ -22,7 +22,9 @@ Not release metadata, so not checked: `schema_version` fields and the
 JSON schemas' `const`), and integer document versions (question sets,
 anchors, examples).
 
-Exit 0 in sync, 1 drift (each on its own line), 2 missing files or bad input.
+Exit 0 in sync; 2 when the check fails: drift (each on its own line on stdout)
+or missing files and bad input (on stderr). A check script's job is to fail
+CI, so drift is nonzero; like every plan-anchor CLI it never exits 1.
 """
 from __future__ import annotations
 
@@ -264,7 +266,7 @@ def main() -> int:
         print(f"check-version-sync [{mode}]: {len(drift)} drift(s) from VERSION {want}:")
         for d in drift:
             print(f"  {d}")
-        return 1
+        return 2
     print(f"check-version-sync [{mode}]: {checked} version declarations equal {want}, CHANGELOG entry present")
     return 0
 

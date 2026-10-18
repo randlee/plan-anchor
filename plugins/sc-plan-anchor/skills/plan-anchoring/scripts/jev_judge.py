@@ -27,39 +27,51 @@ JSON on stdout and an exit code; anything unexpected that still raises is
 reported there as SCRIPT.INTERNAL.
 
 Subcommands
-  add             append an anchor record (allocates the next ANC-NNN); lints the statement and refuses likely duplicates
-  update          edit statement / scope / summary / deterministic_check / fixtures (never the quote)
+  add             append an anchor record (allocates the next ANC-NNN); lints the statement and refuses likely duplicates (data.added)
+  update          edit statement / scope / summary / deterministic_check / fixtures (never the quote; data.updated)
   retire          mark an anchor retired, optionally naming its replacement
   exclude         record (or --remove) that an anchor does not apply to one plan item; no version bump
-  validate        check anchors.json for structural problems (plus non-fatal warnings)
-  lint            testability warnings for one or every anchor statement (exit 1 when any)
-  dedupe          token-Jaccard pairs of similar anchors, optionally confirmed by Jev (exit 1 when likely duplicates)
+  validate        check anchors.json for structural problems (plus non-fatal warnings); data.valid
+  lint            testability warnings for one or every anchor statement; data.clean
+  dedupe          token-Jaccard pairs of similar anchors, optionally confirmed by Jev; data.likely_duplicates
+  rubric          judge anchor statements against the testability rubric (lint + Jev); data.pass
   render          write anchors.md from anchors.json
   set-beads       record the anchor / plan-questions / dev-questions bead IDs
   promote         mark an anchor as promoted to an ADR (keeps its ID)
   compose-item    build the labelled item text from `bd show --json` (and `bd children --json`)
   agent-preflight validate and canonicalise agent paths and identifiers before any read or upload
   shape           size and shape metrics of plan beads (sections, code vs prose, references, repeated paragraphs); never gates
-  judge           ask Jev about one item against one or more anchors, write a run
-  check-fixtures  judge each anchor's fixtures.pass / fixtures.fail sentences as items
-  report          render a run as markdown in the provenance-quoting format
-  coverage        anchors x items verdict matrix over one or more runs
-  diff            what changed between two runs of the same gate and item
+  judge           ask Jev about one item against one or more anchors, write a run; data.summary.pass
+  check-fixtures  judge each anchor's fixtures.pass / fixtures.fail sentences as items; data.pass and data.mismatches
+  report          render a run as markdown in the provenance-quoting format; data.pass
+  coverage        anchors x items verdict matrix over one or more runs; data.uncovered_anchors
+  diff            what changed between two runs of the same gate and item; data.pass_after and data.regressions
 
 Every subcommand prints JSON to stdout (or markdown with --format md where
 supported).
 
 Exit codes
-  0  success; for `judge`, the gate passed (or it was a dry run); for
-     `check-fixtures`, every fixture landed on its expected verdict
-  1  the command ran but the answer is "no": `judge` has a failing or error
-     verdict, `check-fixtures` has a mismatch, `validate` found problems,
-     `lint` has warnings, `dedupe` found likely duplicates
-  2  fatal: a JSON error object was printed (missing input, bad credentials,
-     remote judging not allowed by allow_remote_judge in
-     .sc/plan-anchor/settings.yaml, malformed record or override, a plan bead that does
-     not fit one Jev request as PLAN.TOO_LARGE, Jev unreachable before any
-     verdict, or an internal error as SCRIPT.INTERNAL)
+  A tool failure is an exit code; a negative answer from a command that ran
+  properly is not. There is no exit 1.
+  0  the command ran: {"success": true, "data": {...}, "error": null}. `data`
+     carries the outcome, negative ones included: a failing gate or a per-cell
+     `error` verdict (`judge` data.summary.pass false), a fixture mismatch
+     (`check-fixtures` data.pass false), problems in the record (`validate`
+     data.valid false), lint warnings (`lint` data.clean false), likely
+     duplicates (`dedupe` data.likely_duplicates non-empty), a statement that
+     is not testable (`rubric` data.pass false), and an anchor `add` refused
+     as a likely duplicate, untestable or lint-failing (data.added false with
+     data.refused {code, message, suggested_action}; `update --strict`:
+     data.updated false)
+  2  the command could not do its job: {"success": false, "data": null|{...},
+     "error": {code, message, recoverable, suggested_action}} (bad input or
+     arguments as VALIDATION.INPUT, a missing or unreadable file, a malformed
+     record or override, bad credentials, remote judging not allowed by
+     allow_remote_judge in .sc/plan-anchor/settings.yaml as
+     POLICY.REMOTE_JUDGE_DISABLED, a plan bead that does not fit one Jev
+     request as PLAN.TOO_LARGE, Jev unreachable before any verdict, a missing
+     dependency, or an internal error as SCRIPT.INTERNAL)
+  130 interrupted
 
 Plan-gate size handling
   The plan gate never shortens prose. A bead that fits (--max-item-chars, and
@@ -571,6 +583,19 @@ def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -
     return Ok(warnings)
 
 
+REFUSAL_CODES = ("ANCHOR.LINT", "ANCHOR.DUPLICATE_CANDIDATE", "ANCHOR.NOT_TESTABLE")
+
+
+def refusal(error: JudgeError, verb: str, **data) -> Ok:
+    """A quality gate said no (`add`/`update`): a completed negative answer, so success with data.<verb> false and exit 0.
+
+    data.refused keeps the code, message and suggested action the refusal used to carry as an error.
+    """
+    out = {verb: False, "refused": {"code": error.code, "message": error.message, "suggested_action": error.action}}
+    out.update(data)
+    return Ok({"success": True, "data": out, "error": None})
+
+
 def cmd_add(args) -> Result[dict, JudgeError]:
     p = pathlib.Path(args.anchors)
     if p.exists():
@@ -613,20 +638,25 @@ def cmd_add(args) -> Result[dict, JudgeError]:
         quote = statement  # register text: the quote is the statement
     linted = lint_or_refuse(statement, quote, args.source_type, bool(args.strict))
     if isinstance(linted, Err):
+        if linted.error.code in REFUSAL_CODES:
+            return refusal(linted.error, "added", path=args.anchors, lint={"warnings": lint_statement(statement, quote, args.source_type)})
         return linted
     warnings = linted.value
     similar = similar_anchors(anchors, statement, quote)
     candidates = [s for s in similar if s["jaccard"] >= DUPLICATE_JACCARD]
     if candidates and not args.allow_similar:
         names = ", ".join(f"{s['id']} (jaccard {s['jaccard']}, {s['field']})" for s in candidates)
-        return fail("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", recoverable=True,
-                    action=f"Update {candidates[0]['id']} instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint.")
+        refused = JudgeError("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", recoverable=True,
+                             action=f"Update {candidates[0]['id']} instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint.")
+        return refusal(refused, "added", path=args.anchors, lint={"warnings": warnings}, similar=similar)
     rubric = None
     if getattr(args, "rubric", False):
         gated = add_rubric_gate(args, statement, quote, args.source_type)
         if isinstance(gated, Err):
             return gated
-        rubric = gated.value
+        rubric, refused = gated.value
+        if refused is not None:
+            return refusal(refused, "added", path=args.anchors, lint={"warnings": warnings}, similar=similar, rubric=rubric)
     record = {
         "id": anchor_id,
         "source_type": args.source_type,
@@ -650,7 +680,7 @@ def cmd_add(args) -> Result[dict, JudgeError]:
     }
     anchors.append(record)
     save_json(args.anchors, rec)
-    data = {"anchor": record, "path": args.anchors, "lint": {"warnings": warnings}, "similar": similar}
+    data = {"added": True, "anchor": record, "path": args.anchors, "lint": {"warnings": warnings}, "similar": similar}
     if rubric is not None:
         data["rubric"] = rubric
     return Ok({"success": True, "data": data, "error": None})
@@ -713,6 +743,9 @@ def cmd_update(args) -> Result[dict, JudgeError]:
         return fail("VALIDATION.INPUT", "nothing to update", action="Pass --statement, --scope, --summary, --deterministic-check, --fixture-pass, --fixture-fail or --clear-fixtures.")
     linted = lint_or_refuse(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC", bool(getattr(args, "strict", False)))
     if isinstance(linted, Err):
+        if linted.error.code in REFUSAL_CODES:  # nothing is saved
+            return refusal(linted.error, "updated", id=args.id, changed=changed,
+                           lint={"warnings": lint_statement(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC")})
         return linted
     warnings = linted.value
     a["version"] = int(a.get("version", 1)) + 1
@@ -721,7 +754,8 @@ def cmd_update(args) -> Result[dict, JudgeError]:
         event["previous_statement"] = previous_statement
     a.setdefault("history", []).append(event)
     save_json(args.anchors, rec)
-    return Ok({"success": True, "data": {"id": a["id"], "changed": changed, "version": a["version"], "anchor": a, "lint": {"warnings": warnings}}, "error": None})
+    return Ok({"success": True, "data": {"updated": True, "id": a["id"], "changed": changed, "version": a["version"], "anchor": a,
+                                         "lint": {"warnings": warnings}}, "error": None})
 
 
 def cmd_retire(args) -> Result[dict, JudgeError]:
@@ -897,11 +931,11 @@ def cmd_validate(args) -> Result[dict, JudgeError]:
     problems = validate_record(rec)
     warnings = record_warnings(rec, args.anchors)
     if problems:
-        # A completed negative answer (exit 1), not a failure of the command: it stays an Ok value.
-        return Ok({"success": False, "data": {"problems": problems, "warnings": warnings}, "error": {
-            "code": "VALIDATION.ANCHORS", "message": f"{len(problems)} problem(s) in {args.anchors}",
-            "recoverable": True, "suggested_action": "Fix the listed problems and re-run validate."}})
-    return Ok({"success": True, "data": {"anchors": len(rec["anchors"]), "path": args.anchors, "warnings": warnings}, "error": None})
+        # A completed negative answer, not a failure of the command: success with data.valid false, exit 0.
+        return Ok({"success": True, "data": {"valid": False, "path": args.anchors, "problems": problems, "warnings": warnings,
+                                             "suggested_action": "Fix the listed problems and re-run validate."}, "error": None})
+    return Ok({"success": True, "data": {"valid": True, "anchors": len(rec["anchors"]), "path": args.anchors, "problems": [],
+                                         "warnings": warnings}, "error": None})
 
 
 def render_md(rec: dict) -> str:
@@ -2426,7 +2460,7 @@ def cmd_lint(args) -> Result[dict, JudgeError]:
     known = plan_item_ids(args)
     if isinstance(known, Err):
         return known
-    data = {"anchors": rows, "warning_count": count, "path": args.anchors}
+    data = {"clean": count == 0, "anchors": rows, "warning_count": count, "path": args.anchors}
     data.update(exclusion_lint(selected.value, known.value))
     return Ok({"success": True, "data": data, "error": None})
 
@@ -2455,7 +2489,7 @@ def plan_item_ids(args) -> Result[Any, JudgeError]:
 
 
 def exclusion_lint(anchors: list, known) -> dict:
-    """Exclusions naming an item the plan does not have. A warning only: it never changes lint's exit code or blocks judge."""
+    """Exclusions naming an item the plan does not have. A warning only: it never changes lint's data.clean or blocks judge."""
     listed = [(a.get("id"), x) for a in anchors for x in (a.get("exclude") or []) if isinstance(x, dict)]
     if not listed and known is None:
         return {}  # no exclusions and no plan items: lint output is what it was before exclusions existed
@@ -2779,8 +2813,12 @@ def cmd_rubric(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": data, "error": None})
 
 
-def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Result[dict, JudgeError]:
-    """`add --rubric`: judge the candidate before writing; refuse with ANCHOR.NOT_TESTABLE unless --allow-untestable."""
+def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Result[tuple, JudgeError]:
+    """`add --rubric`: judge the candidate before writing: Ok((entry, refusal)).
+
+    refusal is an ANCHOR.NOT_TESTABLE JudgeError (reported as data.refused, exit 0) unless the rubric passed or
+    --allow-untestable was given, else None. Err only when the rubric could not run.
+    """
     loaded = load_answers_fixture(getattr(args, "answers_file", ""), "'candidate'")
     if isinstance(loaded, Err):
         return loaded
@@ -2790,11 +2828,12 @@ def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Resul
         return judged
     entry = judged.value[0][0]
     if entry["verdict"] != "testable" and not getattr(args, "allow_untestable", False):
-        return fail("ANCHOR.NOT_TESTABLE", f"the statement did not pass the testability rubric ({entry['verdict']}): " + ", ".join(entry["failing"]),
-                    recoverable=True,
-                    action="Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, "
-                           "or pass --allow-untestable to record it anyway.")
-    return Ok(entry)
+        return Ok((entry, JudgeError(
+            "ANCHOR.NOT_TESTABLE", f"the statement did not pass the testability rubric ({entry['verdict']}): " + ", ".join(entry["failing"]),
+            recoverable=True,
+            action="Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, "
+                   "or pass --allow-untestable to record it anyway.")))
+    return Ok((entry, None))
 
 
 # --------------------------------------------------------------------------- #
@@ -3073,16 +3112,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = _JsonArgumentParser(prog="jev_judge.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True, parser_class=_JsonArgumentParser)
 
-    a = sub.add_parser("add", help="append an anchor record (lints the statement, refuses likely duplicates)")
+    a = sub.add_parser("add", help="append an anchor record (lints the statement, refuses likely duplicates); data.added")
     a.add_argument("--anchors", required=True)
     a.add_argument("--statement", required=True, help="the testable anchor text, written by the orchestrator and approved by the user")
     a.add_argument("--quote", default="", help="the user's verbatim words (required for ANC; defaults to the statement for REQ/ADR)")
     a.add_argument("--kind", choices=KINDS, default="directive",
                    help="directive: compliance, conflict and relevance all gate; prohibition: compliance is not asked of the verdict; "
                         "structural: skipped by Jev at the plan gate (deterministic_only), judged at the dev gate")
-    a.add_argument("--allow-similar", action="store_true", help="record the anchor even when it looks like an existing one (ANCHOR.DUPLICATE_CANDIDATE)")
-    a.add_argument("--strict", action="store_true", help="refuse the anchor when the testability lint has any warning (ANCHOR.LINT)")
-    a.add_argument("--rubric", action="store_true", help="ask Jev the testability rubric first; refuse with ANCHOR.NOT_TESTABLE unless it passes")
+    a.add_argument("--allow-similar", action="store_true", help="record the anchor even when it looks like an existing one (data.refused.code ANCHOR.DUPLICATE_CANDIDATE)")
+    a.add_argument("--strict", action="store_true", help="refuse the anchor when the testability lint has any warning (data.refused.code ANCHOR.LINT)")
+    a.add_argument("--rubric", action="store_true", help="ask Jev the testability rubric first; refuse (data.refused.code ANCHOR.NOT_TESTABLE) unless it passes")
     a.add_argument("--allow-untestable", action="store_true", help="with --rubric: record the anchor even when the rubric says needs_work")
     a.add_argument("--answers-file", default="", help="with --rubric: fixture answers keyed 'candidate' or '*'; no network")
     a.add_argument("--repository-root", default=".", help="with --rubric: " + REPO_ROOT_HELP)
@@ -3105,7 +3144,7 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--anchors", required=True)
     u.add_argument("--id", required=True)
     u.add_argument("--statement", help="reword the testable anchor text (version bump; previous_statement kept in history)")
-    u.add_argument("--strict", action="store_true", help="refuse when the testability lint has any warning (ANCHOR.LINT)")
+    u.add_argument("--strict", action="store_true", help="refuse when the testability lint has any warning (data.updated false, data.refused.code ANCHOR.LINT)")
     u.add_argument("--kind", choices=KINDS, help="directive, prohibition or structural (see `add --help`)")
     u.add_argument("--scope")
     u.add_argument("--summary")
@@ -3131,11 +3170,11 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--remove", action="store_true", help="drop the exclusion for --item")
     ex.set_defaults(func=cmd_exclude)
 
-    v = sub.add_parser("validate", help="check anchors.json")
+    v = sub.add_parser("validate", help="check anchors.json; data.valid false with data.problems when it has problems")
     v.add_argument("--anchors", required=True)
     v.set_defaults(func=cmd_validate)
 
-    ln = sub.add_parser("lint", help="testability warnings for anchor statements; exit 1 when any")
+    ln = sub.add_parser("lint", help="testability warnings for anchor statements; data.clean false when any")
     ln.add_argument("--anchors", required=True)
     ln.add_argument("--id", default="", help="one anchor id")
     ln.add_argument("--all", action="store_true", help="every non-retired anchor (the default when --id is not given)")
@@ -3143,7 +3182,7 @@ def build_parser() -> argparse.ArgumentParser:
     ln.add_argument("--plan-item", action="append", help="a plan item id for the exclusion check; repeatable")
     ln.set_defaults(func=cmd_lint)
 
-    dd = sub.add_parser("dedupe", help="find pairs of similar anchors by token Jaccard, optionally confirmed by Jev; exit 1 when likely duplicates")
+    dd = sub.add_parser("dedupe", help="find pairs of similar anchors by token Jaccard, optionally confirmed by Jev; data.likely_duplicates lists them")
     dd.add_argument("--anchors", required=True)
     dd.add_argument("--threshold", type=float, default=DEDUPE_DEFAULT_THRESHOLD, help="report pairs at or above this token Jaccard")
     dd.add_argument("--jev", action="store_true", help="ask Jev whether each reported pair is the same constraint")
@@ -3154,7 +3193,7 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--timeout", type=float, default=30.0)
     dd.set_defaults(func=cmd_dedupe)
 
-    rb = sub.add_parser("rubric", help="judge anchor statements against the testability rubric (lint + Jev); exit 1 unless all testable")
+    rb = sub.add_parser("rubric", help="judge anchor statements against the testability rubric (lint + Jev); data.pass false unless all testable")
     rb.add_argument("--anchors", default="", help="anchors.json; with --id or --all")
     rb.add_argument("--id", default="", help="one anchor id")
     rb.add_argument("--all", action="store_true", help="every non-retired anchor (the default with --anchors)")
@@ -3209,7 +3248,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--correlation-id", default="", help="safe correlation id used to derive a temporary work key")
     ap.set_defaults(func=cmd_agent_preflight)
 
-    sh = sub.add_parser("shape", help="size and shape metrics of plan beads; informs, never gates (exit 0)")
+    sh = sub.add_parser("shape", help="size and shape metrics of plan beads; informs, never gates")
     sh.add_argument("--beads", default="", help="directory of `bd show --json` files")
     sh.add_argument("--children-json", default="", help="output of `bd children <id> --json`: every child is shaped")
     sh.add_argument("--show-json", action="append", help="output of `bd show <id> --json`; repeatable")
@@ -3218,11 +3257,11 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("--format", choices=("json", "md"), default="json")
     sh.set_defaults(func=cmd_shape)
 
-    j = sub.add_parser("judge", help="judge one item against anchors")
+    j = sub.add_parser("judge", help="judge one item against anchors; data.summary.pass")
     add_judge_options(j, with_item=True)
     j.set_defaults(func=cmd_judge)
 
-    cf = sub.add_parser("check-fixtures", help="judge each anchor's fixture sentences; pass -> satisfied, fail -> not_addressed or contradicted")
+    cf = sub.add_parser("check-fixtures", help="judge each anchor's fixture sentences; pass -> satisfied, fail -> not_addressed or contradicted; data.pass")
     add_judge_options(cf, with_item=False)
     cf.set_defaults(func=cmd_check_fixtures)
 
@@ -3246,26 +3285,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def exit_code_for(cmd: str, out) -> int:
-    if not isinstance(out, dict):
-        return 0
-    if out.get("success") is False:
-        return 1
-    data = out.get("data") or {}
-    if cmd == "judge" and not data.get("dry_run") and not (data.get("summary") or {}).get("pass"):
-        return 1
-    if cmd == "check-fixtures" and data.get("mismatches"):
-        return 1
-    if cmd == "lint" and data.get("warning_count"):
-        return 1
-    if cmd == "dedupe" and data.get("likely_duplicates"):
-        return 1
-    if cmd == "rubric" and not data.get("dry_run") and not data.get("pass"):
-        return 1
-    return 0
-
-
 def main(argv=None) -> int:
+    """0 when the command ran (its outcome, negative or not, is in data); 2 when it could not; 130 on interrupt."""
     try:
         args = build_parser().parse_args(argv)
     except _UsageError as exc:
@@ -3284,9 +3305,8 @@ def main(argv=None) -> int:
     if isinstance(outcome, Err):
         emit(outcome.error.to_json())
         return 2
-    out = outcome.value
-    emit(out, fmt)
-    return exit_code_for(args.cmd, out)
+    emit(outcome.value, fmt)
+    return 0
 
 
 if __name__ == "__main__":

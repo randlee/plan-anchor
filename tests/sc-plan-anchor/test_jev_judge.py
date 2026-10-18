@@ -277,9 +277,10 @@ class QuoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "anchors.json", record(old))
             code, out = run_cli(["lint", "--anchors", path])
-            self.assertEqual((code, out["data"]["anchors"][0]["warnings"][0]), (1, "statement is the verbatim quote"))
+            self.assertEqual((code, out["data"]["clean"], out["data"]["anchors"][0]["warnings"][0]), (0, False, "statement is the verbatim quote"))
             code, out = run_cli(["validate", "--anchors", path])
-            self.assertEqual((code, out["error"]["code"]), (1, "VALIDATION.ANCHORS"))
+            self.assertEqual((code, out["success"], out["error"], out["data"]["valid"]), (0, True, None, False))
+            self.assertIn("ANC-001: quote missing; record the user's verbatim words", out["data"]["problems"])
             # an old run file: the report falls back to the statement as the quote
             run = make_run(d, "old-run.json", "plan", "bd-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed", "REQ-014": "contradicted"}, with_quote=False)
             code, md = run_cli(["report", "--run", run, "--format", "md"])
@@ -389,18 +390,18 @@ class LintTests(unittest.TestCase):
                                                     anchor("ANC-003", status="retired", statement="Copy stuff."),
                                                     anchor("REQ-014", source_type="REQ", source_ref="REQ-014", statement=REQ_STATEMENT)))
             code, out = run_cli(["lint", "--anchors", path, "--all"])
-            self.assertEqual(code, 1)
+            self.assertEqual((code, out["success"], out["data"]["clean"]), (0, True, False))
             self.assertEqual([r["id"] for r in out["data"]["anchors"]], ["ANC-001", "ANC-002", "REQ-014"])  # retired skipped
             self.assertEqual(out["data"]["anchors"][0]["warnings"], [])
             self.assertEqual(out["data"]["anchors"][1]["warnings"], ["hedged wording; state the requirement", "written as speech, not as a requirement",
                                                                       "not phrased as a testable requirement", "vague term; name the observable outcome"])
             self.assertEqual(out["data"]["warning_count"], 4)
             code, out = run_cli(["lint", "--anchors", path])  # neither flag: same as --all
-            self.assertEqual((code, out["data"]["warning_count"]), (1, 4))
+            self.assertEqual((code, out["data"]["clean"], out["data"]["warning_count"]), (0, False, 4))
             code, out = run_cli(["lint", "--anchors", path, "--id", "ANC-001"])
-            self.assertEqual((code, out["data"]), (0, {"anchors": [{"id": "ANC-001", "warnings": []}], "warning_count": 0, "path": path}))
+            self.assertEqual((code, out["data"]), (0, {"clean": True, "anchors": [{"id": "ANC-001", "warnings": []}], "warning_count": 0, "path": path}))
             code, out = run_cli(["lint", "--anchors", path, "--id", "ANC-003"])  # --id reaches retired anchors
-            self.assertEqual((code, out["data"]["warning_count"]), (1, 1))
+            self.assertEqual((code, out["data"]["clean"], out["data"]["warning_count"]), (0, False, 1))
             code, out = run_cli(["lint", "--anchors", path, "--id", "ANC-001", "--all"])
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
             code, out = run_cli(["lint", "--anchors", path, "--id", "ANC-999"])
@@ -410,11 +411,13 @@ class LintTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "anchors.json")
             code, out = run_cli(["add", "--anchors", path, "--statement", "We should keep the CLI thin.", "--quote", "keep the CLI thin", "--strict"])
-            self.assertEqual((code, out["error"]["code"], out["error"]["recoverable"]), (2, "ANCHOR.LINT", True))
-            self.assertIn("hedged wording", out["error"]["message"])
+            self.assertEqual((code, out["success"], out["error"], out["data"]["added"], out["data"]["refused"]["code"]), (0, True, None, False, "ANCHOR.LINT"))
+            self.assertIn("hedged wording", out["data"]["refused"]["message"])
+            self.assertIn("hedged wording; state the requirement", out["data"]["lint"]["warnings"])
+            self.assertNotIn("anchor", out["data"])
             self.assertFalse(Path(path).exists())
             code, out = run_cli(["add", "--anchors", path, "--statement", "We should keep the CLI thin.", "--quote", "keep the CLI thin"])
-            self.assertEqual(code, 0)
+            self.assertEqual((code, out["data"]["added"]), (0, True))
             self.assertEqual(out["data"]["lint"]["warnings"], ["hedged wording; state the requirement", "written as speech, not as a requirement",
                                                                "not phrased as a testable requirement"])
 
@@ -440,7 +443,7 @@ class DedupeTests(unittest.TestCase):
                 anchor("ANC-004", status="retired", statement=STATEMENT),
                 anchor("REQ-014", source_type="REQ", source_ref="REQ-014", statement=REQ_STATEMENT)))
             code, out = run_cli(["dedupe", "--anchors", path])
-            self.assertEqual(code, 1, out)
+            self.assertEqual((code, out["success"]), (0, True), out)
             data = out["data"]
             self.assertEqual((data["threshold"], data["jev"], data["anchors"]), (0.5, False, 4))
             self.assertEqual([(p["a"], p["b"]) for p in data["pairs"]], [("ANC-001", "ANC-002")])
@@ -453,7 +456,7 @@ class DedupeTests(unittest.TestCase):
             code, out = run_cli(["dedupe", "--anchors", distinct])
             self.assertEqual((code, out["data"]["pairs"], out["data"]["likely_duplicates"]), (0, [], []))
             code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.2"])
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 0)
             self.assertGreaterEqual(len(out["data"]["pairs"]), 1)
             self.assertEqual(len(out["data"]["likely_duplicates"]), 1)
             self.assertEqual(out["data"]["pairs"][0]["jaccard"], max(p["jaccard"] for p in out["data"]["pairs"]))  # best first
@@ -472,7 +475,7 @@ class DedupeTests(unittest.TestCase):
             fixture = write(d, "answers.json", {"ANC-001|ANC-002": yes, "ANC-001|ANC-003": no, "*": weak_yes})
             with env():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--answers-file", fixture])
-            self.assertEqual(code, 1, out)
+            self.assertEqual(code, 0, out)
             data = out["data"]
             self.assertTrue(data["jev"] and data["fixture"])
             by_pair = {(p["a"], p["b"]): p for p in data["pairs"]}
@@ -490,7 +493,7 @@ class DedupeTests(unittest.TestCase):
             # dry run: requests are shown, nothing is called, the deterministic rule decides
             with env():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev", "--dry-run"])
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 0)
             req = out["data"]["requests"][0]
             self.assertEqual(set(req), {"model", "questions", "state"})
             self.assertEqual(set(req["state"]), {"a", "b"})
@@ -521,7 +524,7 @@ class DedupeTests(unittest.TestCase):
             sleeps = []
             with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", sleeps.append):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            self.assertEqual(code, 1)
+            self.assertEqual((code, len(out["data"]["likely_duplicates"])), (0, 1))
             self.assertEqual(out["data"]["pairs"][0]["jev"], {"choice": "yes", "confidence": 0.8, "attempts": 2})
             self.assertEqual((len(t.bodies), sleeps), (2, [1.0]))
             self.assertEqual(t.bodies[0]["state"]["a"]["id"], "ANC-001")
@@ -543,8 +546,11 @@ class DedupeTests(unittest.TestCase):
             self.assertEqual((code, out["data"]["anchor"]["id"]), (0, "ANC-003"))
             # A similar statement is a duplicate even with an unrelated quote.
             code, out = run_cli(["add", "--anchors", path, "--statement", STATEMENT.replace("deleting", "removing"), "--quote", "take the legacy repo's code and strip it"])
-            self.assertEqual((code, out["error"]["code"], out["error"]["recoverable"]), (2, "ANCHOR.DUPLICATE_CANDIDATE", True))
-            self.assertIn("ANC-001", out["error"]["message"])
+            self.assertEqual((code, out["success"], out["data"]["added"], out["data"]["refused"]["code"]), (0, True, False, "ANCHOR.DUPLICATE_CANDIDATE"))
+            self.assertIn("ANC-001", out["data"]["refused"]["message"])
+            self.assertIn("--allow-similar", out["data"]["refused"]["suggested_action"])
+            self.assertEqual(out["data"]["similar"][0]["id"], "ANC-001")
+            self.assertEqual([a["id"] for a in json.loads(Path(path).read_text())["anchors"]], ["ANC-001", "ANC-002", "ANC-003"])  # nothing written
             # a retired anchor never blocks
             code, out = run_cli(["add", "--anchors", path, "--statement", "The CLI layer only parses arguments and prints JSON.", "--quote", "keep the CLI thin"])
             self.assertEqual((code, out["data"]["anchor"]["id"]), (0, "ANC-004"))
@@ -621,7 +627,7 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--statement", "The build must not add a dependency unless the lead approved it.", "--quote", "no new deps unless I say so",
                                      "--answers-file", fixture])
-            self.assertEqual((code, out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"]), (1, "needs_work", ["self_contained"]))
+            self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"]), (0, False, "needs_work", ["self_contained"]))
             legacy = {q: answer("yes", 0.9) for q in ("single_constraint", "observable", "requirement_form", "faithful", "scoped", "positive_form")}
             with env():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--answers-file", write(d, "legacy.json", {"*": legacy})])
@@ -666,7 +672,7 @@ class RubricTests(unittest.TestCase):
             fixture = write(d, "answers.json", {"ANC-002": rubric_answers(observable=("no", 0.9)), "*": rubric_answers()})
             with env():
                 code, out = run_cli(["rubric", "--anchors", path, "--all", "--answers-file", fixture])
-            self.assertEqual(code, 1, out)
+            self.assertEqual((code, out["success"]), (0, True), out)
             data = out["data"]
             self.assertEqual((data["threshold"], data["dry_run"], data["fixture"], data["path"], data["pass"]), (0.6, False, True, path, False))
             by_id = {e["id"]: e for e in data["anchors"]}
@@ -687,12 +693,12 @@ class RubricTests(unittest.TestCase):
             self.assertEqual((code, out["data"]["pass"], [e["id"] for e in out["data"]["anchors"]]), (0, True, ["ANC-001"]))
             with env():
                 code, out = run_cli(["rubric", "--anchors", path, "--id", "ANC-001", "--answers-file", fixture, "--threshold", "0.95"])
-            self.assertEqual((code, out["data"]["anchors"][0]["verdict"]), (1, "inconclusive"))
+            self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"]), (0, False, "inconclusive"))
             self.assertEqual(out["data"]["anchors"][0]["failing"], list(jj.RUBRIC_QUESTIONS))
             missing = write(d, "missing.json", {"ANC-002": rubric_answers()})
             with env():
                 code, out = run_cli(["rubric", "--anchors", path, "--id", "ANC-001", "--answers-file", missing])
-            self.assertEqual((code, out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (1, "error", "FIXTURE.MISSING"))
+            self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (0, False, "error", "FIXTURE.MISSING"))
             self.assertEqual(out["data"]["anchors"][0]["failing"], ["error: FIXTURE.MISSING"])
             self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ["anchors.json", "answers.json", "missing.json"])  # no run files
 
@@ -701,7 +707,7 @@ class RubricTests(unittest.TestCase):
             fixture = write(d, "answers.json", {"candidate": rubric_answers(faithful=("no", 0.8))})
             with env():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--scope", "runtime crates", "--answers-file", fixture])
-            self.assertEqual(code, 1, out)
+            self.assertEqual((code, out["data"]["pass"]), (0, False), out)
             entry = out["data"]["anchors"][0]
             self.assertEqual((entry["id"], entry["verdict"], entry["failing"], entry["scope"], out["data"]["path"]), ("candidate", "needs_work", ["faithful"], "runtime crates", None))
             star = write(d, "star.json", {"*": rubric_answers()})
@@ -739,14 +745,14 @@ class RubricTests(unittest.TestCase):
         t = Transport(response, response)
         with live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--scope", "runtime crates"])
-        self.assertEqual(code, 1)
+        self.assertEqual((code, out["data"]["pass"]), (0, False))
         self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"], out["data"]["anchors"][0]["attempts"]), ("needs_work", ["scoped"], 2))
         self.assertEqual(t.bodies[0]["state"]["anchor"]["scope"], "runtime crates")
         self.assertNotIn("item", t.bodies[0]["state"])
         # a state without an item cannot be shortened: over the cap it is refused before any call
         with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
-        self.assertEqual((code, out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (1, "error", "JEV.CONTEXT_EXCEEDED"))
+        self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (0, False, "error", "JEV.CONTEXT_EXCEEDED"))
         self.assertEqual(len(t.bodies), 2)
 
     def test_add_rubric_gate(self):
@@ -756,9 +762,10 @@ class RubricTests(unittest.TestCase):
             good = write(d, "good.json", {"*": rubric_answers()})
             with env():
                 code, out = run_cli(["add", "--anchors", path, "--statement", STATEMENT, "--quote", QUOTE, "--rubric", "--answers-file", bad])
-            self.assertEqual((code, out["error"]["code"], out["error"]["recoverable"]), (2, "ANCHOR.NOT_TESTABLE", True))
-            self.assertIn("single_constraint, observable", out["error"]["message"])
-            self.assertIn("--allow-untestable", out["error"]["suggested_action"])
+            self.assertEqual((code, out["success"], out["error"], out["data"]["added"], out["data"]["refused"]["code"]), (0, True, None, False, "ANCHOR.NOT_TESTABLE"))
+            self.assertIn("single_constraint, observable", out["data"]["refused"]["message"])
+            self.assertIn("--allow-untestable", out["data"]["refused"]["suggested_action"])
+            self.assertEqual((out["data"]["rubric"]["id"], out["data"]["rubric"]["verdict"]), ("candidate", "inconclusive"))
             self.assertFalse(Path(path).exists())
             with env():
                 code, out = run_cli(["add", "--anchors", path, "--statement", STATEMENT, "--quote", QUOTE, "--rubric", "--answers-file", bad, "--allow-untestable"])
@@ -866,7 +873,6 @@ class KindTests(unittest.TestCase):
                 code, out = run_cli(["check-fixtures", "--anchors", path, "--gate", "plan", "--all", "--answers-file", answers])
             self.assertEqual((code, out["data"]["mismatches"], [c["verdict"] for c in out["data"]["checks"]], [c["expected_ok"] for c in out["data"]["checks"]]),
                              (0, [], ["deterministic_only", "deterministic_only"], [None, None]))
-            self.assertEqual(jj.exit_code_for("judge", {"success": True, "data": {"dry_run": False, "summary": {"pass": True}}}), 0)
             self.assertEqual(jj.SEVERITY["deterministic_only"], jj.SEVERITY["not_applicable"] + 1)
             self.assertNotIn("deterministic_only", jj.FAILING)
 
@@ -936,7 +942,7 @@ class ConfirmTests(unittest.TestCase):
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, {"model": "jev", "answers": plan_answers(comp="no", comp_p=0.7)})
             j = Judged(d, t)
             code, md = run_cli(["report", "--run", j.run["path"], "--format", "md"])
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"], j.result["unstable"]), (1, "underspecified", 2, True))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"], j.result["unstable"]), (0, False, "underspecified", 2, True))
         self.assertEqual((j.result["verdict_first"], j.result["verdict_second"]), ("satisfied", "not_addressed"))
         self.assertEqual(j.result["answers"]["addressed"]["choice"], "yes")
         self.assertEqual(j.result["answers_second"]["addressed"]["choice"], "no")
@@ -1036,7 +1042,7 @@ class ValidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "anchors.json", record(anchor(status="proposed")))
             code, out = run_cli(["validate", "--anchors", path])
-            self.assertEqual(code, 0)
+            self.assertEqual((code, out["data"]["valid"], out["data"]["problems"]), (0, True, []))
             self.assertIn("no locked anchors", out["data"]["warnings"])
             self.assertIn("intent_ref file not found: doc/plan/phase-current/intent.md", out["data"]["warnings"])
             Path(d, "intent.md").write_text("# intent\n")
@@ -1044,8 +1050,9 @@ class ValidateTests(unittest.TestCase):
             self.assertEqual([w for w in out["data"]["warnings"] if "intent_ref" in w], [])
             path = write(d, "bad.json", record(anchor(status="nope")))
             code, out = run_cli(["validate", "--anchors", path])
-            self.assertEqual((code, out["success"], out["error"]["code"]), (1, False, "VALIDATION.ANCHORS"))
+            self.assertEqual((code, out["success"], out["error"], out["data"]["valid"]), (0, True, None, False))
             self.assertTrue(out["data"]["problems"])
+            self.assertEqual(out["data"]["path"], path)
 
 
 class DecideTests(unittest.TestCase):
@@ -1255,7 +1262,7 @@ class JudgeFixtureTests(unittest.TestCase):
         fixture = write(self.d.name, "answers.json", {"ANC-001": plan_answers(comp="no"), "*": plan_answers(rel="no")})
         code, out = self.judge("--all", "--answers-file", fixture)
         run = out["data"]
-        self.assertEqual(code, 1)
+        self.assertEqual((code, out["success"], run["summary"]["pass"]), (0, True, False))
         verdicts = {r["anchor_id"]: r["verdict"] for r in run["results"]}
         self.assertEqual(verdicts, {"ANC-001": "not_addressed", "REQ-014": "not_applicable"})
         self.assertEqual(run["results"][0]["anchor_id"], "ANC-001")  # failing first
@@ -1280,7 +1287,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(by_id["ANC-001"]["verdict"], "error")
         self.assertEqual(by_id["ANC-001"]["error"]["code"], "FIXTURE.MISSING")
         self.assertEqual(by_id["REQ-014"]["verdict"], "satisfied")
-        self.assertEqual((code, out["data"]["summary"]["errors"]), (1, ["ANC-001"]))
+        self.assertEqual((code, out["data"]["summary"]["pass"], out["data"]["summary"]["errors"]), (0, False, ["ANC-001"]))
 
     def test_malformed_fixture_answer_is_response_invalid(self):
         bad = plan_answers()
@@ -1482,7 +1489,7 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(*[http(422, "max_tokens_exceeded")] * 10, gate="dev")
             j = Judged(d, t, item_text="y" * 5000, extra_args=["--min-item-chars", "2000"], gate="dev")
-        self.assertEqual((j.code, j.result["verdict"]), (1, "error"))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"]), (0, False, "error"))
         self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
         self.assertIn("Shorten the evidence", j.result["error"]["suggested_action"])
         self.assertEqual(j.result["attempts"], 3)  # 5000, 2500, 2000 (floor), then give up
@@ -1526,7 +1533,7 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(529), http(529), http(529), http(529))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (1, "error", 3))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (0, False, "error", 3))
         self.assertEqual(j.result["error"]["code"], "JEV.OVERLOADED")
         self.assertTrue(j.result["error"]["recoverable"])
         self.assertEqual(len(t.bodies), 3)
@@ -1763,7 +1770,7 @@ class PlanSizeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "max_tokens_exceeded"))
             j = Judged(d, t, item_text="y" * 6000)
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"]), (1, "error", "PLAN.TOO_LARGE"))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["error"]["code"]), (0, False, "error", "PLAN.TOO_LARGE"))
         self.assertIn("Jev rejected it for context size", j.result["error"]["message"])
         self.assertEqual(j.result["error"]["data"]["shape"]["chars"], 6000)
         self.assertEqual(len(t.bodies), 1)
@@ -1924,11 +1931,11 @@ class CheckFixturesTests(unittest.TestCase):
                          [("ANC-001", "pass", 1, "satisfied", True), ("ANC-001", "fail", 1, "contradicted", True), ("ANC-001", "fail", 2, "not_addressed", True)])
         self.assertEqual((out["data"]["mismatches"], out["data"]["pass"], out["data"]["runs"], out["data"]["path"], out["data"]["run_path"]), ([], True, [], None, None))
 
-    def test_mismatch_exits_one_and_runs_go_under_fixtures_dir(self):
+    def test_mismatch_exits_zero_with_pass_false_and_runs_go_under_fixtures_dir(self):
         fixture = write(self.d.name, "answers.json", {"*": plan_answers()})  # everything satisfied: fail fixtures mismatch
         run_dir = str(Path(self.d.name) / "runs")
         code, out = self.check("--all", "--answers-file", fixture, "--run-dir", run_dir)
-        self.assertEqual(code, 1)
+        self.assertEqual((code, out["success"], out["data"]["pass"]), (0, True, False))
         self.assertEqual(out["data"]["mismatches"], ["ANC-001:fail:1", "ANC-001:fail:2"])
         self.assertEqual(out["data"]["path"], str(Path(run_dir) / "fixtures"))
         self.assertEqual(out["data"]["run_path"], out["data"]["path"])
@@ -2015,11 +2022,11 @@ class RetireUpdateTests(unittest.TestCase):
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
             # a hedged rewording is recorded with warnings, unless --strict
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", "The crates are probably copied from the legacy repo.", "--strict"])
-            self.assertEqual((code, out["error"]["code"]), (2, "ANCHOR.LINT"))
-            self.assertIn("hedged wording", out["error"]["message"])
+            self.assertEqual((code, out["success"], out["data"]["updated"], out["data"]["refused"]["code"]), (0, True, False, "ANCHOR.LINT"))
+            self.assertIn("hedged wording", out["data"]["refused"]["message"])
             self.assertEqual(json.loads(Path(path).read_text())["anchors"][0]["statement"], new)  # nothing written
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", "The crates are probably copied from the legacy repo."])
-            self.assertEqual((code, out["data"]["version"], out["data"]["lint"]["warnings"]), (0, 3, ["hedged wording; state the requirement"]))
+            self.assertEqual((code, out["data"]["updated"], out["data"]["version"], out["data"]["lint"]["warnings"]), (0, True, 3, ["hedged wording; state the requirement"]))
             # the statement may never become the quote, and the quote is immutable
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", QUOTE.upper() + "."])
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
@@ -2363,13 +2370,15 @@ class ErrorHandlingTests(unittest.TestCase):
             self.assertEqual(jj.parse_env_number("PLAN_ANCHOR_MAX_ITEM_CHARS", 24000, int), jj.Ok(24000))
 
     def test_exit_codes(self):
-        self.assertEqual(jj.exit_code_for("judge", {"success": True, "data": {"dry_run": False, "summary": {"pass": True}}}), 0)
-        self.assertEqual(jj.exit_code_for("judge", {"success": True, "data": {"dry_run": False, "summary": {"pass": False}}}), 1)
-        self.assertEqual(jj.exit_code_for("judge", {"success": True, "data": {"dry_run": True, "summary": {"pass": False}}}), 0)
-        self.assertEqual(jj.exit_code_for("check-fixtures", {"success": True, "data": {"mismatches": ["a"]}}), 1)
-        self.assertEqual(jj.exit_code_for("check-fixtures", {"success": True, "data": {"mismatches": []}}), 0)
-        self.assertEqual(jj.exit_code_for("validate", {"success": False, "data": {}}), 1)
-        self.assertEqual(jj.exit_code_for("report", "markdown text"), 0)
+        # A command that ran exits 0 whatever its answer; only a failure to run is nonzero, and never 1.
+        self.assertFalse(hasattr(jj, "exit_code_for"))
+        with tempfile.TemporaryDirectory() as d:
+            bad = write(d, "bad.json", record(anchor(status="nope")))
+            code, out = run_cli(["validate", "--anchors", bad])
+            self.assertEqual((code, out["success"], out["data"]["valid"]), (0, True, False))
+            code, out = run_cli(["validate", "--anchors", str(Path(d) / "missing.json")])
+            self.assertEqual((code, out["success"], out["data"]), (2, False, None))
+            self.assertEqual(set(out["error"]), {"code", "message", "recoverable", "suggested_action"})
 
     def test_documented_question_sets_load(self):
         for gate in ("plan", "dev"):

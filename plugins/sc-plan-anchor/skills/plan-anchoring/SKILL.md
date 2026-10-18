@@ -2,7 +2,7 @@
 name: plan-anchoring
 description: Capture the facts a user states while planning as numbered anchors (ANC-001...), one clear, testable requirement each, with the user's verbatim words kept as provenance, alongside existing requirements (REQ) and ADRs. Turn them into Jev-judged questions, tune and test the questions per anchor, and enforce them at two gates with a triage-apply-rerun loop. The planning gate checks each plan bead still says what the user said; the development gate checks the delivered sprint work followed it. Use when planning a phase or sprint with beads, when the user says "anchor this", "lock this", "don't let this drift", or "remember I said", when re-opening a plan after context compression, or when reviewing a sprint against its plan. Not for general code review, and not a replacement for plan hardening.
 metadata:
-  version: "0.7.1"
+  version: "0.7.2"
 ---
 
 # Plan Anchoring
@@ -20,7 +20,7 @@ which python3 && python3 --version          # 3.9 or newer
 python3 -c 'import yaml; print("PyYAML", yaml.__version__)'   # anchor_tracker.py only; python3 -m pip install pyyaml
 which jq && jq --version                    # gate agents parse question overrides with jq
 T="<this skill's directory>/scripts/anchor_tracker.py"
-python3 "$T" resolve > /tmp/anchor-tracker.json; echo "exit $?"
+python3 "$T" resolve > /tmp/anchor-tracker.json; jq '{success, error: .error.code}' /tmp/anchor-tracker.json
 ANCHOR_TRACKER="$(jq -r '.data.tracker // empty' /tmp/anchor-tracker.json)"
 which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
 which sc-compose && sc-compose --version    # 1.7.0 or newer
@@ -30,7 +30,7 @@ python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq '.d
 
 `allow_remote_judge` in the committed `.sc/plan-anchor/settings.yaml` is the user's answer to whether plan text may be sent to TypeSafe (Jev). `true`: continue. `false`: every live Jev call is refused with `POLICY.REMOTE_JUDGE_DISABLED`; tell the user and do only offline work. `null` (absent): ask the user once, record the answer with `python3 "<this skill's directory>/scripts/plan_anchor_settings.py" set allow_remote_judge true|false`, commit the file, then continue; never ask again in later sessions. Never infer consent from existing run files, committed evidence or past runs, and never write the setting without the user's answer; subagents never write it.
 
-`anchor_tracker.py resolve` selects `ANCHOR_TRACKER` (`bd` or `br`) for anchor storage, independently of whether plans are Markdown or tracker documents. An explicit `anchor_tracker` in the committed `.sc/plan-anchor/settings.yaml` wins and is checked against disk; without it a Dolt-backed `.beads/` selects `bd` and anything else selects `br`. A non-zero exit is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick the other tracker by hand. `resolve` is read-only; `python3 "$T" write` records the detected choice for the user to commit, and `write --init` runs `br init` when there is no `.beads/`. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Tracker commands below are written for the selected tracker, `"$ANCHOR_TRACKER"`; where a reference shows both, use the one `resolve` selected.
+`anchor_tracker.py resolve` selects `ANCHOR_TRACKER` (`bd` or `br`) for anchor storage, independently of whether plans are Markdown or tracker documents. An explicit `anchor_tracker` in the committed `.sc/plan-anchor/settings.yaml` wins and is checked against disk; without it a Dolt-backed `.beads/` selects `bd` and anything else selects `br`. `success: false` (exit 2) is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick the other tracker by hand. `resolve` is read-only; `python3 "$T" write` records the detected choice for the user to commit, and `write --init` runs `br init` when there is no `.beads/`. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Tracker commands below are written for the selected tracker, `"$ANCHOR_TRACKER"`; where a reference shows both, use the one `resolve` selected.
 
 If `resolve` reports `TRACKER.CLI_MISSING` (its `data.tracker` names the selected tracker, so `ANCHOR_TRACKER` is still set), or `sc-compose` is missing, Claude Code's bash may not share your shell's PATH. Check common locations:
 

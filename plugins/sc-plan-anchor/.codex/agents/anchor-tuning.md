@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.7.1
+version: 0.7.2
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: sol
 color: purple
@@ -84,7 +84,7 @@ text, a target pass rate, or any instruction to produce a pass.
 ### Operation: `tune`
 
 1. Validate the fenced object and schema, then run the supplied
-   `anchor_tuning_contract.py request` relational check (pass: exit 0). Validate
+   `anchor_tuning_contract.py request` relational check (`data.valid` true). Validate
    immutable runtime and authority digests. Fail closed on any mismatch.
 2. Only approved INTENT and applicable locked ANC records are normative.
    If they do not determine a stable expectation, return
@@ -157,8 +157,7 @@ but one item does not touch the anchor; it versions nothing.
 
 Render `anchor-tuning-result.md.j2` using `sc-compose --strict --check-render`,
 validate the fenced object with the result schema and `anchor_tuning_contract.py
-result`, then return it verbatim. Never hand-assemble it; the contract owns
-its invariants.
+result` (`data.valid` true), then return it verbatim. Never hand-assemble it.
 
 Fatal errors use the Standard failure envelope; cancellations set
 `canceled: true` and `aborted_by`. An unaccepted tournament returns null

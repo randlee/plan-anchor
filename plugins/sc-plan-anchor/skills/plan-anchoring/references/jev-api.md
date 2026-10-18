@@ -1,6 +1,6 @@
 ---
 name: jev-api
-version: 0.7.1
+version: 0.7.2
 description: How jev_judge.py talks to TypeSafe's Jev - endpoint, auth, request and response shape, validation, limits, the retry and context-shortening policy, every error code and flag, model pinning, and the committed allow_remote_judge setting that gates every call.
 ---
 
@@ -99,31 +99,41 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | `VALIDATION.ANCHORS`, `VALIDATION.INPUT` | record / arguments | Fix `anchors.json` (`validate`) or the flags |
 | `QUESTIONS.ROLES` | question set | An override renamed a question ID; keep the default IDs |
 | `ANCHOR.UNKNOWN`, `ANCHOR.DUPLICATE`, `ANCHOR.NONE`, `ANCHOR.NOT_LOCKED` | record | Wrong ID; already recorded; nothing locked; `--anchor` named a proposed or retired anchor (`--include-unlocked` is for fixtures only) |
-| `ANCHOR.DUPLICATE_CANDIDATE` | `add` | Statement or quote lexically close to an existing anchor; read the match, then `--allow-similar` only for a different constraint |
-| `ANCHOR.NOT_TESTABLE` | `add --rubric`, tuner | The statement failed the testability rubric or lint; rewrite it (`anchor-capture.md`) |
-| `ANCHOR.LINT` | `add --strict`, `update --strict` | The statement has lint warnings and strict mode was requested |
+| `ANCHOR.DUPLICATE_CANDIDATE` | `add` (exit 0, `data.refused.code`) | Statement or quote lexically close to an existing anchor; read the match, then `--allow-similar` only for a different constraint |
+| `ANCHOR.NOT_TESTABLE` | `add --rubric` (exit 0, `data.refused.code`), tuner | The statement failed the testability rubric or lint; rewrite it (`anchor-capture.md`) |
+| `ANCHOR.LINT` | `add --strict`, `update --strict` (exit 0, `data.refused.code`) | The statement has lint warnings and strict mode was requested |
 | `FIXTURES.MISSING` | tuner | No pass or fail fixture sentence; draft them with the user (`update --fixture-pass/--fixture-fail`) |
 | `INPUT.MISSING`, `INPUT.MALFORMED`, `INPUT.EMPTY` | files | A path is not a file, not JSON, or the item text is empty |
 | `FIXTURE.MISSING`, `FIXTURE.NONE` | `--answers-file`, `check-fixtures` | No fixture answer for an anchor; no anchor has fixtures |
 | `RUNS.NONE`, `RUNS.MISMATCH` | `coverage`, `diff` | No run files; runs for different gates or items |
 | `SCRIPT.INTERNAL` | anywhere | Unexpected exception, reported as JSON with exit 2 |
 
-Fatal codes abort with exit 2 and `success: false`. Transient codes land in `results[].error` inside a successful run that exits 1.
+Fatal codes abort with exit 2 and `success: false`. Transient codes land in `results[].error` inside a completed run: exit 0, the cell's verdict is `error`, and `data.summary.pass` is false.
 
 ## Exit codes
 
-| Code | `judge` | `check-fixtures` | `validate` | `lint` | `rubric` | `dedupe` | `shape` |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | gate passed, or dry run | every fixture landed as expected | no problems | no warnings | all testable | no likely duplicates | always |
-| 1 | a failing or `error` verdict; run file written | a mismatch | problems listed | warnings | some `needs_work` | likely duplicates | never |
-| 2 | fatal `JudgeError` or `SCRIPT.INTERNAL` | same | same | same | same | same | fatal only |
+A tool failure is the only nonzero exit. Exit 0 means the command ran (`success: true`); read the outcome from `data`, never from the exit code. Exit 2 means it could not do its job (`success: false` with a typed `error`). The only other exit code is 130, an interrupt.
+
+| Subcommand | Outcome field (exit 0) |
+| --- | --- |
+| `judge` | `data.summary.pass` (false on a failing or `error` verdict; the run file is written), `data.dry_run` |
+| `check-fixtures` | `data.pass`, `data.mismatches` |
+| `validate` | `data.valid`, `data.problems`, `data.warnings` |
+| `lint` | `data.clean`, `data.warning_count` |
+| `rubric` | `data.pass` (false when any anchor is `needs_work`) |
+| `dedupe` | `data.likely_duplicates` (empty when none) |
+| `add` | `data.added`; a refusal is `added: false` with `data.refused.code` (`ANCHOR.LINT`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.NOT_TESTABLE`) and nothing written |
+| `update` | `data.updated`; a `--strict` refusal is `updated: false` with `data.refused.code: ANCHOR.LINT` |
+| `report`, `coverage`, `diff` | `data.pass`; `data.uncovered_anchors`; `data.pass_after`, `data.regressions` |
+
+Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POLICY.REMOTE_JUDGE_DISABLED`, credential or network failure that stops the run, a missing dependency, and `SCRIPT.INTERNAL`.
 
 ## Other Jev-backed subcommands
 
 | Subcommand | Sends | Question set | Verdict |
 | --- | --- | --- | --- |
-| `rubric` | one anchor's statement, quote and scope | `assets/questions/testability.json` (single constraint, observable, requirement form, faithful to quote, scoped, positive form) | `testable` when every answer is yes at `--threshold` (default 0.6) and the lint has no error; else `needs_work` with the failing criteria; exit 1 on any `needs_work` |
-| `dedupe --jev` | one pair of anchors (statements and quotes) per request, only for pairs the lexical pass flagged at `--threshold` (Jaccard, default 0.5) | `assets/questions/dedupe.json` (same constraint?) | pairs with `jev.choice` and confidence; likely duplicates are `yes` at the global confidence threshold, or Jaccard >= 0.8 without Jev; exit 1 when any remain. `--answers-file` implies `--jev` |
+| `rubric` | one anchor's statement, quote and scope | `assets/questions/testability.json` (single constraint, observable, requirement form, faithful to quote, scoped, positive form) | `testable` when every answer is yes at `--threshold` (default 0.6) and the lint has no error; else `needs_work` with the failing criteria; `data.pass` false on any `needs_work` |
+| `dedupe --jev` | one pair of anchors (statements and quotes) per request, only for pairs the lexical pass flagged at `--threshold` (Jaccard, default 0.5) | `assets/questions/dedupe.json` (same constraint?) | pairs with `jev.choice` and confidence; likely duplicates are `yes` at the global confidence threshold, or Jaccard >= 0.8 without Jev; `data.likely_duplicates` lists any that remain. `--answers-file` implies `--jev` |
 | `check-fixtures` | one fixture sentence as the item | the gate's set | pass -> `satisfied`, fail -> `not_addressed` or `contradicted` |
 
 `lint` and `shape` are deterministic and never contact Jev. `lint` with neither `--id` nor `--all` lints every non-retired anchor.

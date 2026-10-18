@@ -24,7 +24,7 @@ The design is documented in [docs/design/architecture-and-call-graphs.md](docs/d
 - **Multi-agent delivery.** A planning agent drafts beads, dev agents implement, a quality manager reviews. The planning gate stops forgotten directives before code exists; the development gate stops the quality manager accepting work that planned the directive and then abandoned it.
 - **Requirement and ADR enforcement.** Numbered requirements and decisions you already maintain are judged bead by bead with the same machinery, so "REQ-014 is satisfied somewhere in this plan" is computed, not remembered.
 - **Pull request review against the plan.** Point the development gate at a PR and get, per anchor, whether the PR description shows the directive was followed and where to look to confirm it.
-- **CI without a key.** Fixture answers exercise the whole pipeline offline, so the gating logic and report format are testable and a failing gate exits non-zero.
+- **CI without a key.** Fixture answers exercise the whole pipeline offline, so the gating logic and report format are testable, and CI gates on the JSON outcome (`data.summary.pass`); a nonzero exit is reserved for tool failure.
 - **Promoting decisions.** An anchor that proves durable is promoted to an ADR and keeps its ID and history.
 
 Not for: general code review, style review, or plan hardening without anchors. It composes with plan-hardening workflows rather than replacing them.
@@ -148,7 +148,7 @@ plugins/sc-plan-anchor/
 | `set-beads` | Record the anchor tree's bead IDs |
 | `compose-item` | Turn `bd show --json` output into the labelled item text the agents send |
 | `agent-preflight` | Canonicalize and confine agent-provided paths to the repository; validate IDs and PR numbers before any read or upload |
-| `judge` | One Jev request per anchor for one item; gating; writes the run file. Exit 0 pass, 1 failing gate, 2 fatal |
+| `judge` | One Jev request per anchor for one item; gating; writes the run file. Exit 0 when the run completed (outcome in `data.summary.pass`), 2 fatal; the only exit codes are 0, 2 and 130 |
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
@@ -165,8 +165,8 @@ redistribute or inherit this repository's test suite. They use fixture answers
 and a stub transport; they cover ID allocation, gating, overrides, retries and
 context shortening, response validation, report format, coverage and diffs,
 not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.9
-and the latest 3.x. A smoke run with no key (exits 1 because the example gate
-fails by design):
+and the latest 3.x. A smoke run with no key (exits 0 with `data.summary.pass: false`, because the
+example gate fails by design):
 
 ```bash
 S=plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py

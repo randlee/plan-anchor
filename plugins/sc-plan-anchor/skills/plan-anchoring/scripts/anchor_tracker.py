@@ -28,8 +28,9 @@ Exit codes (the plugin convention shared with jev_judge.py)
   0  success: stdout holds {success: true, data}
   2  any error, including invalid arguments (VALIDATION.INPUT) and an internal
      error (SCRIPT.INTERNAL): stdout holds {success: false, error}; the error
-     code says what to fix. Exit 1 is not used: in this plugin it means a
-     completed run with a negative result, and selection has none.
+     code says what to fix. There is no exit 1 anywhere in this plugin: a
+     command that ran reports a negative answer in data with exit 0, and
+     selection has none.
 """
 
 from __future__ import annotations

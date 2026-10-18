@@ -1,5 +1,5 @@
 ---
-version: 0.7.1
+version: 0.7.2
 ---
 
 # Reference catalog
@@ -21,8 +21,8 @@ version: 0.7.1
 - `references/triage-and-iteration.md` - the run, triage, apply, re-run, diff loop and the stop conditions
 - `references/plan-size-and-shape.md` - oversized beads and phases: triage order, what Jev reads, `shape` metrics
 - `references/measured-behaviour.md` - the numbers behind every rule
-- `references/planning-gate.md` - inputs, run, exit codes, reading results
-- `references/development-gate.md` - inputs, evidence, run, exit codes, reading results
+- `references/planning-gate.md` - inputs, run, exit codes and the outcome field, reading results
+- `references/development-gate.md` - inputs, evidence, run, exit codes and the outcome field, reading results
 - `references/plan-anchor-questions.md` - the planning-gate question set and why it is orthogonal
 - `references/code-review-questions.md` - the development-gate question set and its evidence
 - `references/verdict-gating.md` - answers to verdicts, thresholds, coverage, diffs
