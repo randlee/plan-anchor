@@ -41,7 +41,7 @@ python3 "$S" judge --anchors "$A" --gate dev --all --item-id <sprint ID> --item-
   --item-file "$W/item.txt" [--overrides-file "$W/overrides.json"] --run-dir doc/plan/phase-current/anchor-runs
 ```
 
-Exit codes as at the planning gate: 0 the run completed (read `data.summary.pass`: false on failing or `error` verdicts, with the run file written), 2 fatal.
+Exit codes as at the planning gate: 0 the run completed with an answer for every anchor (read `data.summary.pass`: false on failing verdicts, with the run file written), 2 fatal, including any anchor Jev gave no answer for (`data.run_path` names the partial run).
 
 ## Pairing with deterministic checks
 

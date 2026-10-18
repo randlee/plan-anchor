@@ -81,13 +81,15 @@ from plan_anchor_settings import (  # noqa: E402
     SETTINGS_RELPATH,
     TRACKERS,
     Settings,
+    commit_path,
     effective_settings,
     find_repo_root,
     git_ignored,
+    inherited,
     settings_path,
-    write_settings,
+    write_settings_file,
 )
-from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, run_main, utf8_stdio  # noqa: E402
 
 Which = Callable[[str], Optional[str]]
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -149,7 +151,7 @@ class Selection:
             "settings_path": str(self.settings_file or own),
             "settings_relpath": SETTINGS_RELPATH,
             "settings_present": self.settings is not None,
-            "settings_inherited": self.settings_file is not None and self.settings_file != own,
+            "settings_inherited": inherited(self.settings_file, self.root),
             "cli_path": self.cli_path,
             "beads_initialized": self.beads.exists,
             "evidence": self.beads.to_json(),
@@ -246,15 +248,18 @@ def resolve(start: Path, *, which: Which = shutil.which, pinned: Optional[str] =
     root = find_repo_root(start)
     if isinstance(root, Err):
         return root
-    found = effective_settings(root.value)
+    # The nearest settings file at or above ``start`` wins (REQ-070), so the walk starts there, not at the
+    # git top level: an install in a folder inside the repository writes its settings in that folder.
+    found = effective_settings(Path(start).resolve())
     if isinstance(found, Err):
         return found
     settings = Ok(found.value.settings)
     beads = inspect_beads(root.value)
     if isinstance(beads, Err):
         return beads
-    own = found.value.path is None or found.value.path == settings_path(root.value)
-    chosen = _choose(settings.value, pinned, beads.value, SETTINGS_RELPATH if own else str(found.value.path))
+    path = found.value.path
+    shown = SETTINGS_RELPATH if path is None or path == settings_path(root.value) else commit_path(path, root.value)
+    chosen = _choose(settings.value, pinned, beads.value, shown)
     if isinstance(chosen, Err):
         return chosen
     tracker, source = chosen.value
@@ -316,22 +321,25 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
         beads, initialized = after.value, True
 {% endif %}
     written = False
-    path = settings_path(sel.root)
+    # The file in effect when it is the repository's own or a subfolder install's; else a new one at the root.
+    own = sel.settings_file is not None and not inherited(sel.settings_file, sel.root)
+    path = sel.settings_file if own else settings_path(sel.root)
+    shown = commit_path(path, sel.root)
     if sel.settings is None or sel.settings.anchor_tracker is None:
         kept = sel.settings.allow_remote_judge if sel.settings is not None else None
-        saved = write_settings(sel.root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker,
-                                                  allow_remote_judge=kept))
+        saved = write_settings_file(path, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker,
+                                                   allow_remote_judge=kept))
         if isinstance(saved, Err):
             return saved
         written = True
-    commit = [SETTINGS_RELPATH] if written else []
+    commit = [shown] if written else []
     if initialized:
         commit.append(".beads/")
-    checked = _git_ignored(sel.root, SETTINGS_RELPATH)
+    checked = _git_ignored(sel.root, shown)
     ignored = checked.value if isinstance(checked, Ok) else None
     actions = []
     if written:
-        actions.append(f"Commit {SETTINGS_RELPATH} so every clone selects {sel.tracker}.")
+        actions.append(f"Commit {shown} so every clone selects {sel.tracker}.")
 {% if tracker == "br" %}
     if initialized:
         actions.append("Run 'br sync --flush-only', then commit .beads/ (beads.db stays gitignored by design).")
@@ -339,9 +347,9 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
         actions.append("No .beads/ yet: rerun with --init to run 'br init' (the only bootstrap this skill performs).")
 {% endif %}
     if ignored:
-        actions.append(f"{SETTINGS_RELPATH} is gitignored; un-ignore it so the selection is committed.")
+        actions.append(f"{shown} is gitignored; un-ignore it so the selection is committed.")
     elif isinstance(checked, Err):
-        actions.append(f"Could not check whether {SETTINGS_RELPATH} is gitignored ({checked.error}); "
+        actions.append(f"Could not check whether {shown} is gitignored ({checked.error}); "
                        "confirm with 'git check-ignore -v' before committing.")
     data = sel.to_json()
     data.update({
@@ -422,5 +430,4 @@ def main(argv: Optional[list] = None, *, which: Which = shutil.which, run: Runne
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    sys.exit(run_main(main))

@@ -22,6 +22,7 @@ where a missing wheel is a failure.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import importlib.util
 import json
 import os
@@ -171,12 +172,25 @@ def render_scripts(tracker: str) -> Path:
 SCRIPTS = render_scripts(TEST_TRACKER)
 
 
-def installed_scripts(root: Path, target: str = "claude") -> Path:
+def installed_scripts(root: Path, target: str = "claude", lock: bool = True) -> Path:
     """Copy the rendered scripts into ``root`` in the installed layout; returns the scripts directory.
 
-    jev_judge.py's agent-preflight trusts only a copy in the nearest per-folder install, so
-    a test that runs preflight runs it from such a copy, as an installed agent does.
+    jev_judge.py's agent-preflight trusts only a copy in the nearest per-folder install that the
+    installer recorded, so a test that runs preflight runs it from such a copy, as an installed agent
+    does: ``lock`` (default) also writes ``.sc/plan-anchor/install-lock.json`` listing the copied files,
+    merged with a lock already there. ``lock=False`` leaves a hand-copied, untrusted layout.
     """
     dest = root / f".{target}" / "skills" / "plan-anchoring" / "scripts"
     shutil.copytree(SCRIPTS, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    if lock:
+        lock_path = root / ".sc" / "plan-anchor" / "install-lock.json"
+        record = json.loads(lock_path.read_text(encoding="utf-8")) if lock_path.is_file() else {
+            "package": "sc-plan-anchor", "version": "test", "tracker": TEST_TRACKER, "targets": [], "files": {}}
+        if target not in record["targets"]:
+            record["targets"].append(target)
+        for path in sorted(dest.rglob("*")):
+            if path.is_file():
+                record["files"][path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return dest

@@ -75,7 +75,7 @@ when its bytes match something an earlier version shipped
 
 Output: the JSON envelope ``{success, data, error}``; exit 0 when the command
 ran (``--status`` included, whatever it found), 2 on any error (an unexpected
-exception is ``SCRIPT.INTERNAL``).
+exception is ``SCRIPT.INTERNAL``), 130 on an interrupt (code ``CANCELED``).
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ _result = _load_plain_script("result")
 _paths = _load_plain_script("plan_anchor_paths")
 Err, Ok, Result, ToolError, err, utf8_stdio = (_result.Err, _result.Ok, _result.Result, _result.ToolError,
                                                _result.err, _result.utf8_stdio)
-find_lock, global_location = _paths.find_lock, _paths.global_location
+find_lock, find_settings, global_location = _paths.find_lock, _paths.find_settings, _paths.global_location
 
 PACKAGE = "sc-plan-anchor"
 LEGACY_PATH = INSTALL_DIR / "legacy-owned.json"
@@ -642,25 +642,50 @@ class TrackerChoice:
     init_br: bool             # br init will run
     cli_path: str
     folder: bool = False      # not a repository and no .beads/: child repositories are checked at gate time
+    beads_root: Optional[Path] = None  # where .beads/ is checked (and br init runs): the destination, or the
+                                       # repository a destination folder sits inside
 
 
 def is_repository(root: Path) -> bool:
     return (root / ".git").exists()
 
 
+def enclosing_repository(root: Path) -> Optional[Path]:
+    """The repository ``root`` is, or sits inside: the nearest folder at or above it holding ``.git``
+    (walking up and stopping before the home directory, as every lookup here does), or None."""
+    for directory in _paths.ancestors(root):
+        if is_repository(directory):
+            return directory
+    return None
+
+
 def choose_tracker(root: Path, requested: Optional[str], init_br: bool, which: Which) -> Result[TrackerChoice, ToolError]:
     settings = read_settings(root)  # the destination's own file: the one this install writes
     if isinstance(settings, Err):
         return settings
-    beads = inspect_beads(root)
+    # A destination inside a repository (a subfolder install) checks the repository's .beads/, as the
+    # installed anchor_tracker.py does from there, unless the destination has a .beads/ of its own.
+    repository = enclosing_repository(root)
+    beads_root = root if (root / ".beads").exists() or repository is None else repository
+    beads = inspect_beads(beads_root)
     if isinstance(beads, Err):
         return beads
     configured = settings.value.anchor_tracker if settings.value is not None else None
-    folder = not beads.value.exists and not is_repository(root)
+    configured_label = f"{SETTINGS_RELPATH} anchor_tracker"
+    if not configured and root.parent != root:
+        # No setting of its own: the settings file the gates would read here (the nearest one above) decides.
+        above = find_settings(root.parent)
+        if above is not None:
+            inherited = read_settings(above.parent.parent.parent)
+            if isinstance(inherited, Err):
+                return inherited
+            if inherited.value is not None and inherited.value.anchor_tracker:
+                configured, configured_label = inherited.value.anchor_tracker, f"{above} anchor_tracker"
+    folder = not beads.value.exists and repository is None
     if requested:
         tracker, origin, label = requested, "--tracker", "--tracker"
     elif configured:
-        tracker, origin, label = configured, "settings", f"{SETTINGS_RELPATH} anchor_tracker"
+        tracker, origin, label = configured, "settings", configured_label
     elif folder:
         return err("TRACKER.REQUIRED",
                    f"{root} is not a repository and has no .beads/, so the anchor tracker cannot be detected",
@@ -693,7 +718,7 @@ def choose_tracker(root: Path, requested: Optional[str], init_br: bool, which: W
     cli = locate_cli(tracker, which)
     if isinstance(cli, Err):
         return cli
-    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value, folder))
+    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value, folder, beads_root))
 
 
 # ---------------------------------------------------------------- plan
@@ -940,8 +965,9 @@ def _prune(root: Path, start: Path, stop: Path) -> None:
 def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[str], ToolError]:
     """Write the plan. Returns the paths to commit."""
     root = plan.root
+    beads_root = choice.beads_root or root
     if plan.br_init:
-        initialized = init_br(choice.cli_path, root, run)
+        initialized = init_br(choice.cli_path, beads_root, run)
         if isinstance(initialized, Err):
             return initialized
     try:
@@ -987,7 +1013,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         commit.append(SETTINGS_RELPATH)
     if plan.br_init:
-        commit.append(".beads/")
+        commit.append(".beads/" if beads_root == root else Path(os.path.relpath(beads_root / ".beads", root)).as_posix() + "/")
     return Ok(commit)
 
 
@@ -1131,6 +1157,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "previous_version": lock.value.version if lock.value is not None else None,
         "install_root": str(root.value),
         "repository": is_repository(root.value),
+        "repository_root": str(enclosing_repository(root.value)) if enclosing_repository(root.value) else None,
         "tracker": c.tracker,
         "tracker_origin": c.origin,
         "previous_tracker": previous,
@@ -1244,5 +1271,4 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    sys.exit(_result.run_main(main))  # UTF-8 streams; an interrupt is the CANCELED envelope and exit 130

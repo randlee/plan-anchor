@@ -50,8 +50,8 @@ python3 "$S" judge --anchors "$A" --gate plan --all --item-id <sprint-id> --item
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | The run completed; read `data.summary.pass`: true when every anchor is `satisfied`, `not_applicable`, `deterministic_only` or `excluded` (or a dry run, `data.dry_run`), false on at least one `contradicted`, `not_addressed`, `underspecified` or `error` verdict; the run file was written |
-| 2 | Fatal before judging: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, or `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`) |
+| 0 | The run completed with an answer for every anchor; read `data.summary.pass`: true when every anchor is `satisfied`, `not_applicable`, `deterministic_only` or `excluded`, false on at least one `contradicted`, `not_addressed`, `asserted_only` or `underspecified` verdict; the run file was written. A dry run (`data.dry_run`) judges nothing and is never a pass: `data.summary.pass` is false |
+| 2 | The tool could not do its job: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`), or any anchor Jev gave no answer for after retries (`JEV.*`, `FIXTURE.MISSING`); the partial run is still written and `data.run_path` names it |
 
 Then, across all sprint items:
 

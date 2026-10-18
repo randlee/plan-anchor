@@ -12,8 +12,11 @@ required_variables:
 The file follows the Synaptic Canvas convention: one subfolder per package
 under ``.sc/``, YAML with snake_case keys, committed to git, never secrets.
 
-Lookup: the nearest settings file at or above the working directory wins
-(``plan_anchor_paths.find_settings``: walk up, stop before the home directory).
+Lookup: the nearest settings file at or above the working directory (or
+``--repository-root``) wins (``plan_anchor_paths.find_settings``: walk up, stop
+before the home directory). The walk starts at that path, not at the git top
+level, so an install in a folder inside a repository reads the settings it
+wrote there.
 A parent folder that holds many repositories can carry one file for all of
 them, and a repository overrides it with its own. The nearest file wins as a
 whole: keys are never merged across files, so an override that omits
@@ -59,7 +62,7 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from plan_anchor_paths import find_settings  # noqa: E402
-from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, run_main, utf8_stdio  # noqa: E402
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
@@ -323,10 +326,11 @@ def set_value(start: Path, key: str, value: Any) -> Result[dict, ToolError]:
     root = find_repo_root(start)
     if not root.ok:
         return root
-    effective = effective_settings(root.value)
+    effective = effective_settings(start.resolve())
     if not effective.ok:
         return effective  # a malformed file is never overwritten
-    # The answer goes into the file that applies here: the nearest one, else a new one at the repository root.
+    # The answer goes into the file that applies here: the nearest one at or above ``start``,
+    # else a new one at the repository root.
     path = effective.value.path or settings_path(root.value)
     current = Ok(effective.value.settings)
     before = current.value if current.value is not None else Settings(schema_version=SCHEMA_VERSION, anchor_tracker=None)
@@ -337,13 +341,14 @@ def set_value(start: Path, key: str, value: Any) -> Result[dict, ToolError]:
         saved = write_settings_file(path, after)
         if not saved.ok:
             return saved
-    checked = git_ignored(path.parent.parent.parent, SETTINGS_RELPATH)
+    shown = commit_path(path, root.value)
+    checked = git_ignored(path.parent.parent.parent, SETTINGS_RELPATH)  # relative to the folder holding the file
     ignored = checked.value if checked.ok else None
-    actions = [f"Commit {SETTINGS_RELPATH} so every clone and every agent uses this answer."] if written else []
+    actions = [f"Commit {shown} so every clone and every agent uses this answer."] if written else []
     if ignored:
-        actions.append(f"{SETTINGS_RELPATH} is gitignored; un-ignore it so the answer is committed.")
+        actions.append(f"{shown} is gitignored; un-ignore it so the answer is committed.")
     elif not checked.ok:
-        actions.append(f"Could not check whether {SETTINGS_RELPATH} is gitignored ({checked.error}); "
+        actions.append(f"Could not check whether {shown} is gitignored ({checked.error}); "
                        "confirm with 'git check-ignore -v' before committing.")
     return Ok({
         "key": key,
@@ -353,19 +358,39 @@ def set_value(start: Path, key: str, value: Any) -> Result[dict, ToolError]:
         "repository_root": str(root.value),
         "settings_path": str(path),
         "settings_relpath": SETTINGS_RELPATH,
-        "settings_inherited": path != settings_path(root.value),
+        "settings_inherited": inherited(path, root.value),
         "settings_ignored_by_git": ignored,
         "settings_ignored_check_error": None if checked.ok else checked.error,
-        "commit_paths": [SETTINGS_RELPATH] if written else [],
+        "commit_paths": [shown] if written else [],
         "next_actions": actions,
     })
+
+
+def inherited(path: Optional[Path], root: Path) -> bool:
+    """Whether the settings file in effect lives above the repository (a parent-folder install).
+
+    The repository's own file and one in a folder inside it (an install there) are not inherited.
+    """
+    if path is None:
+        return False
+    holder = Path(path).resolve().parent.parent.parent  # <dir>/.sc/plan-anchor/settings.yaml
+    return holder in Path(root).resolve().parents
+
+
+def commit_path(path: Path, root: Path) -> str:
+    """How to name ``path`` for a commit: relative to the repository root when inside it, else absolute."""
+    resolved, top = Path(path).resolve(), Path(root).resolve()
+    try:
+        return resolved.relative_to(top).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 def show(start: Path) -> Result[dict, ToolError]:
     root = find_repo_root(start)
     if not root.ok:
         return root
-    current = effective_settings(root.value)
+    current = effective_settings(start.resolve())
     if not current.ok:
         return current
     s, path = current.value.settings, current.value.path
@@ -374,7 +399,7 @@ def show(start: Path) -> Result[dict, ToolError]:
         "settings_path": str(path) if path is not None else str(settings_path(root.value)),
         "settings_relpath": SETTINGS_RELPATH,
         "settings_present": s is not None,
-        "settings_inherited": path is not None and path != settings_path(root.value),
+        "settings_inherited": inherited(path, root.value),
         "schema_version": s.schema_version if s is not None else None,
         "anchor_tracker": s.anchor_tracker if s is not None else None,
         "allow_remote_judge": s.allow_remote_judge if s is not None else None,
@@ -444,5 +469,4 @@ def main(argv: Optional[list] = None) -> int:
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    sys.exit(run_main(main))

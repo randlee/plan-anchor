@@ -176,9 +176,6 @@ JEV_CASES = {
     "anchor_unknown": (["update", "--anchors", "anchors.json", "--id", "ANC-404", "--scope", "x"], {"anchors.json": LOCKED}, {}, None, 2,
                        {"code": "ANCHOR.UNKNOWN", "message": "No anchor with id ANC-404", "recoverable": False,
                         "suggested_action": "Check anchors.json for the exact ID."}, None),
-    "anchor_duplicate": (ADD + ["--statement", "Every command must emit JSON.", "--source-type", "REQ", "--source-ref", "REQ-014"],
-                         {"anchors.json": record(anchor("REQ-014", source_type="REQ", source_ref="REQ-014"))}, {}, None, 2,
-                         {"code": "ANCHOR.DUPLICATE", "message": "REQ-014 already recorded", "recoverable": False, "suggested_action": ""}, None),
     "anchor_none": (JUDGE + ["--dry-run"], {"anchors.json": record(anchor(status="proposed")), "item.txt": ITEM}, {}, None, 2,
                     {"code": "ANCHOR.NONE", "message": "no locked anchors to judge", "recoverable": False,
                      "suggested_action": "Lock at least one anchor, or pass --anchor."}, None),
@@ -186,10 +183,6 @@ JEV_CASES = {
                           {"anchors.json": record(anchor(status="proposed")), "item.txt": ITEM}, {}, None, 2,
                           {"code": "ANCHOR.NOT_LOCKED", "message": "anchors not locked or promoted: ANC-001", "recoverable": False,
                            "suggested_action": "Lock the anchor first, or pass --include-unlocked to judge a proposed or retired anchor deliberately."}, None),
-    "verbatim_statement": (ADD + ["--statement", "Copy it must.", "--quote", "copy it must"], {}, {}, None, 2,
-                           {"code": "VALIDATION.INPUT", "message": "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)",
-                            "recoverable": True,
-                            "suggested_action": "Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote."}, None),
     "input_missing": (["validate", "--anchors", "missing.json"], {}, {}, None, 2,
                       {"code": "INPUT.MISSING", "message": "anchors.json not found: 'missing.json'", "recoverable": False,
                        "suggested_action": "Pass the path of an existing file for the anchors.json."}, None),
@@ -208,7 +201,9 @@ JEV_CASES = {
     "input_empty": (JUDGE + ["--dry-run"], {"anchors.json": LOCKED, "item.txt": " \n"}, {}, None, 2,
                     {"code": "INPUT.EMPTY", "message": "item text is empty", "recoverable": False,
                      "suggested_action": "Pass the bead or work description via --item-file."}, None),
-    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 0,
+    # 0.8.3: a cell the fixture cannot answer is a tool failure (exit 2); data is the partial run,
+    # so the envelope is pinned in test_fixture_missing_is_a_tool_failure_with_the_partial_run
+    "fixture_missing": (JUDGE + ["--answers-file", "a.json"], {"anchors.json": LOCKED, "item.txt": ITEM, "a.json": {"other": plan_answers()}}, {}, None, 2,
                         None, None),
     "fixture_none": (["check-fixtures", "--anchors", "anchors.json", "--gate", "plan", "--all", "--dry-run"], {"anchors.json": LOCKED}, {}, None, 2,
                      {"code": "FIXTURE.NONE", "message": "no fixture sentences recorded on the selected anchors", "recoverable": False,
@@ -254,17 +249,29 @@ PREFLIGHT_CASES = {
 # A quality gate saying no to `add` is a completed negative answer: exit 0, success, data.added false,
 # and data.refused carries the code, message and suggested action the refusal used to carry as an error.
 REFUSAL_CASES = {
+    # 0.8.3: a duplicate ID and a statement that repeats the quote are refusals too (they were exit 2)
+    "anchor_duplicate": (ADD + ["--statement", "Every command must emit JSON.", "--source-type", "REQ", "--source-ref", "REQ-014"],
+                         {"anchors.json": record(anchor("REQ-014", source_type="REQ", source_ref="REQ-014"))}, {}, None, 0,
+                         {"code": "ANCHOR.DUPLICATE", "message": "REQ-014 already recorded", "recoverable": True,
+                          "suggested_action": "Update REQ-014 instead (`update --id REQ-014`), or retire it first."}, None),
+    "verbatim_statement": (ADD + ["--statement", "Copy it must.", "--quote", "copy it must"], {}, {}, None, 0,
+                           {"code": "VALIDATION.INPUT", "message": "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)",
+                            "recoverable": True,
+                            "suggested_action": "Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote."}, None),
     "anchor_duplicate_candidate": (ADD + ["--statement", STATEMENT, "--quote", "other words"], {"anchors.json": LOCKED}, {}, None, 0,
                                    {"code": "ANCHOR.DUPLICATE_CANDIDATE", "message": "the new anchor looks like an existing one: ANC-001 (jaccard 1.0, statement/statement)",
+                                    "recoverable": True,
                                     "suggested_action": "Update ANC-001 instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint."}, None),
     "anchor_not_testable": (ADD + ["--statement", "Every command must emit JSON.", "--quote", "json", "--rubric", "--answers-file", "a.json"],
                             {"a.json": {"*": rubric_answers("no")}}, {}, None, 0,
                             {"code": "ANCHOR.NOT_TESTABLE",
                              "message": "the statement did not pass the testability rubric (needs_work): single_constraint, observable, faithful, scoped, self_contained",
+                             "recoverable": True,
                              "suggested_action": "Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, or pass --allow-untestable to record it anyway."}, None),
     "anchor_lint": (ADD + ["--statement", "We should keep things clean.", "--quote", "x y z", "--strict"], {}, {}, None, 0,
                     {"code": "ANCHOR.LINT",
                      "message": "statement has testability warnings: hedged wording; state the requirement; written as speech, not as a requirement; not phrased as a testable requirement; vague term; name the observable outcome",
+                     "recoverable": True,
                      "suggested_action": "Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway."}, None),
 }
 
@@ -300,14 +307,22 @@ class JevJudgeErrorContracts(unittest.TestCase):
                 saved = json.loads(Path("anchors.json").read_text()) if Path("anchors.json").exists() else {"anchors": []}
                 self.assertEqual([a["id"] for a in saved["anchors"]], [a["id"] for a in files.get("anchors.json", {"anchors": []})["anchors"]])
 
-    def test_fixture_missing_is_a_per_anchor_error_verdict(self):
+    def test_fixture_missing_is_a_tool_failure_with_the_partial_run(self):
+        # 0.8.3 (was test_fixture_missing_is_a_per_anchor_error_verdict, exit 0): no answer is exit 2
         argv, files, env, stdin, _, _, _ = JEV_CASES["fixture_missing"]
         with Workspace(files):
             code, out = call_main(jj.main, list(argv), env=env)
+            on_disk = json.loads(Path(out["data"]["run_path"]).read_text(encoding="utf-8"))
+        action = "Add an entry for ANC-001 (or '*') to the answers file."
+        self.assertEqual((code, out["success"]), (2, False))
+        self.assertEqual(out["error"], {"code": "FIXTURE.MISSING", "recoverable": False, "suggested_action": action,
+                                        "message": "1 of 1 judged cells got no answer from Jev: ANC-001: FIXTURE.MISSING (answers fixture has no entry for ANC-001 (or '*'))"})
+        self.assertEqual(out["data"]["failures"], [{"id": "ANC-001", "code": "FIXTURE.MISSING", "message": "answers fixture has no entry for ANC-001 (or '*')"}])
         result = out["data"]["results"][0]
-        self.assertEqual((code, out["success"], out["data"]["summary"]["pass"], result["verdict"], result["attempts"]), (0, True, False, "error", 0))
+        self.assertEqual((out["data"]["summary"]["pass"], result["verdict"], result["attempts"]), (False, "error", 0))
         self.assertEqual(result["error"], {"code": "FIXTURE.MISSING", "message": "answers fixture has no entry for ANC-001 (or '*')",
-                                           "recoverable": False, "suggested_action": ""})
+                                           "recoverable": False, "suggested_action": action})
+        self.assertEqual(on_disk["results"], out["data"]["results"])
 
     def test_validate_problems_and_lint_warnings_exit_zero(self):
         with Workspace({"anchors.json": record(anchor(statement=""))}):
@@ -371,7 +386,9 @@ class JevTransportErrorContracts(unittest.TestCase):
             with self.subTest(error_code=error_code, message=message):
                 code, out, calls, sleeps = self.judge([failure, failure, failure])
                 result = out["data"]["results"][0]
-                self.assertEqual((code, out["data"]["summary"]["pass"], calls, sleeps, result["verdict"], result["attempts"]), (0, False, 3, delays, "error", 3))
+                # 0.8.3: retries exhausted is exit 2 with the cell's code; data is the partial run
+                self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, error_code))
+                self.assertEqual((out["data"]["summary"]["pass"], calls, sleeps, result["verdict"], result["attempts"]), (False, 3, delays, "error", 3))
                 self.assertEqual((result["error"]["code"], result["error"]["message"], result["error"]["recoverable"]), (error_code, message, True))
 
     def test_transient_failure_then_success_passes(self):
@@ -380,25 +397,29 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def test_non_transient_http_errors_are_recorded_without_retry(self):
         code, out, calls, _ = self.judge([http_error(422, b"questions.addressed is invalid")])
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
+        self.assertEqual((code, out["error"]["code"], out["error"]["recoverable"]), (2, "JEV.VALIDATION", False))  # 0.8.3: exit 2
+        self.assertEqual((out["data"]["summary"]["pass"], calls), (False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.VALIDATION", "message": "Jev HTTP 422: questions.addressed is invalid",
                                                                "recoverable": False, "suggested_action": "Fix the named field; usually a malformed question override."})
         code, out, calls, _ = self.judge([http_error(418, b"teapot")])
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls), (0, False, 1))
+        self.assertEqual((code, out["error"]["code"]), (2, "JEV.HTTP"))  # 0.8.3: exit 2
+        self.assertEqual((out["data"]["summary"]["pass"], calls), (False, 1))
         self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.HTTP", "message": "Jev HTTP 418; response body withheld",
                                                                "recoverable": False, "suggested_action": "Check the request body."})
 
     def test_plan_gate_context_overflow_is_plan_too_large_and_dev_gate_shortens(self):
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens exceeded")])
         error = out["data"]["results"][0]["error"]
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls, error["code"], error["recoverable"]), (0, False, 1, "PLAN.TOO_LARGE", False))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, error["code"], error["recoverable"]), (2, False, 1, "PLAN.TOO_LARGE", False))
+        self.assertEqual(out["error"]["code"], "PLAN.TOO_LARGE")  # 0.8.3: the run fails as PLAN.TOO_LARGE, exit 2
         self.assertIn("Jev rejected it for context size (Jev HTTP 400: request exceeds the model's context window)", error["message"])
         self.assertEqual(error["data"]["item_id"], "ex-42")
 
         code, out, calls, _ = self.judge([http_error(400, b"max_tokens"), http_error(400, b"max_tokens")], gate="dev",
                                          extra=("--min-item-chars", "1000"), item="evidence " * 200)
         result = out["data"]["results"][0]
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls, result["item_shortened"], result["attempts"]), (0, False, 2, True, 2))
+        self.assertEqual((code, out["data"]["summary"]["pass"], calls, result["item_shortened"], result["attempts"]), (2, False, 2, True, 2))
+        self.assertEqual(out["error"]["code"], "JEV.CONTEXT_EXCEEDED")  # 0.8.3: exit 2
         self.assertEqual(result["error"], {
             "code": "JEV.CONTEXT_EXCEEDED",
             "message": "Jev rejected the request for context size with the item at 1055 chars (floor --min-item-chars 1000): "

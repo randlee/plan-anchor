@@ -8,7 +8,7 @@ the record schema, verdict table and anchor lifecycle are in
 records only the decisions and why; requirements are in
 [requirements.md](requirements.md).
 
-Statuses describe the code on `main` at 0.8.2: `accepted` (built and in
+Statuses describe the code on `main` at 0.8.3: `accepted` (built and in
 force), `partial` (built, with the named deviations), `planned` (decided, not
 built), `superseded` (replaced by the named ADR) or `retired` (withdrawn).
 Superseded and retired ADRs stay listed and their numbers are not reused.
@@ -140,7 +140,9 @@ REQ-047, REQ-048, REQ-052.
 
 ## ADR-007 CLI contract: JSON envelope; exit 0 when it ran, 2 when it could not
 
-Status: accepted (rewritten for 0.7.2; was partial). Date: 2026-10-17.
+Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3). Date: 2026-10-17.
+Amended 2026-10-18 (0.8.3): a Jev call without an answer is exit 2, refusals
+and no-ops are exit 0, and every CLI exits 130 with a `CANCELED` envelope.
 
 Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
 meant "ran, negative answer", so a caller could not tell a failing gate from a
@@ -153,24 +155,41 @@ included (`judge` `summary.pass`, `check-fixtures` `pass`/`mismatches`,
 `validate` `valid`/`problems`, `lint` `clean`, `rubric` `pass`, `dedupe`
 `likely_duplicates`, `add`/`update` `added`/`updated` false with `refused`,
 `validate-fence` and `anchor_tuning_contract.py` `valid`/`violation`,
-`install.py --status` `state`). A `judge` run with `verdict: error` cells
-(transport failures after the retries, a missing fixture entry, a per-cell
-`PLAN.TOO_LARGE`) ran: the run file is written, other cells keep their
-verdicts, and `summary.pass` is false. Exit 2 means the tool could not do its
-job: `success: false`, `data: null` (or diagnostic data) and
+`install.py --status` `state`). Refusals are outcomes too: `add`'s
+`ANCHOR.DUPLICATE`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.LINT`,
+`ANCHOR.NOT_TESTABLE` and the statement-repeats-the-quote rule (also on
+`update`) are `data.refused {code, message, recoverable, suggested_action}`
+with nothing written, and a no-op (`update` with nothing to change, `retire`
+of a retired anchor, `exclude --remove` with nothing to remove) is
+`data.changed: false`. `check-fixtures` with nothing judged is `pass: false`,
+`judged: 0` and a `note`, since no fixture was tested. Exit 2 means the tool
+could not do its job: `success: false`, `data: null` (or diagnostic data) and
 `error {code, message, recoverable, suggested_action}`, for bad arguments
 (`VALIDATION.INPUT`, argparse included), unreadable files, invalid settings,
 `POLICY.REMOTE_JUDGE_DISABLED`, 401, a missing dependency or `SCRIPT.INTERNAL`.
-`jev_judge.py` returns 130 on interrupt. No command exits 1. The repository's
-CI scripts (`check_version_sync.py` drift, `gen_install_data.py --check`
-staleness, `install_sc_compose_ci.py` failures) also exit 2, since their job
-is to fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
+A Jev call that got no answer is exit 2 as well, never folded into a negative
+result: when any `judge` or `check-fixtures` cell, `dedupe --jev` pair or
+`rubric`/`add --rubric` candidate has no answer after the retries (transport
+and HTTP errors, an invalid response, a context overflow or per-cell
+`PLAN.TOO_LARGE`, a failed confirmation, a missing or malformed fixture entry),
+the error takes the first failure's code, `data` keeps the partial work (the
+run file is still written; `data.run_path` names it) and `data.failures` lists
+each item without an answer; `add --rubric` records nothing even with
+`--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
+130 on interrupt with a `CANCELED` envelope (`recoverable: true`;
+`result.run_main`). No command exits 1. The repository's
+CI scripts (`check_version_sync.py` drift, a missing `--base` ref or a
+malformed manifest, `gen_install_data.py --check` staleness, a failing git
+command or a corrupt `legacy-owned.json`, any `install_sc_compose_ci.py`
+failure) also exit 2 with a message, never a traceback, since their job is to
+fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
 stdin, stdout and stderr to UTF-8 at entry (`result.utf8_stdio()`), on every
 platform. Agent launches report a typed failure reason.
 
 Consequences: Callers read the outcome field, not the exit code; the gate
 agents, skill and references say so, and a test fails if shipped prompt text
-mentions exit 1. Scripting on exit 1 broke in 0.7.2. REQ-049 to REQ-051.
+mentions exit 1. Scripting on exit 1 broke in 0.7.2; reading a Jev failure
+from an exit-0 run broke in 0.8.3. REQ-049 to REQ-051.
 
 ## ADR-008 Harness-specific agents behind one trusted runner
 
@@ -406,12 +425,18 @@ Decision:
   canonical `jev_judge.py` of the nearest install, found by walking up from
   the working directory (from the repository root when the working directory is
   outside it) and stopping before the home directory
-  (`plan_anchor_paths.py`). A copy in a global location, a farther install's
-  copy or the source tree is `VALIDATION.PATH`. This supersedes the plugin-root
+  (`plan_anchor_paths.py`), under `.claude`, `.codex` or `.cursor`, and only
+  when that install's `.sc/plan-anchor/install-lock.json` lists the script
+  (0.8.3). A copy in a global location, a farther install's copy, a copy the
+  lock does not list (hand-copied, or no lock), a copy under `.agents/` or the
+  source tree is `VALIDATION.PATH`. This supersedes the plugin-root
   and manifest fallbacks. With no determinable home directory the walk ends at
   the filesystem root and the machine-wide directories are still refused.
-- **Settings.** The nearest `.sc/plan-anchor/settings.yaml` at or above the
-  repository wins whole; files are never merged. `resolve` reports
+- **Settings.** The nearest `.sc/plan-anchor/settings.yaml` walking up from
+  the working directory wins whole, inside a repository too (0.8.3; it was
+  looked up from the git top level); files are never merged. An install into
+  a repository subfolder without `--tracker` takes the tracker from the
+  nearest settings above it or the repository's `.beads/`. `resolve` reports
   `settings_path` and `settings_inherited`. The disk rule still applies to an
   inherited setting: `br` over a Dolt-backed `.beads/` is `TRACKER.MISMATCH`,
   and the message names the file in effect. An installed copy accepts only
@@ -449,7 +474,7 @@ CI. Known limitations:
   Dolt-backed `.beads/`).
 - Open decision, not changed: Codex documents `.agents/skills` as its
   repository skill directory, while `--target codex` installs `.codex/skills`.
-  The trust rule already accepts a copy under `.agents/`.
+  Since 0.8.3 the trust rule does not accept a copy under `.agents/`.
 
 REQ-059 to REQ-064, REQ-067 to REQ-072, REQ-074; ANC-032 to ANC-036.
 

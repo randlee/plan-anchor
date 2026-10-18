@@ -100,14 +100,15 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | `AUTH.CREDENTIALS` | pre-flight, 401 | Key missing, malformed, or rejected. Not retried |
 | `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | `allow_remote_judge` is `false` or absent. Absent: ask the user once, record it with `plan_anchor_settings.py set`, commit. `false`: only the user changes it. `--dry-run` works either way |
 | `DEPENDENCY.PYYAML`, `SETTINGS.*`, `REPO.NOT_FOUND` | pre-flight | The settings file could not be read; fix what the error names. Never a silent default |
-| `JEV.RATE_LIMITED`, `JEV.OVERLOADED`, `JEV.HTTP`, `JEV.NETWORK` | transport | Transient; retried 3 times, then per-anchor `error` |
-| `JEV.RESPONSE_INVALID` | validation | Malformed or oversized response; retried, then per-anchor `error` |
+| `JEV.RATE_LIMITED`, `JEV.OVERLOADED`, `JEV.HTTP`, `JEV.NETWORK` | transport | Transient; retried 3 times, then the command exits 2 (the cell is `error` in the partial run) |
+| `JEV.RESPONSE_INVALID` | validation | Malformed or oversized response; retried, then the command exits 2 (the cell is `error` in the partial run) |
 | `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
 | `PLAN.TOO_LARGE` | planning-gate pre-flight or 422 | The bead does not fit one request after code reduction; triage per `plan-size-and-shape.md`. Never trim or raise the cap to pass |
 | `JEV.VALIDATION` | 422 other | Request rejected; usually a malformed override |
 | `VALIDATION.ANCHORS`, `VALIDATION.INPUT` | record / arguments | Fix `anchors.json` (`validate`) or the flags |
 | `QUESTIONS.ROLES` | question set | An override renamed a question ID; keep the default IDs |
-| `ANCHOR.UNKNOWN`, `ANCHOR.DUPLICATE`, `ANCHOR.NONE`, `ANCHOR.NOT_LOCKED` | record | Wrong ID; already recorded; nothing locked; `--anchor` named a proposed or retired anchor (`--include-unlocked` is for fixtures only) |
+| `ANCHOR.UNKNOWN`, `ANCHOR.NONE`, `ANCHOR.NOT_LOCKED` | record | Wrong ID; nothing locked; `--anchor` named a proposed or retired anchor (`--include-unlocked` is for fixtures only) |
+| `ANCHOR.DUPLICATE` | `add` (exit 0, `data.refused.code`) | The ID is already recorded; `update` it instead |
 | `ANCHOR.DUPLICATE_CANDIDATE` | `add` (exit 0, `data.refused.code`) | Statement or quote lexically close to an existing anchor; read the match, then `--allow-similar` only for a different constraint |
 | `ANCHOR.NOT_TESTABLE` | `add --rubric` (exit 0, `data.refused.code`), tuner | The statement failed the testability rubric or lint; rewrite it (`anchor-capture.md`) |
 | `ANCHOR.LINT` | `add --strict`, `update --strict` (exit 0, `data.refused.code`) | The statement has lint warnings and strict mode was requested |
@@ -117,7 +118,7 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | `RUNS.NONE`, `RUNS.MISMATCH` | `coverage`, `diff` | No run files; runs for different gates or items |
 | `SCRIPT.INTERNAL` | anywhere | Unexpected exception, reported as JSON with exit 2 |
 
-Fatal codes abort with exit 2 and `success: false`. Transient codes land in `results[].error` inside a completed run: exit 0, the cell's verdict is `error`, and `data.summary.pass` is false.
+Fatal codes abort with exit 2 and `success: false`. A Jev failure is never a negative result: when any cell, pair or candidate still has no answer after retries, `judge`, `check-fixtures`, `dedupe --jev`, `rubric` and `add --rubric` exit 2 with the first failure's code. The partial run is still written: `data.run_path` names it (`judge`, `check-fixtures`) and `data.failures` lists `{id, code, message}` for each item without an answer. `add --rubric` records nothing, with or without `--allow-untestable`.
 
 ## Exit codes
 
@@ -125,17 +126,18 @@ A tool failure is the only nonzero exit. Exit 0 means the command ran (`success:
 
 | Subcommand | Outcome field (exit 0) |
 | --- | --- |
-| `judge` | `data.summary.pass` (false on a failing or `error` verdict; the run file is written), `data.dry_run` |
-| `check-fixtures` | `data.pass`, `data.mismatches` |
+| `judge` | `data.summary.pass` (false on a failing verdict or a dry run; the run file is written), `data.dry_run` |
+| `check-fixtures` | `data.pass`, `data.mismatches`, `data.judged` (`pass` is false when nothing was judged, e.g. every check is `deterministic_only`; `data.note` says so) |
 | `validate` | `data.valid`, `data.problems`, `data.warnings` |
 | `lint` | `data.clean`, `data.warning_count` |
 | `rubric` | `data.pass` (false when any anchor is `needs_work`) |
 | `dedupe` | `data.likely_duplicates` (empty when none) |
-| `add` | `data.added`; a refusal is `added: false` with `data.refused.code` (`ANCHOR.LINT`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.NOT_TESTABLE`) and nothing written |
-| `update` | `data.updated`; a `--strict` refusal is `updated: false` with `data.refused.code: ANCHOR.LINT` |
+| `add` | `data.added`; a refusal is `added: false` with `data.refused` `{code, message, recoverable, suggested_action}` (`ANCHOR.DUPLICATE`, `ANCHOR.LINT`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.NOT_TESTABLE`, or `VALIDATION.INPUT` when the statement repeats the quote) and nothing written |
+| `update` | `data.updated`; a `--strict` refusal is `updated: false` with `data.refused.code: ANCHOR.LINT`; nothing to change is `updated: false, changed: false` |
+| `retire`, `exclude --remove` | `data.changed` (false when the anchor is already retired, or there was no exclusion to remove) |
 | `report`, `coverage`, `diff` | `data.pass`; `data.uncovered_anchors`; `data.pass_after`, `data.regressions` |
 
-Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POLICY.REMOTE_JUDGE_DISABLED`, credential or network failure that stops the run, a missing dependency, and `SCRIPT.INTERNAL`.
+Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POLICY.REMOTE_JUDGE_DISABLED`, credential failure, any Jev call left without an answer, a missing dependency, and `SCRIPT.INTERNAL`. Exit 130 (`CANCELED`, `recoverable: true`) is an interrupt.
 
 ## Other Jev-backed subcommands
 

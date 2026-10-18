@@ -165,7 +165,7 @@ class JevJudgeErrors(ConventionCase):
                                  "--anchors", path], None),
             "shape": (["shape", "--show-json", missing], None),
             "judge": (["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1",
-                       "--item-file", self.put("item.txt", ITEM)], None),
+                       "--item-file", self.put("item.txt", ITEM)], "AUTH.CREDENTIALS"),  # no key in clean_env()
             "check-fixtures": (["check-fixtures", "--anchors", path, "--gate", "plan", "--all", "--dry-run"], "FIXTURE.NONE"),
             "report": (["report", "--run", missing], None),
             "coverage": (["coverage", "--runs", str(self.d / "empty")], None),
@@ -178,6 +178,25 @@ class JevJudgeErrors(ConventionCase):
         for name, (argv, code) in cases.items():
             with self.subTest(name):
                 self.failed(JJ, *argv, code=code)
+
+
+    def test_live_judge_refusals_are_typed(self):
+        """A live call that must not go out: AUTH.CREDENTIALS without a key, POLICY.REMOTE_JUDGE_DISABLED without consent."""
+        path = self.put("anchors.json", record(anchor()))
+        argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
+        error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
+        self.assertEqual(error["message"], "TYPESAFE_API_KEY is not set")
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("the consent check reads settings.yaml with PyYAML")
+        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        # a dummy key only gets past the credential check; consent is absent, so nothing is sent
+        proc = subprocess.run([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
+                              capture_output=True, text=True, encoding="utf-8")
+        out = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, out["success"], out["error"]["code"]), (2, False, "POLICY.REMOTE_JUDGE_DISABLED"), out)
+        self.assertEqual(set(out["error"]), ERROR_KEYS)
 
 
 class OtherScripts(ConventionCase):

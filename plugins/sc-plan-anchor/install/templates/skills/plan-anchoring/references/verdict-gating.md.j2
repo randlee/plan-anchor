@@ -63,7 +63,7 @@ Contradiction outranks underspecification: a confident conflict is actionable ev
 
 ## Pass criteria and exit codes
 
-- A **run** (one item) passes when no result is `contradicted`, `not_addressed`, `asserted_only`, `underspecified`, or `error`; `excluded` passes. `judge` exits 0 whenever the run completes and reports the outcome in `data.summary.pass` (false on a failing run; the run file is still written); it exits 2 on a fatal error before judging. The only exit codes are 0, 2 and 130.
+- A **run** (one item) passes when no result is `contradicted`, `not_addressed`, `asserted_only`, `underspecified`, or `error`; `excluded` passes. `judge` exits 0 whenever the run completes with an answer for every cell and reports the outcome in `data.summary.pass` (false on a failing run or a dry run; the run file is still written); it exits 2 on a fatal error, including any cell Jev gave no answer for (an `error` cell; the partial run is written and `data.run_path` names it). The only exit codes are 0, 2 and 130.
 - The **planning gate** passes when every planning bead's latest run passes (`summary.pass`) and `coverage` lists no uncovered locked anchor.
 - The **development gate** passes when the sprint's latest run passes and each returned deterministic check has been run and recorded.
 

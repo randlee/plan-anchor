@@ -26,7 +26,9 @@ JSON schemas' `const`), and integer document versions (question sets,
 anchors, examples).
 
 Exit 0 in sync; 2 when the check fails: drift (each on its own line on stdout)
-or missing files and bad input (on stderr). A check script's job is to fail
+or missing files and bad input (on stderr): a --base ref that does not resolve
+to a commit (the pull-request rule is never skipped silently), a manifest that
+is not valid JSON, a file that cannot be read. A check script's job is to fail
 CI, so drift is nonzero; like every plan-anchor CLI it never exits 1.
 """
 from __future__ import annotations
@@ -159,6 +161,23 @@ def registry_source(harness: str, path: str):
     return None
 
 
+class CheckError(Exception):
+    """The check could not run (bad input, an unreadable or malformed file): main prints it and exits 2."""
+
+
+def load_manifest(path: pathlib.Path) -> dict:
+    """A JSON manifest or catalog as an object; CheckError when it cannot be read or is not a JSON object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise CheckError(f"{path.relative_to(ROOT)} could not be read: {type(exc).__name__}: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise CheckError(f"{path.relative_to(ROOT)} is not valid JSON: {exc}") from None
+    if not isinstance(data, dict):
+        raise CheckError(f"{path.relative_to(ROOT)} must be a JSON object, got {type(data).__name__}")
+    return data
+
+
 def parse(v: str):
     return tuple(int(x) for x in v.split("."))
 
@@ -226,11 +245,11 @@ def release_checks(want: str, drift: list) -> int:
         if not manifest.exists():
             drift.append(f"{manifest.relative_to(ROOT)}: missing")
             continue
-        data = json.loads(manifest.read_text())
+        data = load_manifest(manifest)
         if data.get("name") != "sc-plan-anchor":
             drift.append(f"{manifest.relative_to(ROOT)}: name must be sc-plan-anchor")
     for manifest in plugin_manifests[1:]:
-        data = json.loads(manifest.read_text()) if manifest.exists() else {}
+        data = load_manifest(manifest) if manifest.exists() else {}
         if "agents" in data:
             drift.append(f"{manifest.relative_to(ROOT)}: must not register agents (they are installed per folder)")
         if data and data.get("skills") != "./skills/":
@@ -247,8 +266,9 @@ def release_checks(want: str, drift: list) -> int:
         if not catalog.exists():
             drift.append(f"{catalog.relative_to(ROOT)}: missing")
             continue
-        data = json.loads(catalog.read_text())
-        entries = [p for p in data.get("plugins", []) if p.get("name") == "sc-plan-anchor"]
+        data = load_manifest(catalog)
+        plugins = data.get("plugins", [])
+        entries = [p for p in plugins if isinstance(p, dict) and p.get("name") == "sc-plan-anchor"] if isinstance(plugins, list) else []
         if len(entries) != 1:
             drift.append(f"{catalog.relative_to(ROOT)}: expected one sc-plan-anchor entry")
             continue
@@ -261,7 +281,17 @@ def release_checks(want: str, drift: list) -> int:
     return sum(len(v) or 1 for _, v in declarations)
 
 
+def require_commit(ref: str) -> None:
+    """CheckError unless ``ref`` names a commit here: a missing base must fail, never skip the PR rule."""
+    done = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=ROOT,
+                          capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise CheckError(f"--base {ref!r} is not a commit in this clone; fetch it (actions/checkout with "
+                         "fetch-depth: 0, or git fetch origin <branch>) so the pull-request rule can run")
+
+
 def pr_checks(base: str, want: str, drift: list) -> str:
+    require_commit(base)
     changed = set(l for l in git("diff", "--name-only", f"{base}...HEAD").splitlines() if l.strip())
     changed |= set(l for l in git("diff", "--name-only", base).splitlines() if l.strip())          # working tree edits
     changed |= set(l for l in git("ls-files", "--others", "--exclude-standard").splitlines() if l.strip())  # new, uncommitted files
@@ -293,8 +323,12 @@ def main() -> int:
         print(f"check-version-sync: VERSION is not X.Y.Z: {want!r}", file=sys.stderr)
         return 2
     drift: list = []
-    checked = release_checks(want, drift)
-    mode = pr_checks(args.base, want, drift) if args.base else "consistency"
+    try:
+        checked = release_checks(want, drift)
+        mode = pr_checks(args.base, want, drift) if args.base else "consistency"
+    except CheckError as exc:
+        print(f"check-version-sync: {exc}", file=sys.stderr)
+        return 2
     if drift:
         print(f"check-version-sync [{mode}]: {len(drift)} drift(s) from VERSION {want}:")
         for d in drift:
