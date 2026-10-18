@@ -263,11 +263,13 @@ class RunFileRedaction(ProcessCase):
 class Interrupts(unittest.TestCase):
     """SIGINT while a command waits on input: the CANCELED envelope on stdout and exit 130, from each CLI."""
 
-    def interrupt(self, argv, fifo_rel, env=None, git=False):
+    def interrupt(self, argv, fifo_rel, env=None, git=False, files=None):
         with tempfile.TemporaryDirectory() as td:
             d = Path(td).resolve()
             if git:
                 subprocess.run(["git", "init", "-q", str(d)], check=True)
+            for name, value in (files or {}).items():
+                (d / name).write_text(json.dumps(value), encoding="utf-8")
             fifo = d / fifo_rel
             fifo.parent.mkdir(parents=True, exist_ok=True)
             os.mkfifo(str(fifo))
@@ -312,9 +314,10 @@ class Interrupts(unittest.TestCase):
         self.assertNotIn("Traceback", err)
 
     def test_jev_judge(self):
-        # a live rubric reads allow_remote_judge first: the settings file is the FIFO, so no request is ever built
-        self.interrupt([JJ, "rubric", "--statement", STATEMENT, "--quote", QUOTE], ".sc/plan-anchor/settings.yaml",
-                       env={"TYPESAFE_API_KEY": DUMMY_KEY}, git=True)
+        # a dry-run judge blocks reading its item from the FIFO: no settings file, no PyYAML, no request is ever built
+        self.interrupt([JJ, "judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "ex-42",
+                        "--item-file", "{FIFO}", "--run-dir", "runs", "--dry-run"], "item.txt", git=True,
+                       files={"anchors.json": record(anchor())})
 
     def test_anchor_runner_contract(self):
         self.interrupt([SCRIPTS / "anchor_runner_contract.py", "validate-fence", "--kind", "request", "--file", "{FIFO}"], "f.md")
