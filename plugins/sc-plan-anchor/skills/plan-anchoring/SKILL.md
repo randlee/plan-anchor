@@ -2,7 +2,7 @@
 name: plan-anchoring
 description: Capture the facts a user states while planning as numbered anchors (ANC-001...), one clear, testable requirement each, with the user's verbatim words kept as provenance, alongside existing requirements (REQ) and ADRs. Turn them into Jev-judged questions, tune and test the questions per anchor, and enforce them at two gates with a triage-apply-rerun loop. The planning gate checks each plan bead still says what the user said; the development gate checks the delivered sprint work followed it. Use when planning a phase or sprint with beads, when the user says "anchor this", "lock this", "don't let this drift", or "remember I said", when re-opening a plan after context compression, or when reviewing a sprint against its plan. Not for general code review, and not a replacement for plan hardening.
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
 ---
 
 # Plan Anchoring
@@ -25,8 +25,10 @@ ANCHOR_TRACKER="$(jq -r '.data.tracker // empty' /tmp/anchor-tracker.json)"
 which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
 which sc-compose && sc-compose --version    # 1.7.0 or newer
 test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set" || echo "TYPESAFE_API_KEY missing"
-echo "remote judge opt-in: ${PLAN_ANCHOR_ALLOW_REMOTE_JUDGE:-unset}"
+python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq '.data.allow_remote_judge'   # true, false, or null (never asked)
 ```
+
+`allow_remote_judge` in the committed `.sc/plan-anchor/settings.yaml` is the user's answer to whether plan text may be sent to TypeSafe (Jev). `true`: continue. `false`: every live Jev call is refused with `POLICY.REMOTE_JUDGE_DISABLED`; tell the user and do only offline work. `null` (absent): ask the user once, record the answer with `python3 "<this skill's directory>/scripts/plan_anchor_settings.py" set allow_remote_judge true|false`, commit the file, then continue; never ask again in later sessions. Never infer consent from existing run files, committed evidence or past runs, and never write the setting without the user's answer; subagents never write it.
 
 `anchor_tracker.py resolve` selects `ANCHOR_TRACKER` (`bd` or `br`) for anchor storage, independently of whether plans are Markdown or tracker documents. An explicit `anchor_tracker` in the committed `.sc/plan-anchor/settings.yaml` wins and is checked against disk; without it a Dolt-backed `.beads/` selects `bd` and anything else selects `br`. A non-zero exit is a typed error (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `DEPENDENCY.PYYAML`): surface it and stop; never pick the other tracker by hand. `resolve` is read-only; `python3 "$T" write` records the detected choice for the user to commit, and `write --init` runs `br init` when there is no `.beads/`. Never run `bd init`: bd is supported only where a Dolt-backed `.beads/` already exists. Pass the resolved value as `anchor_tracker` to both gate reviewers, which resolve it again and reject a mismatch. Both take the sprint text the caller already has, as `item_file`; nothing rediscovers it. Existing tracker command examples use `bd`; substitute the selected adapter for anchor and question operations.
 
@@ -41,7 +43,7 @@ for p in "/opt/homebrew/bin/sc-compose" "$HOME/.local/bin/sc-compose" "/usr/loca
 done
 ```
 
-If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolve`. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and per-session opt-in in `references/jev-api.md`. Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
+If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolve`. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and `allow_remote_judge: true` (`references/jev-api.md`). Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
 
 Then resolve the script once. It sits next to this file:
 
@@ -81,8 +83,8 @@ locking do not load that reference.
 - **Capture**: the orchestrator proposes candidates it detects; nothing is locked until the user confirms or says "lock this".
 - **Fast-model cross-check**: not in this version. Jev's per-question confidence drives the `underspecified` verdict instead.
 - **Relationship to plan hardening**: standalone and composable; run the planning gate after hardening.
-- **Data retention**: fail closed. The gates refuse to call TypeSafe unless `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` is set for the session, and `--dry-run` writes exactly what would leave the machine.
-- **Fixture authorship**: the skill drafts one pass and one fail fixture per anchor at lock time; the user approves them. `check-fixtures` sends them to Jev (same opt-in) to confirm the wording lands them; `--answers-file` fixtures exercise the gating offline in CI.
+- **Data retention**: fail closed. Every live Jev call is refused unless the committed `.sc/plan-anchor/settings.yaml` sets `allow_remote_judge: true`; the user decides it once per repository, and `--dry-run` writes exactly what would leave the machine.
+- **Fixture authorship**: the skill drafts one pass and one fail fixture per anchor at lock time; the user approves them. `check-fixtures` sends them to Jev (same setting) to confirm the wording lands them; `--answers-file` fixtures exercise the gating offline in CI.
 - **Not relevant to one item**: `exclude` is the one way to say an anchor does not apply to a specific plan item: `python3 "$S" exclude --anchors "$A" --id ANC-011 --item bi-2 --reason "<one sentence>"`. `judge` then skips that cell without calling Jev and reports it `excluded` with the reason; it passes the gate. No approval, no frozen expectation, no version bump, and other runs stay valid; it is not QA-verified, so the reason must say why. Use it when the anchor's scope is right and the item simply does not touch it; when the scope itself is wrong, fix the scope (`references/triage-and-iteration.md`). Do not drop the anchor from `--anchor` or override its relevance question instead; neither is recorded.
 - **Question-tuning independence**: the planner cannot tune. An isolated evaluator (Claude: Opus; Codex: Sol; Cursor: Grok at high effort, version left off) derives and freezes its oracle from approved intent and anchors before seeing Jev answers, then iterates wording against that oracle without regard to whether the current plan passes. A live gate failure alone never authorizes an override or scope change. The main session records only an override accompanied by the frozen oracle, digest, acceptance table, and run IDs.
 
@@ -95,7 +97,7 @@ locking do not load that reference.
 - Never split a bead, trim its text, or raise a size cap to pass `PLAN.TOO_LARGE`. Triage unapproved work, then prose and ceremony, then split.
 - Never send more than one bead or one work description per Jev request, and never the whole plan.
 - Never compute coverage, counts, or "satisfied anywhere" by asking Jev. The script does it.
-- Missing the selected anchor tracker, `python3`, PyYAML, API key, or opt-in, or an `anchor_tracker.py resolve` error: surface and stop; do not degrade silently.
+- Missing the selected anchor tracker, `python3`, PyYAML, or API key, `allow_remote_judge` not `true`, or an `anchor_tracker.py resolve` error: surface and stop; do not degrade silently.
 - Three consecutive gate runs on the same bead with the same failing set: escalate to the user rather than editing the plan again.
 
 Maintainers only: the complete resource index is in

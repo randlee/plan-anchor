@@ -295,7 +295,12 @@ class InstallTests(unittest.TestCase):
         return json.loads(repo.path(inst.LOCK_RELPATH).read_text(encoding="utf-8"))
 
     def tracker_setting(self, repo):
-        return repo.path(".sc/plan-anchor/settings.yaml").read_text(encoding="utf-8").splitlines()[-1]
+        lines = repo.path(".sc/plan-anchor/settings.yaml").read_text(encoding="utf-8").splitlines()
+        return next(line for line in lines if line.startswith("anchor_tracker:"))
+
+    def remote_setting(self, repo):
+        lines = repo.path(".sc/plan-anchor/settings.yaml").read_text(encoding="utf-8").splitlines()
+        return [line for line in lines if line.startswith("allow_remote_judge:")]
 
     def assert_installed(self, repo, tracker, targets):
         lock = self.lock(repo)
@@ -537,6 +542,59 @@ class InstallTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             code = inst.main(["--dest", str(repo.root), "--tracker", "bd"], which=fake_which)
         self.assertEqual((code, json.loads(out.getvalue())["error"]["code"]), (2, "TRACKER.DOLT_REQUIRED"))
+
+    def test_remote_judge_flags_write_the_setting_and_reruns_keep_it(self):
+        repo = TempRepo(self, beads="sqlite")
+        data = self.ok(run_install(repo))
+        self.assertEqual((data["allow_remote_judge"], data["plan"]["allow_remote_judge"]), (None, None))
+        self.assertEqual(self.remote_setting(repo), [])
+        self.assertTrue(any("does not set allow_remote_judge" in n for n in data["notes"]))
+        data = self.ok(run_install(repo, allow_remote_judge=True))
+        self.assertEqual(data["plan"]["allow_remote_judge"],
+                         {"path": ".sc/plan-anchor/settings.yaml", "from": None, "to": True})
+        self.assertIn(".sc/plan-anchor/settings.yaml", data["commit_paths"])
+        self.assertEqual(self.remote_setting(repo), ["allow_remote_judge: true"])
+        self.assertEqual(self.tracker_setting(repo), "anchor_tracker: br")
+        before = repo.snapshot()
+        data = self.ok(run_install(repo))  # no flag: the recorded answer is kept, nothing is rewritten
+        self.assertEqual((data["allow_remote_judge"], data["plan"]["allow_remote_judge"], data["commit_paths"]), (True, None, []))
+        self.assertEqual(repo.snapshot(), before)
+        data = self.ok(run_install(repo, allow_remote_judge=False))
+        self.assertEqual(data["plan"]["allow_remote_judge"]["to"], False)
+        self.assertEqual(self.remote_setting(repo), ["allow_remote_judge: false"])
+        self.ok(run_install(repo, tracker="br"))  # a rerun that rewrites nothing else still keeps it
+        self.assertEqual(self.remote_setting(repo), ["allow_remote_judge: false"])
+
+    def test_switching_tracker_keeps_the_remote_judge_answer(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo, allow_remote_judge=True))
+        repo.beads("dolt")
+        data = self.ok(run_install(repo, tracker="bd"))
+        self.assertTrue(data["switched"])
+        self.assertEqual((self.tracker_setting(repo), self.remote_setting(repo)),
+                         ("anchor_tracker: bd", ["allow_remote_judge: true"]))
+
+    def test_remote_judge_dry_run_writes_nothing(self):
+        repo = TempRepo(self, beads="sqlite")
+        data = self.ok(run_install(repo, allow_remote_judge=True, dry_run=True))
+        self.assertEqual(data["plan"]["allow_remote_judge"]["to"], True)
+        self.assertFalse(repo.path(".sc/plan-anchor/settings.yaml").exists())
+
+    def test_remote_judge_cli_flags(self):
+        repo = TempRepo(self, beads="sqlite")
+        for argv, expected in ((["--allow-remote-judge"], ["allow_remote_judge: true"]),
+                               (["--no-remote-judge"], ["allow_remote_judge: false"]),
+                               ([], ["allow_remote_judge: false"])):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = inst.main(["--dest", str(repo.root), *argv], which=fake_which, run=FakeRun())
+            self.assertEqual(code, 0, out.getvalue())
+            self.assertEqual(self.remote_setting(repo), expected)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = inst.main(["--dest", str(repo.root), "--allow-remote-judge", "--no-remote-judge"], which=fake_which)
+        self.assertEqual((code, json.loads(out.getvalue())["error"]["code"]), (2, "VALIDATION.INPUT"))
+        self.assertEqual(self.remote_setting(repo), ["allow_remote_judge: false"])
 
     def test_target_dot_form_is_accepted(self):
         self.assertEqual(inst._targets(".claude,codex"), ["claude", "codex"])

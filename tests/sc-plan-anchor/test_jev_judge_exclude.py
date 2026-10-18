@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from test_jev_judge import (  # noqa: F401 - shared helpers
-    Judged, Transport, anchor, env, jj, plan_answers, record, run_cli, write,
+    Judged, Transport, anchor, env, jj, live, plan_answers, record, run_cli, write,
 )
 
 REASON = "Data-only sprint; the skill CLI options belong to bi-3."
@@ -114,7 +114,7 @@ class JudgeExclusionTests(unittest.TestCase):
             anchors_path = write(d, "a2.json", record(cli_anchor(exclude=excluded())))
             item = write(d, "i.txt", "Sprint bi-2 migrates the data tables.")
             t = Transport(FAILING)
-            with env(**{"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}), \
+            with live(), \
                     mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--anchor", "ANC-011", "--item-id", "bd-42",
                                      "--item-file", item, "--run-dir", str(Path(d) / "runs")])
@@ -152,7 +152,7 @@ class OutputTests(unittest.TestCase):
             item = write(d, "item43.txt", "Sprint bi-3 adds the --format option.")
             path = write(d, "anchors.json", record(cli_anchor(exclude=excluded())))
             t = Transport()
-            with env(**{"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}), \
+            with live(), \
                     mock.patch.object(jj, "call_jev", t):
                 code, _ = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-43",
                                    "--item-file", item, "--out", str(runs / "b.json")])

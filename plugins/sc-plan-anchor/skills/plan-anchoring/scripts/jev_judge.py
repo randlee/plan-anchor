@@ -15,7 +15,10 @@ required for ANC anchors and defaults to the statement for REQ/ADR anchors
 (register text). A record whose anchor lacks `quote` is read as quote =
 statement; `validate` reports it.
 
-Standard library only. Python 3.9+.
+Standard library only. Python 3.9+. One exception: a live Jev call reads the
+committed ``allow_remote_judge`` answer through ``plan_anchor_settings.py``
+(PyYAML when the settings file exists), imported lazily inside that check, so
+--dry-run, --answers-file and every offline subcommand stay stdlib-only.
 
 Expected failures travel as values: a function that can fail returns
 ``Ok(value)`` or ``Err(JudgeError)`` (see ``result.py``) and its caller
@@ -53,7 +56,8 @@ Exit codes
      verdict, `check-fixtures` has a mismatch, `validate` found problems,
      `lint` has warnings, `dedupe` found likely duplicates
   2  fatal: a JSON error object was printed (missing input, bad credentials,
-     policy opt-in missing, malformed record or override, a plan bead that does
+     remote judging not allowed by allow_remote_judge in
+     .sc/plan-anchor/settings.yaml, malformed record or override, a plan bead that does
      not fit one Jev request as PLAN.TOO_LARGE, Jev unreachable before any
      verdict, or an internal error as SCRIPT.INTERNAL)
 
@@ -1895,9 +1899,9 @@ def check_api_key(api_key: str) -> Result[None, JudgeError]:
 
 
 def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeError]:
-    """Shared pre-flight for judge and check-fixtures: options, question set, overrides, fixture answers, key and opt-in.
+    """Shared pre-flight for judge and check-fixtures: options, question set, overrides, fixture answers, key and consent.
 
-    remote=False (every selected anchor is excluded from the item) skips the key and opt-in check: nothing is sent.
+    remote=False (every selected anchor is excluded from the item) skips the key and consent check: nothing is sent.
     """
     threshold = getattr(args, "threshold", DEFAULT_THRESHOLD)
     if not (0.0 <= threshold <= 1.0):
@@ -1954,17 +1958,57 @@ def confirm_enabled(args) -> bool:
     return os.environ.get("PLAN_ANCHOR_CONFIRM_NEAR", "1") != "0"
 
 
+REMOTE_JUDGE_SETTING = ".sc/plan-anchor/settings.yaml"
+REPO_ROOT_HELP = ("any path inside the repository whose .sc/plan-anchor/settings.yaml holds allow_remote_judge "
+                  "(read for live Jev calls only; default .)")
+REMOTE_JUDGE_SET = "python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false"
+
+
+def remote_judge_consent(args, what: str) -> Result[None, JudgeError]:
+    """The repository's committed answer to whether plan text may go to TypeSafe: ``allow_remote_judge`` in
+    .sc/plan-anchor/settings.yaml. Only ``true`` passes; ``false`` and an absent answer refuse.
+
+    The settings module (and PyYAML behind it) is imported only here, so only a live call needs it.
+    """
+    import plan_anchor_settings as settings  # lazy: dry runs and fixture answers stay stdlib-only
+
+    start = pathlib.Path(getattr(args, "repository_root", "") or ".")
+    root = settings.find_repo_root(start)
+    if not root.ok:
+        return Err(_from_tool_error(root.error))
+    answer = settings.remote_judge_consent(root.value)
+    if answer.ok and answer.value is True:
+        return Ok(None)
+    disabled = f"Sending plan text to TypeSafe is disabled. {what} would leave this machine."
+    if answer.ok:  # False: the user said no
+        return fail("POLICY.REMOTE_JUDGE_DISABLED",
+                    f"{disabled} {REMOTE_JUDGE_SETTING} sets allow_remote_judge: false.",
+                    action="The user declined remote judging; only the user changes it (`python3 scripts/plan_anchor_settings.py "
+                           "set allow_remote_judge true`, then commit). Use --dry-run to inspect the request instead.")
+    if answer.error.code == "SETTINGS.REMOTE_JUDGE_UNSET":
+        return fail("POLICY.REMOTE_JUDGE_DISABLED",
+                    f"{disabled} {REMOTE_JUDGE_SETTING} does not set allow_remote_judge.",
+                    action="Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer "
+                           f"with `{REMOTE_JUDGE_SET}`, and commit {REMOTE_JUDGE_SETTING}. Never infer consent from "
+                           "existing run files or past runs. Use --dry-run to inspect the request instead.")
+    return Err(_from_tool_error(answer.error))  # DEPENDENCY.PYYAML, SETTINGS.*: never a silent default
+
+
+def _from_tool_error(error) -> JudgeError:
+    out = JudgeError(error.code, error.message, action=error.action or "")
+    out.data = dict(error.data) if error.data is not None else None
+    return out
+
+
 def remote_preflight(args, what: str) -> Result[str, JudgeError]:
-    """Key and opt-in checks shared by every live Jev call; returns the API key. Nothing leaves the machine before this passes."""
+    """Key and consent checks shared by every live Jev call; returns the API key. Nothing leaves the machine before this passes."""
     api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
     checked = check_api_key(api_key)
     if isinstance(checked, Err):
         return checked
-    allow_remote = os.environ.get("PLAN_ANCHOR_ALLOW_REMOTE_JUDGE") == "1" or bool(getattr(args, "allow_remote", False))
-    if not allow_remote:
-        return fail("POLICY.REMOTE_JUDGE_DISABLED",
-                    f"Sending plan text to TypeSafe is disabled. {what} would leave this machine.",
-                    action="Set PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1 (or pass --allow-remote) once the data-retention question is settled for this plan; use --dry-run to inspect the request instead.")
+    consent = remote_judge_consent(args, what)
+    if isinstance(consent, Err):
+        return consent
     return Ok(api_key)
 
 
@@ -2347,7 +2391,7 @@ def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
 
 
 # --------------------------------------------------------------------------- #
-# anchor quality: lint, dedupe, rubric (no run files; nothing leaves the machine without the opt-in)
+# anchor quality: lint, dedupe, rubric (no run files; nothing leaves the machine without allow_remote_judge: true)
 # --------------------------------------------------------------------------- #
 def live_anchors(rec: dict) -> Result[list, JudgeError]:
     """Every non-retired anchor of the record."""
@@ -3011,12 +3055,23 @@ def add_judge_options(parser, with_item: bool) -> None:
     parser.add_argument("--run-dir", default="", help="judge: default <anchors dir>/anchor-runs; check-fixtures: write runs under <run-dir>/fixtures/")
     parser.add_argument("--dry-run", action="store_true", help="write the Jev requests; call nothing")
     parser.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id (check-fixtures: '<anchor>:pass:<n>') or '*'; no network")
-    parser.add_argument("--allow-remote", action="store_true", help="same as PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1")
+    parser.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+
+
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors become a VALIDATION.INPUT envelope (exit 2) instead of argparse's text on stderr."""
+
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jev_judge.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = _JsonArgumentParser(prog="jev_judge.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=_JsonArgumentParser)
 
     a = sub.add_parser("add", help="append an anchor record (lints the statement, refuses likely duplicates)")
     a.add_argument("--anchors", required=True)
@@ -3030,7 +3085,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--rubric", action="store_true", help="ask Jev the testability rubric first; refuse with ANCHOR.NOT_TESTABLE unless it passes")
     a.add_argument("--allow-untestable", action="store_true", help="with --rubric: record the anchor even when the rubric says needs_work")
     a.add_argument("--answers-file", default="", help="with --rubric: fixture answers keyed 'candidate' or '*'; no network")
-    a.add_argument("--allow-remote", action="store_true", help="with --rubric: same as PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1")
+    a.add_argument("--repository-root", default=".", help="with --rubric: " + REPO_ROOT_HELP)
     a.add_argument("--model", default=DEFAULT_MODEL, help="with --rubric: Jev model")
     a.add_argument("--timeout", type=float, default=30.0, help="with --rubric: seconds per request")
     a.add_argument("--stated-by", default=os.environ.get("USER", "user"))
@@ -3094,7 +3149,7 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--jev", action="store_true", help="ask Jev whether each reported pair is the same constraint")
     dd.add_argument("--dry-run", action="store_true", help="with --jev: show the requests; call nothing")
     dd.add_argument("--answers-file", default="", help="fixture answers keyed '<a>|<b>' or '*' (implies --jev); no network")
-    dd.add_argument("--allow-remote", action="store_true", help="same as PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1")
+    dd.add_argument("--repository-root", default=".", help="with --jev: " + REPO_ROOT_HELP)
     dd.add_argument("--model", default=DEFAULT_MODEL)
     dd.add_argument("--timeout", type=float, default=30.0)
     dd.set_defaults(func=cmd_dedupe)
@@ -3109,7 +3164,7 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="minimum confidence for a yes to count")
     rb.add_argument("--dry-run", action="store_true", help="show the requests; call nothing")
     rb.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id ('candidate' for --statement) or '*'; no network")
-    rb.add_argument("--allow-remote", action="store_true", help="same as PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1")
+    rb.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
     rb.add_argument("--model", default=DEFAULT_MODEL)
     rb.add_argument("--timeout", type=float, default=30.0)
     rb.set_defaults(func=cmd_rubric)
@@ -3211,7 +3266,11 @@ def exit_code_for(cmd: str, out) -> int:
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except _UsageError as exc:
+        emit(JudgeError("VALIDATION.INPUT", str(exc), action="Run 'jev_judge.py <subcommand> --help' for the accepted arguments.").to_json())
+        return 2
     fmt = getattr(args, "format", "json")
     try:
         outcome = args.func(args)

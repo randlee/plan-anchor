@@ -121,7 +121,7 @@ On exit 2 or any fatal condition: `success: false`, `data: null`, and `error` as
 - `VALIDATION.PATH`, `VALIDATION.ID`: an untrusted path or identifier failed preflight.
 - `VALIDATION.INPUT`, `VALIDATION.TRACKER`: missing item input or invalid tracker selection; stop before judging.
 - `anchor_tracker.py resolve` errors (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `BEADS.METADATA_INVALID`, `BEADS.NOT_DIRECTORY`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`): return its error object unchanged; never switch trackers.
-- Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `PLAN.TOO_LARGE`, `SCRIPT.INTERNAL`: return the script's error object; never work around credential or opt-in errors, and never split, trim or re-cap a bead to pass `PLAN.TOO_LARGE` (size is a symptom; the skill triages it).
+- Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `PLAN.TOO_LARGE`, `SCRIPT.INTERNAL`: return the script's error object; never work around credential or remote-judge errors, and never split, trim or re-cap a bead to pass `PLAN.TOO_LARGE` (size is a symptom; the skill triages it).
 - Unparseable script stdout: `SCRIPT.OUTPUT` with the first 300 characters.
 
 ## Constraints
@@ -131,5 +131,5 @@ On exit 2 or any fatal condition: `success: false`, `data: null`, and `error` as
 - Never paraphrase or trim an anchor statement; the script reads it from the record.
 - Send exactly one complete sprint item per run, as the caller wrote it. Never add other beads, the whole plan, or the intent document to the item text.
 - Run the judge command once, or not at all when `run` is given. The script owns retries; never shorten planning items.
-- Never set `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE` or pass `--allow-remote` yourself. Never print `TYPESAFE_API_KEY` or include it in output.
+- Never write `allow_remote_judge`; only the user decides it. On `POLICY.REMOTE_JUDGE_DISABLED`, return it unchanged. Never print `TYPESAFE_API_KEY` or include it in output.
 - The selected `anchor_tracker` is used read-only (`show`), and `anchor_tracker.py` only through `resolve`. Markdown input never requires a planning bead or the unselected CLI.

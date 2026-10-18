@@ -119,7 +119,7 @@ def http_error(status, body=b"", headers=None):
     return urllib.error.HTTPError("http://jev", status, "x", headers or {}, io.BytesIO(body))
 
 
-LIVE = {"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}
+LIVE = {"TYPESAFE_API_KEY": "sk-test-0001"}
 LOCKED = record(anchor())
 ITEM = "Sprint 2 copies the legacy runtime crates.\n"
 JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "bd-42", "--item-file", "item.txt", "--run-dir", "runs"]
@@ -133,11 +133,32 @@ JEV_CASES = {
     "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
                         {"code": "AUTH.CREDENTIALS", "message": "TYPESAFE_API_KEY has invalid formatting (whitespace, control or non-ASCII characters)",
                          "recoverable": False, "suggested_action": "Re-export TYPESAFE_API_KEY with the key exactly as issued."}, None),
-    "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "sk"}, None, 2,
+    # A repository (".git") whose settings file does not record allow_remote_judge. The workspace is cwd. The key must
+    # not be a substring of the message: output redacts it.
+    "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,
                         {"code": "POLICY.REMOTE_JUDGE_DISABLED",
-                         "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine.",
+                         "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                                    ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
                          "recoverable": False,
-                         "suggested_action": "Set PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1 (or pass --allow-remote) once the data-retention question is settled for this plan; use --dry-run to inspect the request instead."}, None),
+                         "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                                             "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
+                                             ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                                             "Use --dry-run to inspect the request instead."}, None),
+    # The variable that used to opt in has no effect any more.
+    "policy_env_var_ignored": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"},
+                               dict(LIVE, PLAN_ANCHOR_ALLOW_REMOTE_JUDGE="1"), None, 2,
+                               {"code": "POLICY.REMOTE_JUDGE_DISABLED",
+                                "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                                           ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
+                                "recoverable": False,
+                                "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                                                    "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
+                                                    ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                                                    "Use --dry-run to inspect the request instead."}, None),
+    "allow_remote_flag_removed": (JUDGE + ["--allow-remote"], {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "sk"}, None, 2,
+                                  {"code": "VALIDATION.INPUT", "message": "jev_judge.py: unrecognized arguments: --allow-remote",
+                                   "recoverable": False,
+                                   "suggested_action": "Run 'jev_judge.py <subcommand> --help' for the accepted arguments."}, None),
     "validation_anchors": (JUDGE + ["--dry-run"], {"anchors.json": record(anchor(statement="")), "item.txt": ITEM}, {}, None, 2,
                            {"code": "VALIDATION.ANCHORS", "message": "anchors.json has problems: ANC-001: statement is empty", "recoverable": True,
                             "suggested_action": "Run `jev_judge.py validate` and fix the record first."}, None),
@@ -281,7 +302,8 @@ class JevTransportErrorContracts(unittest.TestCase):
         sleeps = []
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
                 mock.patch.object(jj.urllib.request, "urlopen", side_effect=list(responses)) as opened, \
-                mock.patch.object(jj, "_sleep", sleeps.append):
+                mock.patch.object(jj, "_sleep", sleeps.append), \
+                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)):
             argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "bd-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
             code, out = call_main(jj.main, argv, env=LIVE)

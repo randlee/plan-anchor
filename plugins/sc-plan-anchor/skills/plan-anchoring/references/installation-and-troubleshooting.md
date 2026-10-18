@@ -1,6 +1,6 @@
 ---
 name: installation-and-troubleshooting
-version: 0.7.0
+version: 0.7.1
 description: Installing the plugin into a repository (install.py), how the anchor tracker (br or bd) is chosen and switched, the CLIs and credentials plan-anchoring depends on (python3, PyYAML, br or bd, sc-compose, jq, TypeSafe API key), minimum versions, PATH issues in Claude Code, Codex and Cursor environment policy, validation, and known issues.
 ---
 
@@ -107,8 +107,8 @@ Rerun the installer with the other `--tracker` value. It checks the request agai
   ```
   GUI-launched apps do not read shell files; use `launchctl setenv TYPESAFE_API_KEY "$TYPESAFE_API_KEY"` (macOS, until reboot). Never commit or echo the key.
 - Under Codex, `TYPESAFE_API_KEY` matches the default `*KEY*` exclusion for command environments. If you restrict `[shell_environment_policy]` in `config.toml`, keep `ignore_default_excludes = true`, and with an allowlist under `[shell_environment_policy.filters]` add `"TYPESAFE_API_KEY" = "include"`.
-- Cursor's agent shell uses the environment of the Cursor app. A GUI launch does not read shell rc files, so set `TYPESAFE_API_KEY` with `launchctl setenv` (macOS, until reboot) before starting Cursor, and export `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` in that same app environment for a live session. A plugin variable does not export into `python3 jev_judge.py`.
-- For the live rubric, tuning, fixture checks, and gates also `export PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` for that session only (`jev-api.md`). The normal skill workflow requires Jev; offline commands are diagnostics and CI support.
+- Cursor's agent shell uses the environment of the Cursor app. A GUI launch does not read shell rc files, so set `TYPESAFE_API_KEY` with `launchctl setenv` (macOS, until reboot) before starting Cursor. A plugin variable does not export into `python3 jev_judge.py`.
+- The live rubric, tuning, fixture checks, and gates also need the user's committed answer `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` (`jev-api.md`). Record it once, at install time with `--allow-remote-judge` (or `--no-remote-judge`), or later with `python3 <skill>/scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit the file. The normal skill workflow requires Jev; offline commands are diagnostics and CI support.
 
 ## Find an existing install
 
@@ -160,7 +160,7 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 
 ## Known issues
 
-- `POLICY.REMOTE_JUDGE_DISABLED` on a live run: set `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` only once sending this plan's text to TypeSafe is acceptable.
+- `POLICY.REMOTE_JUDGE_DISABLED` on a live run: `allow_remote_judge` is `false` or absent in `.sc/plan-anchor/settings.yaml`. If absent, ask the user once, record the answer with `plan_anchor_settings.py set allow_remote_judge true|false`, and commit it. Never infer consent from earlier runs.
 - `AUTH.CREDENTIALS` with the key set: it contains whitespace or a control character (usually a pasted trailing newline), or TypeSafe rejected it.
 - `QUESTIONS.ROLES`: a question override renamed a question ID. Keep the default IDs.
 - `ANCHOR.NOT_LOCKED`: `--anchor` named a proposed or retired anchor. Lock it, or use `--all`.

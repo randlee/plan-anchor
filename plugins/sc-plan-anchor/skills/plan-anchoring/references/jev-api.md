@@ -1,21 +1,21 @@
 ---
 name: jev-api
-version: 0.7.0
-description: How jev_judge.py talks to TypeSafe's Jev - endpoint, auth, request and response shape, validation, limits, the retry and context-shortening policy, every error code and flag, model pinning, and the privacy opt-in that gates every call.
+version: 0.7.1
+description: How jev_judge.py talks to TypeSafe's Jev - endpoint, auth, request and response shape, validation, limits, the retry and context-shortening policy, every error code and flag, model pinning, and the committed allow_remote_judge setting that gates every call.
 ---
 
 # Jev API as used by this skill
 
 Jev is TypeSafe's decision model: it answers typed questions about a piece of state with probabilities and confidence, in parallel, and generates no text. `scripts/jev_judge.py` implements everything below; this document is for troubleshooting, not for hand-rolling requests.
 
-## Privacy opt-in (read first)
+## Remote judging consent (read first)
 
 A gate run sends the anchor statement and scope and the item text (a plan bead or an account of delivered work) off the machine. `rubric` also sends the verbatim quote; `dedupe --jev` sends pairs of statements and quotes. Sending a plan to TypeSafe is the user's decision, so the script fails closed:
 
 - `TYPESAFE_API_KEY` must be set and well-formed (non-empty, ASCII, no control characters), and
-- `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` must be set for the session (or `--allow-remote` passed).
+- the repository's committed `.sc/plan-anchor/settings.yaml` must set `allow_remote_judge: true`. `false` is the user's no; an absent key means nobody has asked yet. Both are refused.
 
-Without both, `judge`, `check-fixtures`, `rubric` and `dedupe --jev` return `AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED` and send nothing. `--dry-run` writes the exact request bodies and `totals {requests, bytes}` to the run directory. `--answers-file` runs the gating with fixture answers, offline. The key is never printed, logged, written to a run file, or included in an error. Set the opt-in per plan, not globally.
+Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --jev` return `AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED` and send nothing. The answer is recorded once per repository, never per session: ask the user, then `python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false` (or the installer's `--allow-remote-judge` / `--no-remote-judge`), and commit the file. Only the user decides it: agents never write it and never infer it from existing run files or past runs. The setting is found from `--repository-root` (default `.`) by the same lookup as `anchor_tracker.py`; reading a present settings file needs PyYAML (`DEPENDENCY.PYYAML`, exit 2, otherwise), and nothing else in `jev_judge.py` does. `--dry-run` writes the exact request bodies and `totals {requests, bytes}` to the run directory. `--answers-file` runs the gating with fixture answers, offline. The key is never printed, logged, written to a run file, or included in an error.
 
 ## Endpoint and auth
 
@@ -76,7 +76,7 @@ Per anchor, per request:
 | 422 token limit | Shorten and retry as above (counts toward the 3 attempts) |
 | 422 other | Not retried; `JEV.VALIDATION` with up to 300 characters of the body, which names the bad field |
 | 401 | Not retried; the whole run aborts with `AUTH.CREDENTIALS` (body withheld) |
-| Missing opt-in or key | Checked before any request; the run aborts |
+| Missing key, or `allow_remote_judge` not `true` | Checked before any request; the run aborts |
 
 Agents and the skill never add a retry loop around the script. `attempts` is recorded on every result. Questions in one request are answered independently and in parallel: one round trip per anchor.
 
@@ -89,7 +89,8 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | Code | Emitted by | Meaning and action |
 | --- | --- | --- |
 | `AUTH.CREDENTIALS` | pre-flight, 401 | Key missing, malformed, or rejected. Not retried |
-| `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | Opt-in not set. Use `--dry-run` or set `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` |
+| `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | `allow_remote_judge` is `false` or absent. Absent: ask the user once, record it with `plan_anchor_settings.py set`, commit. `false`: only the user changes it. `--dry-run` works either way |
+| `DEPENDENCY.PYYAML`, `SETTINGS.*`, `REPO.NOT_FOUND` | pre-flight | The settings file could not be read; fix what the error names. Never a silent default |
 | `JEV.RATE_LIMITED`, `JEV.OVERLOADED`, `JEV.HTTP`, `JEV.NETWORK` | transport | Transient; retried 3 times, then per-anchor `error` |
 | `JEV.RESPONSE_INVALID` | validation | Malformed or oversized response; retried, then per-anchor `error` |
 | `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
@@ -142,7 +143,8 @@ Fatal codes abort with exit 2 and `success: false`. Transient codes land in `res
 | `--min-item-chars` | 2,000 | Development gate: floor for context shortening |
 | `--timeout` | 30 s | Per-request socket timeout |
 | `--run-dir` / `--out` | `<anchors dir>/anchor-runs` | Where the run file goes |
-| `--dry-run`, `--answers-file`, `--allow-remote`, `--include-unlocked` | | See above |
+| `--repository-root` | `.` | Any path inside the repository whose settings file holds `allow_remote_judge` (live calls only) |
+| `--dry-run`, `--answers-file`, `--include-unlocked` | | See above |
 
 ## Cost and latency
 
@@ -153,7 +155,6 @@ TypeSafe prices input tokens only (output is free) at a fraction of a cent per m
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TYPESAFE_API_KEY` | none | Required for live runs |
-| `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE` | unset | Must be `1` for live runs |
 | `PLAN_ANCHOR_JEV_MODEL` | `jev-latest` | Model alias or pinned version |
 | `PLAN_ANCHOR_JEV_URL` | TypeSafe endpoint | Proxy or mock server |
 | `PLAN_ANCHOR_CONFIDENCE_THRESHOLD` | `0.6` | Gating threshold |

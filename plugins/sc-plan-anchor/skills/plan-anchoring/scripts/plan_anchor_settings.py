@@ -11,16 +11,33 @@ This is the only plan-anchoring module that needs PyYAML
 this module never fails; a missing PyYAML is returned as
 ``DEPENDENCY.PYYAML``. Every expected failure is returned as
 ``Err(ToolError)`` (see ``result.py``), never raised.
+
+Keys (all optional except ``schema_version``)
+  anchor_tracker      ``br`` or ``bd``; written by ``anchor_tracker.py write``
+  allow_remote_judge  ``true`` or ``false``: the user's answer to whether plan
+                      text may be sent to TypeSafe (Jev). Absent means nobody
+                      has asked yet, and live Jev calls are refused. Only the
+                      user decides it; record the answer with ``set``.
+
+Command line (the JSON envelope ``{success, data, error}``; exit 0, or 2 with a
+typed error, including ``VALIDATION.INPUT`` for bad arguments)
+  show [--repository-root PATH]
+      read-only: the parsed settings and where they live
+  set allow_remote_judge true|false [--repository-root PATH]
+      record the user's answer, keeping every other key; commit the file
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import argparse
+from dataclasses import dataclass, replace
 import importlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 from types import ModuleType
 from typing import Any, Optional
 
@@ -29,14 +46,20 @@ from result import Err, Ok, Result, ToolError, err
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
 TRACKERS = ("bd", "br")
-ALLOWED_KEYS = ("schema_version", "anchor_tracker")
+ALLOWED_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge")
+SETTABLE_KEYS = ("allow_remote_judge",)
 PYYAML_INSTALL = "python3 -m pip install pyyaml"
+ERROR_EXIT = 2
 
-SETTINGS_TEMPLATE = """\
+SETTINGS_HEADER = """\
 # .sc/plan-anchor/settings.yaml
 # Repository settings for the sc-plan-anchor plugin; commit this file, never put secrets in it.
 schema_version: {schema_version}
-anchor_tracker: {anchor_tracker}
+"""
+TRACKER_LINE = "anchor_tracker: {anchor_tracker}\n"
+REMOTE_JUDGE_LINES = """\
+# allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.
+allow_remote_judge: {value}
 """
 
 
@@ -44,6 +67,7 @@ anchor_tracker: {anchor_tracker}
 class Settings:
     schema_version: int
     anchor_tracker: Optional[str]
+    allow_remote_judge: Optional[bool] = None
 
 
 def load_yaml() -> Result[ModuleType, ToolError]:
@@ -115,7 +139,8 @@ def _strict_loader(yaml: ModuleType) -> type:
 
 
 def parse_settings(text: str, yaml: ModuleType, *, path: str = SETTINGS_RELPATH) -> Result[Settings, ToolError]:
-    fix = f"Edit {path}: it must hold 'schema_version: {SCHEMA_VERSION}' and optionally 'anchor_tracker: br' or 'anchor_tracker: bd'."
+    fix = (f"Edit {path}: it must hold 'schema_version: {SCHEMA_VERSION}' and optionally "
+           "'anchor_tracker: br' or 'anchor_tracker: bd' and 'allow_remote_judge: true' or 'allow_remote_judge: false'.")
     try:
         data: Any = yaml.load(text, Loader=_strict_loader(yaml))  # a SafeLoader subclass
     except yaml.YAMLError as exc:
@@ -136,7 +161,11 @@ def parse_settings(text: str, yaml: ModuleType, *, path: str = SETTINGS_RELPATH)
     if "anchor_tracker" in data and tracker not in TRACKERS:
         return err("SETTINGS.INVALID_TRACKER",
                    f"{path} anchor_tracker is {tracker!r}; expected 'br' or 'bd'", fix)
-    return Ok(Settings(schema_version=version, anchor_tracker=tracker))
+    remote = data.get("allow_remote_judge")
+    if "allow_remote_judge" in data and type(remote) is not bool:
+        return err("SETTINGS.INVALID_REMOTE_JUDGE",
+                   f"{path} allow_remote_judge is {remote!r}; expected true or false", fix)
+    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote))
 
 
 def read_settings(root: Path) -> Result[Optional[Settings], ToolError]:
@@ -156,11 +185,17 @@ def read_settings(root: Path) -> Result[Optional[Settings], ToolError]:
 
 
 def render_settings(settings: Settings) -> str:
-    """The committed form: header comment, purpose line, one key per line."""
-    if settings.anchor_tracker not in TRACKERS:
-        raise ValueError(f"render_settings needs a tracker, got {settings.anchor_tracker!r}")  # caller bug
-    return SETTINGS_TEMPLATE.format(schema_version=settings.schema_version,
-                                    anchor_tracker=settings.anchor_tracker)
+    """The committed form: header comment, purpose line, one key per line (absent keys are omitted)."""
+    if settings.anchor_tracker is not None and settings.anchor_tracker not in TRACKERS:
+        raise ValueError(f"render_settings got tracker {settings.anchor_tracker!r}")  # caller bug
+    if settings.allow_remote_judge is not None and type(settings.allow_remote_judge) is not bool:
+        raise ValueError(f"render_settings got allow_remote_judge {settings.allow_remote_judge!r}")  # caller bug
+    text = SETTINGS_HEADER.format(schema_version=settings.schema_version)
+    if settings.anchor_tracker is not None:
+        text += TRACKER_LINE.format(anchor_tracker=settings.anchor_tracker)
+    if settings.allow_remote_judge is not None:
+        text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
+    return text
 
 
 def write_settings(root: Path, settings: Settings) -> Result[Path, ToolError]:
@@ -188,3 +223,165 @@ def write_settings(root: Path, settings: Settings) -> Result[Path, ToolError]:
     if isinstance(reread, Err) or reread.value != settings:
         raise AssertionError("rendered settings do not round-trip")  # bug, not an expected failure
     return Ok(path)
+
+
+def git_ignored(root: Path, rel: str) -> Result[bool, str]:
+    """Whether git ignores ``rel``; ``Err(reason)`` when git cannot say (reported, not fatal)."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", rel],
+                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        return Err(f"git could not start: {type(exc).__name__}: {exc}")
+    if proc.returncode in (0, 1):
+        return Ok(proc.returncode == 0)
+    stderr = (proc.stderr or "").strip()[-500:]
+    return Err(f"git check-ignore exited {proc.returncode}: {stderr or '(no stderr)'}")
+
+
+# ---------------------------------------------------------------- allow_remote_judge
+
+REMOTE_JUDGE_SET_COMMAND = "plan_anchor_settings.py set allow_remote_judge true|false"
+
+
+def remote_judge_consent(root: Path) -> Result[bool, ToolError]:
+    """The recorded answer: ``Ok(True)``, ``Ok(False)``, or ``SETTINGS.REMOTE_JUDGE_UNSET`` when nobody has asked.
+
+    A missing settings file needs no PyYAML; a present one is parsed strictly
+    (``DEPENDENCY.PYYAML`` when PyYAML is missing: never a silent default).
+    """
+    path = settings_path(root)
+    unset = err("SETTINGS.REMOTE_JUDGE_UNSET", f"{SETTINGS_RELPATH} does not set allow_remote_judge")
+    if not path.exists() and not path.is_symlink():
+        return unset
+    loaded = read_settings(root)
+    if not loaded.ok:
+        return loaded
+    value = loaded.value.allow_remote_judge if loaded.value is not None else None
+    return unset if value is None else Ok(value)
+
+
+def set_value(start: Path, key: str, value: Any) -> Result[dict, ToolError]:
+    """Record ``key`` in the settings file, keeping every other key; read it back strictly."""
+    if key not in SETTABLE_KEYS:
+        return err("VALIDATION.INPUT", f"{key!r} cannot be set here; settable keys: {', '.join(SETTABLE_KEYS)}",
+                   "Set anchor_tracker with 'anchor_tracker.py write'.")
+    root = find_repo_root(start)
+    if not root.ok:
+        return root
+    current = read_settings(root.value)
+    if not current.ok:
+        return current  # a malformed file is never overwritten
+    before = current.value if current.value is not None else Settings(schema_version=SCHEMA_VERSION, anchor_tracker=None)
+    previous = getattr(before, key)
+    after = replace(before, **{key: value})
+    written = current.value is None or after != current.value
+    if written:
+        saved = write_settings(root.value, after)
+        if not saved.ok:
+            return saved
+    checked = git_ignored(root.value, SETTINGS_RELPATH)
+    ignored = checked.value if checked.ok else None
+    actions = [f"Commit {SETTINGS_RELPATH} so every clone and every agent uses this answer."] if written else []
+    if ignored:
+        actions.append(f"{SETTINGS_RELPATH} is gitignored; un-ignore it so the answer is committed.")
+    elif not checked.ok:
+        actions.append(f"Could not check whether {SETTINGS_RELPATH} is gitignored ({checked.error}); "
+                       "confirm with 'git check-ignore -v' before committing.")
+    return Ok({
+        "key": key,
+        "value": value,
+        "previous": previous,
+        "written": written,
+        "repository_root": str(root.value),
+        "settings_path": str(settings_path(root.value)),
+        "settings_relpath": SETTINGS_RELPATH,
+        "settings_ignored_by_git": ignored,
+        "settings_ignored_check_error": None if checked.ok else checked.error,
+        "commit_paths": [SETTINGS_RELPATH] if written else [],
+        "next_actions": actions,
+    })
+
+
+def show(start: Path) -> Result[dict, ToolError]:
+    root = find_repo_root(start)
+    if not root.ok:
+        return root
+    current = read_settings(root.value)
+    if not current.ok:
+        return current
+    s = current.value
+    return Ok({
+        "repository_root": str(root.value),
+        "settings_path": str(settings_path(root.value)),
+        "settings_relpath": SETTINGS_RELPATH,
+        "settings_present": s is not None,
+        "schema_version": s.schema_version if s is not None else None,
+        "anchor_tracker": s.anchor_tracker if s is not None else None,
+        "allow_remote_judge": s.allow_remote_judge if s is not None else None,
+    })
+
+
+# ---------------------------------------------------------------- CLI
+
+
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors become a VALIDATION.INPUT envelope instead of argparse's text on stderr."""
+
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
+
+
+def _bool(text: str) -> bool:
+    if text not in ("true", "false"):
+        raise argparse.ArgumentTypeError(f"expected true or false, got {text!r}")
+    return text == "true"
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = _JsonArgumentParser(prog="plan_anchor_settings.py", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
+    sh = sub.add_parser("show", help="read-only: the parsed settings")
+    sh.add_argument("--repository-root", default=".", help="any path inside the repository (default: .)")
+    st = sub.add_parser("set", help=f"record a value in {SETTINGS_RELPATH} (commit it)")
+    st.add_argument("key", choices=SETTABLE_KEYS)
+    st.add_argument("value", type=_bool, metavar="true|false")
+    st.add_argument("--repository-root", default=".", help="any path inside the repository (default: .)")
+    return parser
+
+
+def _print(envelope: dict) -> None:
+    print(json.dumps(envelope, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def main(argv: Optional[list] = None) -> int:
+    try:
+        args = _parser().parse_args(argv)
+    except _UsageError as exc:
+        _print({"success": False, "data": None, "error": ToolError(
+            "VALIDATION.INPUT", str(exc), "Run 'plan_anchor_settings.py --help' for the accepted arguments.").to_json()})
+        return ERROR_EXIT
+    try:
+        start = Path(args.repository_root)
+        outcome = show(start) if args.command == "show" else set_value(start, args.key, args.value)
+        if outcome.ok:
+            envelope, code = {"success": True, "data": outcome.value, "error": None}, 0
+        else:
+            e = outcome.error
+            envelope = {"success": False, "data": dict(e.data) if e.data is not None else None, "error": e.to_json()}
+            code = ERROR_EXIT
+    except Exception as exc:  # a bug, not an expected failure
+        envelope = {"success": False, "data": None, "error": ToolError(
+            "SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
+            "Report this with the command line that produced it.").to_json()}
+        code = ERROR_EXIT
+    _print(envelope)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

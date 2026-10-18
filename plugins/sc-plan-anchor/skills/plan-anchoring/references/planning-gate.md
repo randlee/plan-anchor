@@ -1,6 +1,6 @@
 ---
 name: planning-gate
-version: 0.7.0
+version: 0.7.1
 description: Running the planning gate end to end - what to pass, what Jev sees, the command and exit codes, and how to read results for one sprint item and a whole phase.
 ---
 
@@ -43,7 +43,7 @@ python3 "$S" judge --anchors "$A" --gate plan --all --item-id <sprint-id> --item
 | --- | --- |
 | 0 | Every anchor `satisfied`, `not_applicable`, `deterministic_only` or `excluded`, or a dry run |
 | 1 | At least one `contradicted`, `not_addressed`, `underspecified` or `error` verdict; the run file was written |
-| 2 | Fatal before judging: credentials, opt-in, malformed record or override, unknown anchor, or `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`) |
+| 2 | Fatal before judging: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, or `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`) |
 
 Then, across all sprint items:
 

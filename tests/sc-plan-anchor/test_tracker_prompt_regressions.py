@@ -69,9 +69,9 @@ class TrackerPromptRegressionTests(unittest.TestCase):
                 self.assertIn('--item-file "$W/item.txt"', prompt)
                 self.assertNotRegex(prompt, r"\bbd (show|children)\b")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        latest = changelog.split("\n## ")[1]
-        self.assertIn("ADR-014", latest)
-        self.assertIn("REQ-057", latest)
+        entry = changelog.split("\n## 0.7.0 ")[1].split("\n## ")[0]  # the release that made the change
+        self.assertIn("ADR-014", entry)
+        self.assertIn("REQ-057", entry)
 
     def test_installation_doc_covers_br_and_selection(self):
         doc = (SKILL / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")

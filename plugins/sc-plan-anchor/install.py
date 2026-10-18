@@ -10,6 +10,7 @@
 
     uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd]
         [--target claude,codex,cursor] [--init-br] [--overwrite] [--dry-run]
+        [--allow-remote-judge | --no-remote-judge]
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
 sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
@@ -19,7 +20,8 @@ Python 3.9+, so ``python3 install.py`` works wherever both packages import.
 What it writes, per target (default ``claude``):
   <repo>/.<target>/skills/plan-anchoring/...   the skill
   <repo>/.<target>/agents/anchor-*.md          the agents
-  <repo>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker
+  <repo>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
+                                               ``allow_remote_judge`` when a flag gives it
   <repo>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
 
 Tracker text. Files whose text names the tracker are sc-compose templates in
@@ -33,6 +35,11 @@ br). bd needs a Dolt-backed ``.beads/``; br needs one that is not. With no
 ``.beads/`` the install fails unless ``--init-br`` runs ``br init``;
 it never runs ``bd init``. Rerunning with another ``--tracker`` re-renders every installed
 target and updates the setting; it never migrates issue data.
+
+Remote judging. ``--allow-remote-judge`` / ``--no-remote-judge`` record the
+user's answer to whether plan text may be sent to TypeSafe (Jev) as
+``allow_remote_judge: true|false``; live Jev calls are refused until it is
+``true``. Without either flag the existing value (or its absence) is kept.
 
 Ownership. A rerun replaces a file only when its bytes are what the lock says
 this installer wrote; it removes files this version no longer ships when they
@@ -373,6 +380,8 @@ class Plan:
     warnings: List[str] = field(default_factory=list)
     lock_files: Dict[str, str] = field(default_factory=dict)
     settings_change: Optional[dict] = None
+    remote_judge_change: Optional[dict] = None
+    allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
     br_init: bool = False
 
 
@@ -566,6 +575,7 @@ def build_plan(root: Path, package: Package, renderer: Renderer, choice: Tracker
     configured = choice.settings.anchor_tracker if choice.settings is not None else None
     if configured != choice.tracker:
         plan.settings_change = {"path": SETTINGS_RELPATH, "from": configured, "to": choice.tracker}
+    plan.allow_remote_judge = choice.settings.allow_remote_judge if choice.settings is not None else None
     plan.backup = sorted(set(plan.backup))
     plan.remove = sorted(set(plan.remove))
     return Ok(plan)
@@ -629,15 +639,16 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
     except OSError as exc:
         return err("INSTALL.WRITE_FAILED", f"writing the install failed: {type(exc).__name__}: {exc}",
                    "Fix the reported path (permissions, disk space), then rerun; the lock file is written last.")
-    if plan.settings_change is not None:
-        saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker))
+    if plan.settings_change is not None or plan.remote_judge_change is not None:
+        saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker,
+                                              allow_remote_judge=plan.allow_remote_judge))
         if isinstance(saved, Err):
             return saved
     changed = plan.create + plan.replace + plan.remove
     commit = sorted({k.split("/")[0] + "/" for k in changed})
     if changed or plan.backup:
         commit.append(LOCK_RELPATH)
-    if plan.settings_change is not None:
+    if plan.settings_change is not None or plan.remote_judge_change is not None:
         commit.append(SETTINGS_RELPATH)
     if plan.br_init:
         commit.append(".beads/")
@@ -655,6 +666,7 @@ class Options:
     init_br: bool = False
     overwrite: bool = False
     dry_run: bool = False
+    allow_remote_judge: Optional[bool] = None  # None: keep what the settings file holds
 
 
 def install(opts: Options, *, which: Which = shutil.which, run: Runner = subprocess.run,
@@ -685,6 +697,9 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
     if isinstance(planned, Err):
         return planned
     plan = planned.value
+    if opts.allow_remote_judge is not None and opts.allow_remote_judge != plan.allow_remote_judge:
+        plan.remote_judge_change = {"path": SETTINGS_RELPATH, "from": plan.allow_remote_judge, "to": opts.allow_remote_judge}
+        plan.allow_remote_judge = opts.allow_remote_judge
     if plan.problems:
         return err("INSTALL.CONFLICT",
                    f"{len(plan.problems)} file(s) are in the way; nothing was written: "
@@ -698,6 +713,10 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
     if switched:
         notes.append(f"Switching the anchor tracker from {previous} to {c.tracker}: every installed target is "
                      f"re-rendered and {SETTINGS_RELPATH} is updated. {NO_DATA_MIGRATION}")
+    if plan.allow_remote_judge is None:
+        notes.append(f"{SETTINGS_RELPATH} does not set allow_remote_judge, so live Jev calls are refused. Ask the user "
+                     "once whether plan text may be sent to TypeSafe (Jev), then rerun with --allow-remote-judge or "
+                     "--no-remote-judge (or run 'plan_anchor_settings.py set allow_remote_judge true|false') and commit it.")
     if opts.init_br and not c.init_br:
         notes.append("--init-br ignored: .beads/ already exists.")
     data: Dict[str, Any] = {
@@ -709,6 +728,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "tracker_origin": c.origin,
         "previous_tracker": previous,
         "switched": switched,
+        "allow_remote_judge": plan.allow_remote_judge,
         "targets": plan.targets,
         "dry_run": opts.dry_run,
         "migration": lock.value is None,
@@ -719,6 +739,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
             "remove": plan.remove,
             "backup": plan.backup,
             "settings": plan.settings_change,
+            "allow_remote_judge": plan.remote_judge_change,
             "br_init": plan.br_init,
             "lock": LOCK_RELPATH,
         },
@@ -768,6 +789,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--overwrite", action="store_true",
                    help=f"move modified or foreign files in the way to {BACKUP_DIR}/<UTC>/ and install over them")
     p.add_argument("--dry-run", action="store_true", help="print the plan and write nothing")
+    remote = p.add_mutually_exclusive_group()
+    remote.add_argument("--allow-remote-judge", dest="allow_remote_judge", action="store_const", const=True, default=None,
+                        help="record allow_remote_judge: true (the user agreed plan text may be sent to TypeSafe)")
+    remote.add_argument("--no-remote-judge", dest="allow_remote_judge", action="store_const", const=False,
+                        help="record allow_remote_judge: false (live Jev calls stay refused)")
     return p
 
 
@@ -784,7 +810,8 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
         args = _parser().parse_args(argv)
         targets = [t for group in (args.target or [["claude"]]) for t in group]
         opts = Options(dest=Path(args.dest), tracker=args.tracker, targets=list(dict.fromkeys(targets)),
-                       init_br=args.init_br, overwrite=args.overwrite, dry_run=args.dry_run)
+                       init_br=args.init_br, overwrite=args.overwrite, dry_run=args.dry_run,
+                       allow_remote_judge=args.allow_remote_judge)
     except _UsageError as exc:
         envelope = {"success": False, "data": None,
                     "error": ToolError("VALIDATION.INPUT", str(exc), "Run 'install.py --help'.").to_json()}

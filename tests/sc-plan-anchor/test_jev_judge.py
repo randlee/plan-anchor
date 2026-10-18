@@ -26,7 +26,7 @@ OPTIONS = ("yes", "no", "unclear")
 STATEMENT = "The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules; no runtime crate is written from scratch."
 QUOTE = "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code"
 REQ_STATEMENT = "All public CLI commands must support --json output with a stable schema."
-LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"}
+LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001"}
 ASSETS = SKILL / "assets"
 
 
@@ -90,6 +90,29 @@ def env(**values):
     return mock.patch.dict(os.environ, values, clear=True)
 
 
+def consented():
+    """The repository's allow_remote_judge is true (the real lookup is tested in test_remote_judge_setting)."""
+    return mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None))
+
+
+@contextlib.contextmanager
+def live(**values):
+    """A well-formed key plus recorded consent: what a live call needs (the transport is still stubbed by the caller)."""
+    with env(**dict(LIVE_ENV, **values)), consented():
+        yield
+
+
+_UNSET_REPOS = []
+
+
+def unset_repo():
+    """A repository root whose settings file does not exist: allow_remote_judge was never recorded."""
+    td = tempfile.TemporaryDirectory()
+    _UNSET_REPOS.append(td)
+    (Path(td.name) / ".git").mkdir()
+    return td.name
+
+
 def ok(result):
     """The value of an Ok result; any Err fails the test with the error it carries."""
     if not isinstance(result, jj.Ok):
@@ -132,14 +155,19 @@ def http(status, text="", retry_after=None):
 class Judged:
     """Run `judge` against a stubbed transport with the opt-in satisfied; exposes the run and call log."""
 
-    def __init__(self, d, transport, anchors=None, extra_args=(), item_text="Sprint 2 copies the legacy runtime crates.", env_values=None, gate="plan"):
+    def __init__(self, d, transport, anchors=None, extra_args=(), item_text="Sprint 2 copies the legacy runtime crates.", env_values=None, gate="plan",
+                 consent=True):
         self.anchors_path = write(d, "anchors.json", record(*(anchors or [anchor()])))
         self.item_path = write(d, "item.txt", item_text)
         self.sleeps = []
         argv = ["judge", "--anchors", self.anchors_path, "--gate", gate, "--all", "--item-id", "bd-42",
                 "--item-file", self.item_path, "--run-dir", str(Path(d) / "runs"), *extra_args]
-        with env(**(LIVE_ENV if env_values is None else env_values)), mock.patch.object(jj, "call_jev", transport), \
-                mock.patch.object(jj, "_sleep", self.sleeps.append):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(env(**(LIVE_ENV if env_values is None else env_values)))
+            if consent:
+                stack.enter_context(consented())
+            stack.enter_context(mock.patch.object(jj, "call_jev", transport))
+            stack.enter_context(mock.patch.object(jj, "_sleep", self.sleeps.append))
             self.code, self.out = run_cli(argv)
         self.run = self.out.get("data") if isinstance(self.out, dict) else None
         self.result = self.run["results"][0] if self.run and self.run.get("results") else None
@@ -476,9 +504,10 @@ class DedupeTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
-            with env(TYPESAFE_API_KEY="sk-test"):
-                code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
-            self.assertEqual((code, out["error"]["code"]), (2, "POLICY.REMOTE_JUDGE_DISABLED"))
+            t = Transport()
+            with env(TYPESAFE_API_KEY="sk-test"), mock.patch.object(jj, "call_jev", t):
+                code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev", "--repository-root", unset_repo()])
+            self.assertEqual((code, out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
             self.assertIn("anchor statements", out["error"]["message"])
             distinct = write(d, "distinct.json", record(anchor(), anchor("ANC-003", statement="The CLI layer only parses arguments and prints JSON.", quote="keep the CLI thin")))
             with env():
@@ -490,18 +519,18 @@ class DedupeTests(unittest.TestCase):
             path = write(d, "anchors.json", record(anchor(), anchor("ANC-002", statement=self.A, quote="copy the libraries from the legacy repo and remove the legacy-specific code")))
             t = Transport(http(429), {"model": "jev-1.13.0", "answers": {"same_constraint": answer("yes", 0.8)}})
             sleeps = []
-            with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", sleeps.append):
+            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", sleeps.append):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual(code, 1)
             self.assertEqual(out["data"]["pairs"][0]["jev"], {"choice": "yes", "confidence": 0.8, "attempts": 2})
             self.assertEqual((len(t.bodies), sleeps), (2, [1.0]))
             self.assertEqual(t.bodies[0]["state"]["a"]["id"], "ANC-001")
             t = Transport(http(401))
-            with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t):
+            with live(), mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport(http(503), http(503), http(503))
-            with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual(code, 0)
             self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.HTTP", 3))
@@ -700,21 +729,22 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
-            with env(TYPESAFE_API_KEY="sk-test"):
-                code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
-            self.assertEqual((code, out["error"]["code"]), (2, "POLICY.REMOTE_JUDGE_DISABLED"))
+            t = Transport()
+            with env(TYPESAFE_API_KEY="sk-test"), mock.patch.object(jj, "call_jev", t):
+                code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--repository-root", unset_repo()])
+            self.assertEqual((code, out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
 
     def test_live_candidate_uses_the_transport(self):
         response = {"model": "jev-1.13.0", "answers": rubric_answers(scoped=("unclear", 0.7))}
         t = Transport(response, response)
-        with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t):
+        with live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--scope", "runtime crates"])
         self.assertEqual(code, 1)
         self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"], out["data"]["anchors"][0]["attempts"]), ("needs_work", ["scoped"], 2))
         self.assertEqual(t.bodies[0]["state"]["anchor"]["scope"], "runtime crates")
         self.assertNotIn("item", t.bodies[0]["state"])
         # a state without an item cannot be shortened: over the cap it is refused before any call
-        with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t):
+        with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
         self.assertEqual((code, out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (1, "error", "JEV.CONTEXT_EXCEEDED"))
         self.assertEqual(len(t.bodies), 2)
@@ -749,7 +779,7 @@ class RubricTests(unittest.TestCase):
             self.assertEqual(len(json.loads(Path(path).read_text())["anchors"]), 3)
             response = {"model": "jev-1.13.0", "answers": rubric_answers()}
             t = Transport(response, response)
-            with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t):
+            with live(), mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["data"]["anchor"]["id"], out["data"]["rubric"]["verdict"]), (0, "ANC-004", "testable"))
             self.assertEqual(t.bodies[0]["state"]["anchor"]["quote"], "cargo only")
@@ -778,9 +808,9 @@ class KindTests(unittest.TestCase):
             old = anchor()
             old.pop("kind", None)
             self.assertEqual((jj.anchor_kind(old), jj.validate_record(record(old))), ("directive", []))  # records without kind are directives
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                jj.main(["add", "--anchors", path, "--statement", "x", "--quote", "y", "--kind", "vibe"])
+            code, out = run_cli(["add", "--anchors", path, "--statement", "x", "--quote", "y", "--kind", "vibe"])
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))  # usage errors are JSON envelopes
+            self.assertIn("--kind", out["error"]["message"])
 
     def test_prohibition_gating_ignores_compliance(self):
         def pro(**kw):
@@ -1335,24 +1365,25 @@ class JudgeFixtureTests(unittest.TestCase):
 
 
 class FailClosedTests(unittest.TestCase):
-    def test_missing_key_and_missing_opt_in(self):
+    def test_missing_key_and_missing_consent(self):
         with tempfile.TemporaryDirectory() as d:
             transport = Transport()
             j = Judged(d, transport, env_values={})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
-            j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"})
+            j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"}, consent=False,
+                       extra_args=["--repository-root", unset_repo()])
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "POLICY.REMOTE_JUDGE_DISABLED"))
             self.assertEqual(transport.bodies, [])  # nothing left the machine
-            j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"}, extra_args=["--allow-remote"])
+            j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"})
             self.assertEqual((j.code, j.result["verdict"]), (0, "satisfied"))
             self.assertEqual(len(transport.bodies), 1)
 
     def test_key_format_checked_and_never_echoed(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "sk-bad\nkey", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"})
+            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "sk-bad\nkey"})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertNotIn("sk-bad", json.dumps(j.out))
-            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "  sk-ok  ", "PLAN_ANCHOR_ALLOW_REMOTE_JUDGE": "1"})
+            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "  sk-ok  "})
             self.assertEqual(j.code, 0)
 
     def test_fixture_and_dry_run_need_neither(self):
@@ -1924,7 +1955,7 @@ class CheckFixturesTests(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "AUTH.CREDENTIALS")
         t = Transport(http(429), {"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
                       {"model": "jev", "answers": plan_answers(conf="yes")})
-        with env(**LIVE_ENV), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+        with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
             code, out = run_cli(["check-fixtures", "--anchors", self.anchors, "--gate", "plan", "--id", "ANC-001"])
         self.assertEqual(code, 0)
         self.assertEqual([c["verdict"] for c in out["data"]["checks"]], ["satisfied", "not_addressed", "contradicted"])

@@ -2,7 +2,7 @@
 
 A Claude Code and Codex skill that keeps plans, and the code built from them, anchored to what you actually said while planning. Facts you state are captured verbatim as numbered **anchors**, turned into typed questions for [TypeSafe's Jev](https://typesafe.ai) decision model, and enforced mechanically at two gates: once against the plan, once against the delivered work. When something drifts, the report quotes your own words back.
 
-> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require `TYPESAFE_API_KEY` and an explicit per-session opt-in, `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1`; without both, the skill refuses and sends nothing. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
+> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require `TYPESAFE_API_KEY` and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
 
 ## The problem
 
@@ -55,7 +55,7 @@ Cursor: in Customize, import this GitHub repository (it reads `.cursor-plugin/ma
 To vendor the skill and agents into a repository instead (rendered for that repository's tracker, so the installed text names only `br` or only `bd`), run the installer from a checkout of this repository:
 
 ```bash
-uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd] [--target claude,codex,cursor] [--dry-run]
+uv run plugins/sc-plan-anchor/install.py --dest <repo> [--tracker br|bd] [--target claude,codex,cursor] [--allow-remote-judge | --no-remote-judge] [--dry-run]
 ```
 
 Rerun it to upgrade or, with the other `--tracker`, to switch trackers (switching re-renders the text and updates `.sc/plan-anchor/settings.yaml`; it does not migrate issue data). It owns only the files recorded in `<repo>/.sc/plan-anchor/install-lock.json`, removes files a newer version no longer ships, and refuses to overwrite modified or foreign files without `--overwrite`. Details: `references/installation-and-troubleshooting.md`.
@@ -64,11 +64,11 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 
 | Need | For | Notes |
 | --- | --- | --- |
-| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` |
-| PyYAML 5.1+ | anchor tracker selection | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
+| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
+| PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Export it in the shell that launches Claude Code, Codex, or Cursor |
-| `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` | every live Jev operation | Per-session opt-in; set it only when sending this plan's scoped text to TypeSafe is acceptable |
+| `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 plugins/sc-plan-anchor/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false`; commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
 
@@ -79,7 +79,7 @@ S=plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py
 A=doc/plan/phase-current/anchors.json
 
 # lock the first anchor (creates anchors.json) after the live Jev rubric, then render the human view
-PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1 python3 $S add --rubric --anchors $A --quote "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code" \
+python3 $S add --rubric --anchors $A --quote "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code" \
   --statement "The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules; no runtime crate is written from scratch." \
   --stated-by "<name>" --context "planning session" --summary "Runtime crates copied, not rewritten" \
   --scope "any bead that creates the runtime crates" --status locked
@@ -88,8 +88,8 @@ python3 $S validate --anchors $A && python3 $S render --anchors $A
 # see exactly what a planning-gate request would send, without a key
 python3 $S judge --anchors $A --gate plan --all --item-id bd-42 --item-file /tmp/bd-42.txt --dry-run
 
-# run the planning gate for a bead (needs the key and the opt-in), then read the report
-PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1 python3 $S judge --anchors $A --gate plan --all --item-id bd-42 --item-file /tmp/bd-42.txt
+# run the planning gate for a bead (needs the key and `allow_remote_judge: true`), then read the report
+python3 $S judge --anchors $A --gate plan --all --item-id bd-42 --item-file /tmp/bd-42.txt
 python3 $S report --run doc/plan/phase-current/anchor-runs/<run>.json --format md
 
 # coverage across all judged beads
@@ -152,7 +152,7 @@ plugins/sc-plan-anchor/
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
-Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. Transient API failures get three attempts with backoff before an anchor is marked `error`; credential and opt-in failures abort immediately and are never retried.
+Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. Transient API failures get three attempts with backoff before an anchor is marked `error`; credential and consent failures abort immediately and are never retried.
 
 ## Development
 

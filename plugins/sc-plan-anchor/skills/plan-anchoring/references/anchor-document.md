@@ -1,6 +1,6 @@
 ---
 name: anchor-document
-version: 0.7.0
+version: 0.7.1
 description: The intent document, the anchors.json record of truth and its rendered anchors.md, ID rules, provenance, versioning, promotion, and retirement.
 ---
 

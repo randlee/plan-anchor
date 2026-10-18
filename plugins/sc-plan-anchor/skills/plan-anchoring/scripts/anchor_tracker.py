@@ -52,6 +52,7 @@ from plan_anchor_settings import (  # noqa: E402
     TRACKERS,
     Settings,
     find_repo_root,
+    git_ignored,
     read_settings,
     settings_path,
     write_settings,
@@ -238,17 +239,7 @@ def init_br(tracker: str, cli_path: str, root: Path, run: Runner) -> Result[Bead
     return after
 
 
-def _git_ignored(root: Path, rel: str) -> Result[bool, str]:
-    """Whether git ignores ``rel``; ``Err(reason)`` when git cannot say (reported, not fatal)."""
-    try:
-        proc = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", rel],
-                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    except OSError as exc:
-        return Err(f"git could not start: {type(exc).__name__}: {exc}")
-    if proc.returncode in (0, 1):
-        return Ok(proc.returncode == 0)
-    stderr = (proc.stderr or "").strip()[-500:]
-    return Err(f"git check-ignore exited {proc.returncode}: {stderr or '(no stderr)'}")
+_git_ignored = git_ignored  # shared with plan_anchor_settings.py set
 
 
 def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
@@ -267,7 +258,9 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     written = False
     path = settings_path(sel.root)
     if sel.settings is None or sel.settings.anchor_tracker is None:
-        saved = write_settings(sel.root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker))
+        kept = sel.settings.allow_remote_judge if sel.settings is not None else None
+        saved = write_settings(sel.root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker,
+                                                  allow_remote_judge=kept))
         if isinstance(saved, Err):
             return saved
         written = True
