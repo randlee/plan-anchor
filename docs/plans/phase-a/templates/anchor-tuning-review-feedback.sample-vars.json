@@ -5,8 +5,8 @@
   "correlation_id": "phase-a:A5:ANC-031",
   "runtime": {
     "workspace": "/workspace/plan-anchor",
-    "script": "/workspace/plan-anchor/plugins/sc-plan-anchor/skills/plan-anchoring/scripts/jev_judge.py",
-    "contract_script": "/workspace/plan-anchor/plugins/sc-plan-anchor/skills/plan-anchoring/scripts/anchor_tuning_contract.py",
+    "script": "/workspace/plan-anchor/.claude/skills/plan-anchoring/scripts/jev_judge.py",
+    "contract_script": "/workspace/plan-anchor/.claude/skills/plan-anchoring/scripts/anchor_tuning_contract.py",
     "contract_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "agent": "anchor-tuning",

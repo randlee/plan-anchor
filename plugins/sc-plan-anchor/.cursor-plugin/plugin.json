@@ -1,8 +1,8 @@
 {
   "name": "sc-plan-anchor",
   "displayName": "Plan Anchor",
-  "version": "0.5.0",
-  "description": "Keep plans and delivered work aligned with user-approved anchors using Jev-backed gates.",
+  "version": "0.8.1",
+  "description": "Install plan-anchor (Jev-backed anchors and gates that keep plans and delivered work aligned) into a repository or a parent folder, rendered for br or bd.",
   "author": {
     "name": "randlee"
   },
@@ -16,6 +16,5 @@
     "beads",
     "code-review"
   ],
-  "skills": "./skills/",
-  "agents": "./.cursor/agents"
+  "skills": "./skills/"
 }

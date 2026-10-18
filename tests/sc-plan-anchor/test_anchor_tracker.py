@@ -14,7 +14,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "skills" / "plan-anchoring" / "scripts"
+SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
 TRACKER_SCRIPT = SCRIPTS / "anchor_tracker.py"
 
 if str(SCRIPTS) not in sys.path:
@@ -38,6 +38,10 @@ EXPECTED_FILE = (
     "# Repository settings for the sc-plan-anchor plugin; commit this file, never put secrets in it.\n"
     "schema_version: 1\n"
     "anchor_tracker: {tracker}\n"
+)
+REMOTE_JUDGE_TRUE = (
+    "# allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.\n"
+    "allow_remote_judge: true\n"
 )
 GIT = shutil.which("git")
 HAS_YAML = importlib.util.find_spec("yaml") is not None
@@ -477,7 +481,7 @@ class CliTests(RepoCase):
         self.dolt()
         self.pin("br")
         code, env = self.main("resolve")
-        self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py and plan_source.py
+        self.assertEqual(code, 2)  # every error exits 2, as in jev_judge.py
         self.assertFalse(env["success"])
         self.assertEqual(env["error"]["code"], "TRACKER.MISMATCH")
         self.assertEqual(set(env["error"]), {"code", "message", "recoverable", "suggested_action"})
@@ -643,13 +647,13 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
 
 class RepositoryContractTests(unittest.TestCase):
     @unittest.skipUnless(HAS_YAML, NO_YAML_REASON)
-    def test_this_repository_pins_br(self):
+    def test_this_repository_pins_br_and_allows_remote_judging(self):
         path = ROOT / ".sc" / "plan-anchor" / "settings.yaml"
         text = path.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# .sc/plan-anchor/settings.yaml\n"))
-        self.assertEqual(text, EXPECTED_FILE.format(tracker="br"))
+        self.assertEqual(text, EXPECTED_FILE.format(tracker="br") + REMOTE_JUDGE_TRUE)
         parsed = settings_mod.parse_settings(text, __import__("yaml"))
-        self.assertEqual(parsed.value, settings_mod.Settings(1, "br"))
+        self.assertEqual(parsed.value, settings_mod.Settings(1, "br", True))
 
     @unittest.skipUnless(GIT, "git is not installed")
     def test_settings_file_is_not_gitignored(self):
@@ -666,9 +670,21 @@ class RepositoryContractTests(unittest.TestCase):
             if script.name not in allowed:
                 with self.subTest(script=script.name):
                     self.assertNotIn("import yaml", source)
-                    self.assertNotIn("plan_anchor_settings", source)
+                    if script.name == "jev_judge.py":
+                        # one lazy import, inside the live-call consent check only
+                        self.assertEqual(source.count("import plan_anchor_settings"), 1)
+                        self.assertIn("    import plan_anchor_settings as settings  # lazy", source)
+                        self.assertNotIn("\nimport plan_anchor_settings", source)
+                        self.assertNotIn("\nfrom plan_anchor_settings", source)
+                    else:
+                        self.assertNotIn("plan_anchor_settings", source)
+        code = ("import sys\nsys.modules['yaml'] = None\n"
+                f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"
+                "assert 'plan_anchor_settings' not in sys.modules, 'imported eagerly'\n")
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("import yaml", (SCRIPTS / "plan_anchor_settings.py").read_text(encoding="utf-8"))
-        for name in ("jev_judge.py", "plan_source.py", "anchor_runner_contract.py",
+        for name in ("jev_judge.py", "anchor_runner_contract.py",
                      "anchor_tuning_contract.py", "anchor_tracker.py"):
             with self.subTest(help=name):
                 code = ("import runpy, sys\nsys.modules['yaml'] = None\n"

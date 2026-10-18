@@ -49,3 +49,27 @@ jobs:
       - run: python -m pip install "pyyaml==5.1"
       - name: suite on the PyYAML floor
         run: python -m unittest discover -v -s tests/sc-plan-anchor
+
+  installer:
+    # sc-compose 1.7.0 publishes CPython 3.11 wheels; the rendering, install and
+    # history-migration tests need it and fail here instead of skipping.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAN_ANCHOR_REQUIRE_SC_COMPOSE: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install "jsonschema>=4,<5" "pyyaml>=5.1" "sc-compose>=1.7.0,<2"
+      - run: python scripts/install_sc_compose_ci.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: python scripts/gen_install_data.py --check
+      - run: python -m unittest discover -v -s tests/sc-plan-anchor

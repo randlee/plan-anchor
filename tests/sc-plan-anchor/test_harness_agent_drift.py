@@ -1,13 +1,16 @@
 """Fail when Claude, Codex, and Cursor copies diverge after harness frontmatter.
 
-Agent bodies must match once YAML frontmatter is removed. Registries must
-match once each ``.{harness}/`` path prefix is normalized.
+Installed agent bodies (fresh renders, per tracker) must match once YAML
+frontmatter is removed. Registries (install/harness/<harness>/registry.yaml)
+must match once each ``.{harness}/`` path prefix is normalized.
 """
 
 from pathlib import Path
 import difflib
 import re
 import unittest
+
+from layout_support import HARNESS, TRACKERS, rendered_agent
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,24 +43,25 @@ def explain(label: str, left_name: str, left: str, right_name: str, right: str) 
 
 class HarnessAgentDriftTests(unittest.TestCase):
     def test_agent_bodies_match_after_frontmatter(self):
-        for name in AGENTS:
-            bodies = {}
-            for harness in HARNESSES:
-                path = PLUGIN / f".{harness}" / "agents" / name
-                self.assertTrue(path.is_file(), f"missing {path}")
-                bodies[harness] = body_after_frontmatter(path.read_text(encoding="utf-8"), path)
-            baseline = bodies["claude"]
-            for harness in HARNESSES[1:]:
-                self.assertEqual(
-                    baseline,
-                    bodies[harness],
-                    explain(name, "claude", baseline, harness, bodies[harness]),
-                )
+        for tracker in TRACKERS:
+            for name in AGENTS:
+                bodies = {}
+                for harness in HARNESSES:
+                    path = rendered_agent(tracker, harness, name)
+                    self.assertTrue(path.is_file(), f"missing {path}")
+                    bodies[harness] = body_after_frontmatter(path.read_text(encoding="utf-8"), path)
+                baseline = bodies["claude"]
+                for harness in HARNESSES[1:]:
+                    self.assertEqual(
+                        baseline,
+                        bodies[harness],
+                        explain(f"{tracker} {name}", "claude", baseline, harness, bodies[harness]),
+                    )
 
     def test_registries_match_after_harness_path(self):
         normalized = {}
         for harness in HARNESSES:
-            path = PLUGIN / f".{harness}" / "agents" / "registry.yaml"
+            path = HARNESS / harness / "registry.yaml"
             self.assertTrue(path.is_file(), f"missing {path}")
             normalized[harness] = HARNESS_PATH.sub(".HARNESS/", path.read_text(encoding="utf-8"))
         baseline = normalized["claude"]

@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Version discipline for the plan-anchoring skill. Two modes.
+"""Version discipline for the sc-plan-anchor plugin: VERSION is the single source of truth.
 
-Default (release consistency):
-  VERSION holds the release version X.Y.Z. Every artifact (SKILL.md, each
-  reference, each agent) must share X.Y and have patch >= Z: contributors may
-  advance the patch of what they edit, a minor or major change happens only in
-  unison through VERSION. registry.yaml mirrors each agent's own version.
-  Plugin and marketplace manifests equal VERSION exactly. CHANGELOG.md has a
-  "## X.Y.Z" entry.
+Default (consistency):
+  VERSION holds X.Y.Z. Every version declared in shipped metadata equals it
+  exactly: plugin manifests, marketplace manifests, the installer skill's
+  SKILL.md, every harness agent header and registry.yaml entry under
+  install/harness/, and any other `version:` in a shipped .md frontmatter,
+  .yaml/.yml or .json manifest. The installed skill and references take their
+  version from plugin.json when install.py renders them, so every install-time
+  template must declare `{{ version }}` instead of a literal.
+  Files are discovered by globbing (see version_declarations), so a new agent
+  or reference cannot escape. CHANGELOG.md has a "## X.Y.Z" entry. Agent
+  model pins, registry paths, manifest identities and marketplace sources are
+  checked too, and the plugin must expose only the plan-anchor-installer skill.
 
 --base <ref> (pull-request rule):
-  Every artifact changed since <ref> must have bumped its version by at least
-  one patch over the version at <ref>, within the same X.Y, and CHANGELOG.md
-  must have changed. If VERSION itself changed since <ref> this is a release:
-  every artifact must equal the new VERSION exactly.
+  A PR that changes shipped content (plugins/ or a marketplace manifest) must
+  raise VERSION above the base's VERSION (with everything above moving with
+  it) and change CHANGELOG.md. A PR that touches only tests, scripts/ or docs
+  needs no bump.
 
-Ownership of unversioned files: a change anywhere under the skill directory
-other than references/*.md counts against SKILL.md; a change to
-references/<name>.md counts against that reference; a change to
-agents/<name>.md counts against that agent. registry.yaml is a mirror and
-needs no bump of its own.
+Not release metadata, so not checked: `schema_version` fields and the
+`metadata.version` of templates/*.md.j2 (wire-contract versions pinned by the
+JSON schemas' `const`), and integer document versions (question sets,
+anchors, examples).
 
-Exit 0 in sync, 1 drift (each on its own line), 2 missing files or bad input.
+Exit 0 in sync; 2 when the check fails: drift (each on its own line on stdout)
+or missing files and bad input (on stderr). A check script's job is to fail
+CI, so drift is nonzero; like every plan-anchor CLI it never exits 1.
 """
 from __future__ import annotations
 
@@ -34,27 +40,127 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SKILL = PLUGIN / "skills" / "plan-anchoring"
-AGENT_DIRS = {
-    "claude": PLUGIN / ".claude" / "agents",
-    "codex": PLUGIN / ".codex" / "agents",
-    "cursor": PLUGIN / ".cursor" / "agents",
-}
+INSTALLER_SKILL = "plan-anchor-installer"
+HARNESS = PLUGIN / "install" / "harness"
+TEMPLATES = PLUGIN / "install" / "templates"
+HARNESSES = ("claude", "codex", "cursor")
+AGENT_DIRS = {h: HARNESS / h / "agents" for h in HARNESSES}
 FRONT_RE = re.compile(r"^---\n(.*?)\n---", re.S)
 VER_RE = re.compile(r'^\s*version:\s*["\']?([0-9]+\.[0-9]+\.[0-9]+)["\']?\s*$', re.M)
 MODEL_RE = re.compile(r"^model:\s*(\S+)\s*$", re.M)
+SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+
+# Shipped content: what an install copies or a marketplace reads.
+SHIPPED_PREFIXES = ("plugins/", ".claude-plugin/", ".agents/", ".cursor-plugin/")
+# Every file matching these must declare a version.
+REQUIRED_GLOBS = (
+    "plugins/*/plugin.json",
+    "plugins/*/.claude-plugin/plugin.json",
+    "plugins/*/.codex-plugin/plugin.json",
+    "plugins/*/.cursor-plugin/plugin.json",
+    "plugins/*/skills/*/SKILL.md",
+    "plugins/*/install/harness/claude/agents/*.md",
+    "plugins/*/install/harness/codex/agents/*.md",
+    "plugins/*/install/harness/cursor/agents/*.md",
+    "plugins/*/install/harness/claude/registry.yaml",
+    "plugins/*/install/harness/codex/registry.yaml",
+    "plugins/*/install/harness/cursor/registry.yaml",
+)
+# Any version these declare must equal VERSION (catch-all for new metadata).
+SCANNED_GLOBS = (
+    "plugins/**/*.md",
+    "plugins/**/*.json",
+    "plugins/**/*.yaml",
+    "plugins/**/*.yml",
+    ".claude-plugin/*.json",
+    ".agents/plugins/*.json",
+    ".cursor-plugin/*.json",
+)
+
+
+def _declared(path: pathlib.Path) -> list:
+    """Semver versions a metadata file declares (frontmatter, YAML, or JSON manifest keys)."""
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".md":
+        m = FRONT_RE.match(text)
+        return VER_RE.findall(m.group(1)) if m else []
+    if path.suffix in (".yaml", ".yml"):
+        return VER_RE.findall(text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return ["<invalid JSON>"]
+    if not isinstance(data, dict):
+        return []
+    values = [data.get("version")] + [p.get("version") for p in data.get("plugins", []) if isinstance(p, dict)]
+    return [v for v in values if isinstance(v, str) and SEMVER_RE.fullmatch(v)]
+
+
+def version_declarations(root: pathlib.Path) -> list:
+    """[(relative path, [versions])] for every shipped metadata file; [] means a required file declares none."""
+    found = {}
+    for pattern in SCANNED_GLOBS:
+        for f in root.glob(pattern):
+            if f.is_file():
+                versions = _declared(f)
+                if versions:
+                    found[f.relative_to(root).as_posix()] = versions
+    for pattern in REQUIRED_GLOBS:
+        for f in root.glob(pattern):
+            found.setdefault(f.relative_to(root).as_posix(), _declared(f))
+    return sorted(found.items())
+
+
+def template_drift(root: pathlib.Path) -> list:
+    """Install-time templates whose rendered frontmatter pins a literal version instead of {{ version }}."""
+    drift = []
+    for template in sorted((root / "plugins" / "sc-plan-anchor" / "install" / "templates").rglob("*.j2")):
+        text = template.read_text(encoding="utf-8")
+        lines = text.split("\n", 2)
+        if len(lines) < 2 or not lines[1].startswith("name: sc-plan-anchor-"):
+            continue  # a runtime template, copied verbatim
+        body = text.split("\n---\n", 1)[1] if "\n---\n" in text else ""
+        inner = FRONT_RE.match(body)
+        if inner and VER_RE.search(inner.group(1)):
+            drift.append(f"{template.relative_to(root).as_posix()}: rendered version must be {{{{ version }}}}, not a literal")
+    return drift
+
+
+def ssot_drift(root: pathlib.Path, want: str) -> list:
+    """Every version declaration that does not equal VERSION, plus a missing CHANGELOG entry."""
+    drift = []
+    for pattern in REQUIRED_GLOBS:
+        if not any(root.glob(pattern)):
+            drift.append(f"{pattern}: no file matches (layout changed?)")
+    for rel, versions in version_declarations(root):
+        if not versions:
+            drift.append(f"{rel}: declares no version (must be {want})")
+        for v in versions:
+            if v != want:
+                drift.append(f"{rel}: {v} != VERSION {want}")
+    drift.extend(template_drift(root))
+    changelog = root / "CHANGELOG.md"
+    if not changelog.exists() or not re.search(rf"^## {re.escape(want)}\b", changelog.read_text(encoding="utf-8"), re.M):
+        drift.append(f"CHANGELOG.md has no '## {want}' entry")
+    return drift
+
+
+def registry_source(harness: str, path: str):
+    """The plugin source of an installed path a registry names (relative to the install root), or None."""
+    prefix = f".{harness}/"
+    if not path.startswith(prefix):
+        return None
+    rel = path[len(prefix):]
+    if rel.startswith("agents/") and rel.count("/") == 1:
+        return AGENT_DIRS[harness] / rel.split("/", 1)[1]
+    if rel.startswith("skills/plan-anchoring/"):
+        source = TEMPLATES / rel
+        return source if source.exists() else source.with_name(source.name + ".j2")
+    return None
 
 
 def parse(v: str):
     return tuple(int(x) for x in v.split("."))
-
-
-def frontmatter_version(text: str):
-    m = FRONT_RE.match(text)
-    if not m:
-        return None
-    v = VER_RE.search(m.group(1))
-    return v.group(1) if v else None
 
 
 def git(*args: str) -> str:
@@ -66,86 +172,41 @@ def show(ref: str, rel: str):
     return out.stdout if out.returncode == 0 else None
 
 
-def artifacts() -> list:
-    files = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
-    for agent_dir in AGENT_DIRS.values():
-        files.extend(sorted(agent_dir.glob("*.md")))
-    return [f for f in files if f.name != "registry.yaml"]
-
-
-def owner_of(rel: str):
-    """Which versioned artifact a changed path counts against."""
-    p = pathlib.PurePosixPath(rel)
-    skill_rel = SKILL.relative_to(ROOT).as_posix()
-    if rel.startswith(skill_rel + "/references/") and rel.endswith(".md"):
-        return rel
-    if rel.startswith(skill_rel + "/"):
-        return skill_rel + "/SKILL.md"
-    for agent_dir in AGENT_DIRS.values():
-        agents_rel = agent_dir.relative_to(ROOT).as_posix()
-        if rel.startswith(agents_rel + "/") and rel.endswith(".md"):
-            if not (ROOT / rel).exists():
-                # A removed profile cannot carry a new frontmatter version.
-                # Attribute the deletion to the skill contract that owns the
-                # active delegation set instead of reporting "no version".
-                return skill_rel + "/SKILL.md"
-            return rel
-    return None
-
-
 def release_checks(want: str, drift: list) -> int:
-    checked = 0
-    wmaj, wmin, wpatch = parse(want)
-    for f in artifacts():
-        if not f.exists():
-            print(f"check-version-sync: missing {f.relative_to(ROOT)}", file=sys.stderr)
-            sys.exit(2)
-        got = frontmatter_version(f.read_text(encoding="utf-8"))
-        checked += 1
-        rel = f.relative_to(ROOT)
-        if got is None:
-            drift.append(f"{rel}: no version in frontmatter")
-            continue
-        gmaj, gmin, gpatch = parse(got)
-        if (gmaj, gmin) != (wmaj, wmin):
-            drift.append(f"{rel}: {got} changes major.minor; minor bumps happen in unison through VERSION ({want})")
-        elif gpatch < wpatch:
-            drift.append(f"{rel}: {got} is below VERSION {want}")
-        for harness, agent_dir in AGENT_DIRS.items():
-            if f.parent == agent_dir:
-                front = FRONT_RE.match(f.read_text(encoding="utf-8"))
-                model_match = MODEL_RE.search(front.group(1)) if front else None
-                if harness == "cursor":
-                    expected = "grok[effort=high]" if f.name == "anchor-tuning.md" else "composer"
-                elif f.name == "anchor-tuning.md":
-                    expected = "opus" if harness == "claude" else "sol"
-                else:
-                    expected = "sonnet" if harness == "claude" else "luna"
-                if not model_match or model_match.group(1) != expected:
-                    drift.append(f"{rel}: model must be {expected} for the {harness} harness")
+    declarations = version_declarations(ROOT)
+    drift.extend(ssot_drift(ROOT, want))
+    wmaj = parse(want)[0]
+    for harness, agent_dir in AGENT_DIRS.items():
+        for f in sorted(agent_dir.glob("*.md")):
+            front = FRONT_RE.match(f.read_text(encoding="utf-8"))
+            model_match = MODEL_RE.search(front.group(1)) if front else None
+            if harness == "cursor":
+                expected = "grok[effort=high]" if f.name == "anchor-tuning.md" else "composer"
+            elif f.name == "anchor-tuning.md":
+                expected = "opus" if harness == "claude" else "sol"
+            else:
+                expected = "sonnet" if harness == "claude" else "luna"
+            if not model_match or model_match.group(1) != expected:
+                drift.append(f"{f.relative_to(ROOT)}: model must be {expected} for the {harness} harness")
     expected_agents = {f.stem for f in AGENT_DIRS["claude"].glob("*.md")}
     for harness, agent_dir in AGENT_DIRS.items():
         actual_agents = {f.stem for f in agent_dir.glob("*.md")}
         if actual_agents != expected_agents:
             drift.append(f"{agent_dir.relative_to(ROOT)}: agent files {sorted(actual_agents)} != {sorted(expected_agents)}")
-        reg = agent_dir / "registry.yaml"
+        reg = HARNESS / harness / "registry.yaml"
         if not reg.exists():
             drift.append(f"{reg.relative_to(ROOT)}: missing")
             continue
         text = reg.read_text(encoding="utf-8")
         registered = set()
         for m in re.finditer(r"^  ([a-z0-9-]+):\n    version:\s*([0-9.]+)\n    path:\s*(\S+)", text, re.M):
-            checked += 1
-            name, rv, path = m.groups()
+            name, _, path = m.groups()
             if name.startswith("anchor-"):
                 registered.add(name)
-            target = PLUGIN / path.lstrip("/")
-            if target.exists():
-                fv = frontmatter_version(target.read_text(encoding="utf-8"))
-                if fv != rv:
-                    drift.append(f"registry.yaml {name}: {rv} != {fv} in {path}")
-            else:
-                drift.append(f"registry.yaml {name}: path {path} not found")
+            source = registry_source(harness, path)
+            if source is None or not source.exists():
+                drift.append(f"{reg.relative_to(ROOT)} {name}: path {path} is not an installed .{harness}/ path "
+                             "this plugin ships")
         if registered != expected_agents:
             drift.append(f"{reg.relative_to(ROOT)}: agents {sorted(registered)} != {sorted(expected_agents)}")
         dependencies = set()
@@ -155,29 +216,6 @@ def release_checks(want: str, drift: list) -> int:
                 drift.append(f"{reg.relative_to(ROOT)} depends_on {m.group(1)}: {m.group(2)} does not cover {want}")
         if dependencies != expected_agents:
             drift.append(f"{reg.relative_to(ROOT)}: depends_on {sorted(dependencies)} != {sorted(expected_agents)}")
-    manifests = [PLUGIN / "plugin.json", *ROOT.glob("**/.claude-plugin/plugin.json"), *ROOT.glob("**/.codex-plugin/plugin.json"),
-                     *ROOT.glob("**/.cursor-plugin/plugin.json"), *ROOT.glob("**/.claude-plugin/marketplace.json"),
-                     *ROOT.glob("**/.agents/plugins/marketplace.json"), *ROOT.glob("**/.cursor-plugin/marketplace.json"),
-                     *ROOT.glob("**/manifest.yaml")]
-    for manifest in manifests:
-        if "/.git/" in str(manifest) or "node_modules" in str(manifest):
-            continue
-        checked += 1
-        rel = manifest.relative_to(ROOT)
-        if manifest.suffix == ".json":
-            try:
-                data = json.loads(manifest.read_text())
-            except json.JSONDecodeError:
-                drift.append(f"{rel}: not valid JSON")
-                continue
-            versions = [data.get("version")] + [p.get("version") for p in data.get("plugins", []) if isinstance(p, dict)]
-            for v in versions:
-                if v is not None and v != want:
-                    drift.append(f"{rel}: {v} != VERSION {want} (manifests carry the release version)")
-        else:
-            m = re.search(r"^version:\s*([0-9.]+)", manifest.read_text(), re.M)
-            if m and m.group(1) != want:
-                drift.append(f"{rel}: {m.group(1)} != VERSION {want}")
     plugin_manifests = [
         PLUGIN / "plugin.json",
         PLUGIN / ".claude-plugin" / "plugin.json",
@@ -191,20 +229,20 @@ def release_checks(want: str, drift: list) -> int:
         data = json.loads(manifest.read_text())
         if data.get("name") != "sc-plan-anchor":
             drift.append(f"{manifest.relative_to(ROOT)}: name must be sc-plan-anchor")
-    claude_manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-    expected_claude_agents = {f"./.claude/agents/{name}.md" for name in expected_agents}
-    if set(claude_manifest.get("agents", [])) != expected_claude_agents:
-        drift.append("Claude manifest agents do not match .claude/agents")
+    for manifest in plugin_manifests[1:]:
+        data = json.loads(manifest.read_text()) if manifest.exists() else {}
+        if "agents" in data:
+            drift.append(f"{manifest.relative_to(ROOT)}: must not register agents (they are installed per folder)")
+        if data and data.get("skills") != "./skills/":
+            drift.append(f"{manifest.relative_to(ROOT)}: skills must be ./skills/")
+    exposed = sorted(p.name for p in (PLUGIN / "skills").iterdir() if p.is_dir()) if (PLUGIN / "skills").is_dir() else []
+    if exposed != [INSTALLER_SKILL]:
+        drift.append(f"plugins/sc-plan-anchor/skills: exposes {exposed}; must be exactly [{INSTALLER_SKILL!r}]")
     catalogs = [
         ROOT / ".claude-plugin" / "marketplace.json",
         ROOT / ".agents" / "plugins" / "marketplace.json",
         ROOT / ".cursor-plugin" / "marketplace.json",
     ]
-    cursor_manifest = json.loads((PLUGIN / ".cursor-plugin" / "plugin.json").read_text())
-    if cursor_manifest.get("skills") != "./skills/":
-        drift.append("Cursor manifest skills must be ./skills/")
-    if cursor_manifest.get("agents") != "./.cursor/agents":
-        drift.append("Cursor manifest agents must be ./.cursor/agents")
     for catalog in catalogs:
         if not catalog.exists():
             drift.append(f"{catalog.relative_to(ROOT)}: missing")
@@ -220,50 +258,26 @@ def release_checks(want: str, drift: list) -> int:
             drift.append(f"{catalog.relative_to(ROOT)}: source must be ./plugins/sc-plan-anchor")
         elif not (ROOT / source_path[2:]).is_dir():
             drift.append(f"{catalog.relative_to(ROOT)}: source path does not exist")
-    changelog = ROOT / "CHANGELOG.md"
-    if not changelog.exists() or f"## {want}" not in changelog.read_text():
-        drift.append(f"CHANGELOG.md has no '## {want}' entry")
-    return checked
+    return sum(len(v) or 1 for _, v in declarations)
 
 
 def pr_checks(base: str, want: str, drift: list) -> str:
     changed = set(l for l in git("diff", "--name-only", f"{base}...HEAD").splitlines() if l.strip())
     changed |= set(l for l in git("diff", "--name-only", base).splitlines() if l.strip())          # working tree edits
     changed |= set(l for l in git("ls-files", "--others", "--exclude-standard").splitlines() if l.strip())  # new, uncommitted files
-    changed = sorted(changed)
+    shipped = sorted(rel for rel in changed if rel.startswith(SHIPPED_PREFIXES))
     base_version = (show(base, "VERSION") or "").strip()
-    release = base_version != want
-    if release:
-        for f in artifacts():
-            got = frontmatter_version(f.read_text(encoding="utf-8"))
-            if got != want:
-                drift.append(f"release PR: {f.relative_to(ROOT)} is {got}, must equal VERSION {want}")
-        if "CHANGELOG.md" not in changed:
-            drift.append("release PR: CHANGELOG.md did not change")
-        return f"release mode (VERSION {base_version or 'absent'} -> {want})"
-    owners = {}
-    for rel in changed:
-        o = owner_of(rel)
-        if o:
-            owners.setdefault(o, []).append(rel)
-    for owner, paths in sorted(owners.items()):
-        cur = frontmatter_version((ROOT / owner).read_text(encoding="utf-8")) if (ROOT / owner).exists() else None
-        old_text = show(base, owner)
-        old = frontmatter_version(old_text) if old_text else None
-        if old is None:
-            continue  # new artifact: the release check already requires it to sit at VERSION's X.Y
-        if cur is None:
-            drift.append(f"{owner}: no version (edited: {', '.join(paths)})")
-            continue
-        omaj, omin, opatch = parse(old)
-        cmaj, cmin, cpatch = parse(cur)
-        if (cmaj, cmin) != (omaj, omin):
-            drift.append(f"{owner}: {old} -> {cur} changes major.minor in a non-release PR; bump the patch only")
-        elif cpatch <= opatch:
-            drift.append(f"{owner}: still {cur} but edited ({', '.join(paths)}); bump to {omaj}.{omin}.{opatch + 1}")
-    if owners and "CHANGELOG.md" not in changed:
-        drift.append("CHANGELOG.md did not change; add a line under '## Unreleased'")
-    return f"patch mode against {base} ({len(owners)} artifact(s) edited)"
+    if not SEMVER_RE.fullmatch(base_version):
+        return f"no VERSION at {base}; consistency checks only"
+    raised = parse(want) > parse(base_version)
+    if shipped and not raised:
+        listed = ", ".join(shipped[:5]) + (f" (+{len(shipped) - 5} more)" if len(shipped) > 5 else "")
+        drift.append(f"shipped content changed ({listed}) but VERSION is still {want}; raise VERSION above {base_version} and every version with it")
+    if parse(want) < parse(base_version):
+        drift.append(f"VERSION {want} is below {base}'s {base_version}")
+    if raised and "CHANGELOG.md" not in changed:
+        drift.append(f"VERSION changed {base_version} -> {want} but CHANGELOG.md did not")
+    return f"pull-request rule against {base} (VERSION {base_version} -> {want}, {len(shipped)} shipped file(s) changed)"
 
 
 def main() -> int:
@@ -280,13 +294,13 @@ def main() -> int:
         return 2
     drift: list = []
     checked = release_checks(want, drift)
-    mode = pr_checks(args.base, want, drift) if args.base else "release consistency"
+    mode = pr_checks(args.base, want, drift) if args.base else "consistency"
     if drift:
         print(f"check-version-sync [{mode}]: {len(drift)} drift(s) from VERSION {want}:")
         for d in drift:
             print(f"  {d}")
-        return 1
-    print(f"check-version-sync [{mode}]: {checked} artifacts consistent with {want}, CHANGELOG entry present")
+        return 2
+    print(f"check-version-sync [{mode}]: {checked} version declarations equal {want}, CHANGELOG entry present")
     return 0
 
 
