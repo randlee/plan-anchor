@@ -12,12 +12,14 @@ flowchart LR
         Md["anchors.md<br/>rendered view, never hand-edited"]
         Runs["anchor-runs/*.json<br/>one file per gate run"]
     end
-    subgraph Beads["beads (bd)"]
+    subgraph Beads["$ANCHOR_TRACKER (br or bd, from anchor_tracker.py)"]
         AB["anchor bead (type decision)<br/>description = testable statement, notes = verbatim quote"]
         PQ["plan-questions child<br/>fenced JSON overrides or {}"]
         DQ["dev-questions child<br/>fenced JSON overrides or {}"]
-        PB["planning beads"]
-        SB["sprint epic + children"]
+    end
+    subgraph Caller["the caller's plan (any medium)"]
+        PB["sprint text"]
+        SB["sprint text + evidence account"]
     end
     subgraph SkillAssets["skill assets"]
         QP["assets/questions/plan.json"]
@@ -77,7 +79,7 @@ classDiagram
         threshold
         dry_run, fixture
         results : Result[]
-        summary : counts, failing, errors, pass
+        summary : counts, failing, errors, excluded, shortened, pass
     }
     class Result {
         anchor_id
@@ -86,6 +88,8 @@ classDiagram
         questions_sha256
         answers : per question choice, probabilities, confidence
         verdict
+        leaning, confirmed, unstable
+        exclusion : item, reason
         min_confidence
         attempts, item_chars_sent, item_shortened
         explanation
@@ -112,7 +116,7 @@ One anchor, one item, three or four questions. Nothing else.
   "model": "jev-latest",
   "state": {
     "anchor": {"id": "ANC-012", "statement": "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code", "scope": "the runtime crates sprint and any bead that creates the core library implementation"},
-    "item": {"id": "bd-42", "title": "Sprint 2 runtime", "text": "# Sprint 2 runtime\n\n## Description\n..."}
+    "item": {"id": "ex-42", "title": "Sprint 2 runtime", "text": "# Sprint 2 runtime\n\n## Description\n..."}
   },
   "questions": {
     "relevant":     {"type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}},
@@ -169,18 +173,18 @@ What each verdict means for the caller:
 | `not_applicable` | Nothing, unless the anchor should have applied (scope too narrow) | Same |
 | `excluded` | Nothing; Jev was not asked, the anchor's `exclude` names this item with a reason | Same |
 
-Before editing on any failing verdict, the caller re-reads the exact text that was sent (the composed item file) at the point the anchor governs. If Jev looks wrong, the posted report says so with the reason and the user is asked, rather than rewording the bead until Jev agrees.
+Before editing on any failing verdict, the caller re-reads the exact text that was sent (the item file) at the point the anchor governs. If Jev looks wrong, the posted report says so with the reason and the user is asked, rather than rewording the bead until Jev agrees.
 
 ## 5. Coverage and diffs are computed, not asked
 
 ```mermaid
 flowchart LR
-    R1["run: plan × bd-41"] --> M
-    R2["run: plan × bd-42"] --> M
-    R3["run: plan × bd-43"] --> M
+    R1["run: plan × ex-41"] --> M
+    R2["run: plan × ex-42"] --> M
+    R3["run: plan × ex-43"] --> M
     M["coverage: latest run per (gate, item)<br/>anchors × items matrix, columns gate:item"] --> U["uncovered anchors:<br/>no item is satisfied"]
-    Prev["run N-1 (bd-42)"] --> D["diff: changed / added / removed<br/>regressions, pass before → after"]
-    Next["run N (bd-42)"] --> D
+    Prev["run N-1 (ex-42)"] --> D["diff: changed / added / removed<br/>regressions, pass before → after"]
+    Next["run N (ex-42)"] --> D
 ```
 
 Jev cannot count or compare across beads, so "is ANC-012 satisfied anywhere" and "what did my edit change" are answered from run files by the script. An anchor that is `not_applicable` to every bead is reported as uncovered on purpose: either its scope is wrong or the plan lacks the bead that should carry it.
@@ -199,7 +203,8 @@ stateDiagram-v2
 
     note right of locked
         Judged at both gates.
-        Statement immutable from here.
+        Quote immutable; statement changes
+        only through update, recorded in history.
     end note
     note right of proposed
         Recorded so it survives
@@ -216,19 +221,19 @@ sequenceDiagram
     participant U as User
     participant P as Planning agent (skill loaded)
     participant S as jev_judge.py
-    participant B as bd
+    participant B as $ANCHOR_TRACKER
 
     U->>P: "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code"
     P->>U: Anchor candidate quoted verbatim. Lock as ANC-012?
     U->>P: lock it
-    P->>S: add --statement "<verbatim>" --scope ... --status locked
+    P->>S: add --quote "<verbatim>" --statement "<testable>" --scope ... --status locked
     S-->>P: ANC-012 allocated, anchors.json written
     P->>S: validate, render → anchors.md
-    P->>B: bd create anchor bead (type decision, labels anchor, anchor:ANC-012)
-    P->>B: bd create plan-questions child, dev-questions child (gate:plan, gate:dev)
+    P->>B: create anchor bead (type decision, labels anchor, anchor:ANC-012)
+    P->>B: create plan-questions child, dev-questions child (gate:plan, gate:dev)
     P->>S: set-beads --id ANC-012 --anchor-bead ... --plan-bead ... --dev-bead ...
     P->>U: drafts one pass and one fail fixture, user approves
     P->>S: update --id ANC-012 --fixture-pass ... --fixture-fail ... --deterministic-check ...
 ```
 
-Capture is the one interactive step and stays in the main session. Nothing is locked without the user's confirmation. The statement proposed is a testable requirement that passed the rubric, not the quote; the quote is kept verbatim. After locking, the planner launches the independent higher-reasoning `anchor-tuning` subagent (Opus on Claude, Sol on Codex). It freezes an oracle from approved intent and anchors before its first Jev call, evaluates candidate questions without a plan-pass objective, and seals only protocol-validated production sets. The same identity later triages disputed review evidence without accepting a desired verdict.
+Capture is the one interactive step and stays in the main session. Nothing is locked without the user's confirmation. The statement proposed is a testable requirement that passed the rubric, not the quote; the quote is kept verbatim. After locking, the planner launches the independent higher-reasoning `anchor-tuning` subagent (Opus on Claude, Sol on Codex, Grok at high effort on Cursor). It freezes an oracle from approved intent and anchors before its first Jev call, evaluates candidate questions without a plan-pass objective, and seals only protocol-validated production sets. The same identity later triages disputed review evidence without accepting a desired verdict.
