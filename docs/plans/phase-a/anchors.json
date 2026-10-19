@@ -1357,7 +1357,7 @@
       "id": "ANC-016",
       "source_type": "ANC",
       "source_ref": null,
-      "statement": "The plan-anchoring gate must accept both a Markdown plan and its copy in a br database.",
+      "statement": "The plan-anchoring gate must accept both a Markdown plan and its copy in a br or bd tracker.",
       "quote": "You should be able to run the /plan-anchor skill both against the md plan and against a copy of the plan in br database",
       "kind": "directive",
       "stated_by": "randlee",
@@ -1398,7 +1398,7 @@
           }
         }
       },
-      "version": 6,
+      "version": 7,
       "status": "locked",
       "promoted_to": null,
       "beads": {
@@ -1459,6 +1459,14 @@
             "deterministic_check",
             "fixtures"
           ]
+        },
+        {
+          "at": "2026-10-19T21:57:59+00:00",
+          "event": "updated",
+          "fields": [
+            "statement"
+          ],
+          "previous_statement": "The plan-anchoring gate must accept both a Markdown plan and its copy in a br database."
         }
       ]
     },

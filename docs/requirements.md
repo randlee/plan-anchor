@@ -133,16 +133,20 @@ Source: ANC-018. Status: shipped.
 Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_installation_doc_covers_br_and_selection`.
 
 **REQ-027** The planning gate shall accept a Markdown phase plan and its copy in a tracker, and both shall normalize to the same ordered sprint items and byte-identical Jev request JSON.
-Source: ANC-016; INTENT "Success". Status: retired (0.7.0; superseded by ADR-014 and REQ-057, `plan_source.py` is no longer shipped).
+Source: ANC-016; INTENT "Success". Status: retired (0.7.0; superseded by ADR-014 and REQ-057, `plan_source.py` is no longer shipped). ANC-016 is now met by REQ-057.
 Verified: n/a (the tests were removed with `plan_source.py`).
 
 **REQ-028** Markdown plan review shall require tracker records only for an anchor root and its plan-question and dev-question children.
-Source: ANC-017. Status: retired (0.7.0; superseded by ADR-014 and REQ-057).
+Source: ANC-017. Status: retired (0.7.0; superseded by ADR-014 and REQ-057). ANC-017 is now met by REQ-057.
 Verified: n/a.
 
 **REQ-029** A phase plan shall be a phase index linking separate authoritative sprint documents; malformed structures, duplicate IDs, symlink escapes, copy drift and digest mismatches shall fail before delegation.
-Source: ANC-015; INTENT "Out of scope". Status: retired (0.7.0; superseded by ADR-014 and REQ-057).
+Source: ANC-015; INTENT "Out of scope". Status: retired (0.7.0; superseded by ADR-014 and REQ-057). ANC-015 is now met by REQ-082.
 Verified: n/a.
+
+**REQ-082** A phase plan shall be written as a phase index that links separate sprint documents, each sprint document authoritative for its own content; plan-anchor's own `docs/plans/phase-a/` follows this (`plan-phase-a.md` and the `sprint-a*.md` files). This is a rule for writing plans: the gates neither parse nor enforce the structure (ADR-014).
+Source: ANC-015. Status: shipped (followed in `docs/plans/phase-a/`; not enforced by code).
+Verified: none (no test checks the phase-index structure).
 
 ## Agents and runner
 
@@ -263,7 +267,7 @@ Source: ANC-001. Status: shipped.
 Verified: none (not mechanically testable).
 
 **REQ-057** Both gates shall judge the sprint text the calling agent supplies through `judge --item-file` (or stdin), read from wherever that agent wrote the plan, with no plan parsing or format requirement; anchor records shall use only the tracker `anchor_tracker.py` resolves, and installed skill and agent text shall name only the installed tracker's commands.
-Source: OPERATOR (2026-10-17); INTENT "Success"; ADR-014. Status: shipped.
+Source: OPERATOR (2026-10-17); INTENT "Success"; ADR-014; ANC-016; ANC-017. Status: shipped.
 Verified: `test_gate_prompts.py::GatePromptTests.test_both_gates_take_the_callers_text_as_item_file`, `GatePromptTests.test_no_gate_references_plan_source_descriptors_or_discovery`, `GatePromptTests.test_plan_source_is_not_shipped`, `FreeFormSprintDryRunTests.test_free_form_sprint_builds_a_request_at_both_gates`, `test_install.py::RenderingTests.test_br_and_bd_installs_name_one_tracker`.
 
 **REQ-058** `VERSION` shall be the single source of truth for every shipped version string, and each release shall have a `CHANGELOG.md` section.
