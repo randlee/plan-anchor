@@ -83,7 +83,7 @@ That model applies to **any cloud or remote agent** that checks out the reposito
 
 **What does not go in git.**
 
-- `TYPESAFE_API_KEY` — the only environment variable the scripts read. Configure it in the **remote environment** (platform secrets, worker env, or your host's secret injection). It must be present when `jev_judge.py` makes a live call.
+- `TYPESAFE_API_KEY` — the only secret or credential the scripts read; never commit it. Configure it in the **remote environment** (platform secrets, worker env, or your host's secret injection). It must be present when `jev_judge.py` makes a live call.
 
 **Live Jev in cloud (same gate as local).**
 
@@ -96,14 +96,14 @@ If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REM
 
 **Runtime the worker must provide.**
 
-- A checkout that includes the vendored install above (gates refuse the marketplace plugin copy with `VALIDATION.PATH`; they use the nearest `.../skills/plan-anchoring/scripts/jev_judge.py` under the working tree).
+- A checkout that includes the vendored install above (gates walk up from the working directory, stopping before the home directory, to the nearest `<D>/.claude|.codex|.cursor/skills/plan-anchoring/scripts/jev_judge.py` whose `<D>/.sc/plan-anchor/install-lock.json` lists that script; a hand-copied, lock-less, `.agents/`, global or plugin-cache copy fails with `VALIDATION.PATH`).
 - `python3` 3.9+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
 - Outbound HTTPS to the Jev endpoint (see the installed `references/jev-api.md`).
 
 **Operational notes.**
 
-- Install into the **repository root** (or a parent folder you actually open as the workspace) so skill discovery and nearest-install trust match where the agent runs.
-- Parent-folder installs and per-repo overrides follow the same rules as on a local machine: nearest `.sc/plan-anchor/settings.yaml` wins; tracker must match each repo's `.beads/` layout.
+- Install into the **repository root** (or a parent folder you actually open as the workspace) so skill discovery and nearest-install trust match where the agent runs. A cloud or remote agent checks out only the repository, so it needs the install committed inside the repository itself; a parent-folder install is not in its checkout.
+- Parent-folder installs and per-repo overrides follow the same rules as on a local machine: nearest `.sc/plan-anchor/settings.yaml` wins; tracker must match each repo's `.beads/` layout. A parent-folder install does not travel with a clone, so cloud and remote agents need the install committed inside the repository itself.
 - Gate subagents are the **installed** agent definitions under `.claude/agents/`, `.codex/agents/`, or `.cursor/agents/` in that tree — not the marketplace plugin bundle.
 
 For PATH, GUI-launched hosts, and Codex shell policy around `TYPESAFE_API_KEY`, see the installed `references/installation-and-troubleshooting.md`.
