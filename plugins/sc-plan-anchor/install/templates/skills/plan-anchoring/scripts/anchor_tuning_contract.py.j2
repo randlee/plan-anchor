@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-anchor_tuning_contract
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
 """Deterministic relational checks for anchor-tuning request/result contracts.
 
@@ -20,7 +29,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, run_main, utf8_stdio  # noqa: E402
 
 
 FORBIDDEN_FIELDS = {"desired_verdict", "requested_disposition", "proposed_question_text"}
@@ -342,5 +351,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    sys.exit(run_main(main))

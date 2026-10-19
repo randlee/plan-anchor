@@ -17,7 +17,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
-sys.path.insert(0, str(SKILL / "scripts"))
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
+sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
 
 PLAN_ROLES = {"relevance": "relevant", "compliance": "addressed", "conflict": "contradicted"}
@@ -204,8 +205,12 @@ class AddTests(unittest.TestCase):
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
             code, out = run_cli(["add", "--anchors", path, "--statement", "x", "--source-type", "REQ", "--source-ref", "REQ-014"])
             self.assertEqual(out["data"]["anchor"]["id"], "REQ-014")
+            before = Path(path).read_text()
             code, out = run_cli(["add", "--anchors", path, "--statement", "x", "--source-type", "REQ", "--source-ref", "REQ-014"])
-            self.assertEqual((code, out["error"]["code"]), (2, "ANCHOR.DUPLICATE"))
+            # 0.8.3: a duplicate ID is a refusal (the command ran, the answer is no), not a tool failure
+            self.assertEqual((code, out["success"], out["data"]["added"], out["data"]["refused"]["code"], out["data"]["refused"]["recoverable"]),
+                             (0, True, False, "ANCHOR.DUPLICATE", True))
+            self.assertEqual(Path(path).read_text(), before)
 
     def test_add_refuses_empty_statement_and_retired_status(self):
         with tempfile.TemporaryDirectory() as d:
@@ -246,8 +251,9 @@ class QuoteTests(unittest.TestCase):
             path = str(Path(d) / "anchors.json")
             for same in (QUOTE, QUOTE.upper(), "  " + QUOTE + ".  ", QUOTE.replace(" ", "   ") + "!"):
                 code, out = run_cli(["add", "--anchors", path, "--statement", same, "--quote", QUOTE])
-                self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), same)
-                self.assertEqual(out["error"]["message"], "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)")
+                # 0.8.3: a refusal in data.refused with exit 0, not exit 2
+                self.assertEqual((code, out["success"], out["data"]["added"], out["data"]["refused"]["code"]), (0, True, False, "VALIDATION.INPUT"), same)
+                self.assertEqual(out["data"]["refused"]["message"], "statement is the verbatim quote; write a testable anchor (see references/anchor-capture.md)")
             self.assertFalse(Path(path).exists())
             # the same words are fine for register anchors: the quote is the register text
             code, out = run_cli(["add", "--anchors", path, "--statement", REQ_STATEMENT, "--quote", REQ_STATEMENT, "--source-type", "REQ", "--source-ref", "REQ-014"])
@@ -483,13 +489,15 @@ class DedupeTests(unittest.TestCase):
             self.assertEqual(by_pair[("ANC-001", "ANC-003")]["jev"]["choice"], "no")
             self.assertEqual(by_pair[("ANC-002", "ANC-003")]["jev"]["confidence"], 0.55)  # '*' fallback, below the confidence threshold
             self.assertEqual([(p["a"], p["b"]) for p in data["likely_duplicates"]], [("ANC-001", "ANC-002")])
-            # a pair the fixture lacks is an error on that pair, not a crash
+            # 0.8.3: a pair the fixture lacks has no answer, so dedupe could not do its job: exit 2 with the
+            # typed envelope, never likely_duplicates: [] (an unanswered pair is not "not a duplicate")
             partial = write(d, "partial.json", {"ANC-001|ANC-002": no})
             with env():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--answers-file", partial])
-            self.assertEqual(code, 0)
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "FIXTURE.MISSING"))
             errors = [p for p in out["data"]["pairs"] if p["jev"].get("error")]
             self.assertEqual({e["jev"]["error"]["code"] for e in errors}, {"FIXTURE.MISSING"})
+            self.assertEqual({f["code"] for f in out["data"]["failures"]}, {"FIXTURE.MISSING"})
             # dry run: requests are shown, nothing is called, the deterministic rule decides
             with env():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev", "--dry-run"])
@@ -535,7 +543,8 @@ class DedupeTests(unittest.TestCase):
             t = Transport(http(503), http(503), http(503))
             with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            self.assertEqual(code, 0)
+            # 0.8.3: retries exhausted is a Jev failure, exit 2, never a pair silently missing from likely_duplicates
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.HTTP"))
             self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.HTTP", 3))
 
     def test_add_refuses_duplicate_candidates_unless_allowed(self):
@@ -698,8 +707,11 @@ class RubricTests(unittest.TestCase):
             missing = write(d, "missing.json", {"ANC-002": rubric_answers()})
             with env():
                 code, out = run_cli(["rubric", "--anchors", path, "--id", "ANC-001", "--answers-file", missing])
-            self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (0, False, "error", "FIXTURE.MISSING"))
+            # 0.8.3: an anchor the rubric could not ask about is a tool failure (exit 2), never needs_work
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "FIXTURE.MISSING"))
+            self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), ("error", "FIXTURE.MISSING"))
             self.assertEqual(out["data"]["anchors"][0]["failing"], ["error: FIXTURE.MISSING"])
+            self.assertEqual(out["data"]["failures"], [{"id": "ANC-001", "code": "FIXTURE.MISSING", "message": out["data"]["anchors"][0]["error"]["message"]}])
             self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ["anchors.json", "answers.json", "missing.json"])  # no run files
 
     def test_candidate_form_dry_run_and_opt_in(self):
@@ -752,7 +764,9 @@ class RubricTests(unittest.TestCase):
         # a state without an item cannot be shortened: over the cap it is refused before any call
         with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
-        self.assertEqual((code, out["data"]["pass"], out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), (0, False, "error", "JEV.CONTEXT_EXCEEDED"))
+        # 0.8.3: no answer from Jev is exit 2 with the typed envelope, not a needs_work/error entry under exit 0
+        self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.CONTEXT_EXCEEDED"))
+        self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), ("error", "JEV.CONTEXT_EXCEEDED"))
         self.assertEqual(len(t.bodies), 2)
 
     def test_add_rubric_gate(self):
@@ -805,8 +819,8 @@ class KindTests(unittest.TestCase):
             self.assertEqual((code, out["data"]["anchor"]["kind"]), (0, "prohibition"))
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--kind", "structural"])
             self.assertEqual((code, out["data"]["changed"], out["data"]["version"]), (0, ["kind"], 2))
-            code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--kind", "structural"])  # unchanged
-            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
+            code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--kind", "structural"])  # unchanged: a no-op, exit 0
+            self.assertEqual((code, out["data"]["updated"], out["data"]["changed"], out["data"]["version"]), (0, False, False, 2))
             rec = json.loads(Path(path).read_text())
             self.assertEqual([a["kind"] for a in rec["anchors"]], ["structural", "prohibition"])
             self.assertEqual(jj.validate_record(rec), [])
@@ -991,7 +1005,8 @@ class ConfirmTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(503), http(503), http(503))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (0, "satisfied", 4, "JEV.HTTP"))
+        # 0.8.3: a confirmation Jev never answered is a Jev failure: exit 2; the run keeps the first answer
+        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "JEV.HTTP", "satisfied", 4, "JEV.HTTP"))
         self.assertEqual(j.sleeps, [1.0, 2.0])
         with tempfile.TemporaryDirectory() as d:  # the second call hitting 401 still aborts the run
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(401))
@@ -1288,13 +1303,17 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(by_id["ANC-001"]["verdict"], "error")
         self.assertEqual(by_id["ANC-001"]["error"]["code"], "FIXTURE.MISSING")
         self.assertEqual(by_id["REQ-014"]["verdict"], "satisfied")
-        self.assertEqual((code, out["data"]["summary"]["pass"], out["data"]["summary"]["errors"]), (0, False, ["ANC-001"]))
+        # 0.8.3: a cell the fixture cannot answer is a tool failure, exit 2, with the partial run in data
+        self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "FIXTURE.MISSING"))
+        self.assertEqual((out["data"]["summary"]["pass"], out["data"]["summary"]["errors"]), (False, ["ANC-001"]))
+        self.assertTrue(Path(out["data"]["run_path"]).is_file())
 
     def test_malformed_fixture_answer_is_response_invalid(self):
         bad = plan_answers()
         bad["relevant"]["probabilities"]["yes"] = 0.1
         fixture = write(self.d.name, "answers.json", {"*": bad})
         code, out = self.judge("--anchor", "ANC-001", "--answers-file", fixture)
+        self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual(out["data"]["results"][0]["error"]["code"], "JEV.RESPONSE_INVALID")
 
     def test_explicit_anchor_must_be_locked_unless_included(self):
@@ -1576,14 +1595,14 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(*[http(422, "max_tokens_exceeded")] * 10, gate="dev")
             j = Judged(d, t, item_text="y" * 5000, extra_args=["--min-item-chars", "2000"], gate="dev")
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"]), (0, False, "error"))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"]), (2, False, "error"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
         self.assertIn("Shorten the evidence", j.result["error"]["suggested_action"])
         self.assertEqual(j.result["attempts"], 3)  # 5000, 2500, 2000 (floor), then give up
         self.assertEqual([len(jj.item_core(b["state"]["item"]["text"])) for b in t.bodies], [5000, 2500, 2000])
         self.assertTrue(j.result["item_shortened"])
         self.assertEqual(j.result["item_chars_sent"], 2000 + len(jj.TRUNCATION_MARKER))
-        self.assertTrue(j.out["success"])  # the run envelope stays success; the anchor carries the error
+        self.assertEqual((j.out["success"], j.out["error"]["code"]), (False, "JEV.CONTEXT_EXCEEDED"))  # 0.8.3: the envelope is the error
 
     def test_preflight_cap_shortens_before_the_first_call(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1599,6 +1618,7 @@ class TransportPolicyTests(unittest.TestCase):
             t = Transport(gate="dev")
             j = Judged(d, t, item_text="z" * 3000, extra_args=["--max-request-bytes", "500"], gate="dev")
         self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), ("error", "JEV.CONTEXT_EXCEEDED", 0))
+        self.assertEqual((j.code, j.out["error"]["code"]), (2, "JEV.CONTEXT_EXCEEDED"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual(t.bodies, [])
         with tempfile.TemporaryDirectory() as d:
             j = Judged(d, Transport(gate="dev"), item_text="z" * 3000, extra_args=["--max-request-bytes", "500", "--dry-run"], gate="dev")
@@ -1620,8 +1640,8 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(529), http(529), http(529), http(529))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (0, False, "error", 3))
-        self.assertEqual(j.result["error"]["code"], "JEV.OVERLOADED")
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 3))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
+        self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("JEV.OVERLOADED", "JEV.OVERLOADED"))
         self.assertTrue(j.result["error"]["recoverable"])
         self.assertEqual(len(t.bodies), 3)
         self.assertEqual(j.sleeps, [1.0, 2.0])
@@ -1629,7 +1649,7 @@ class TransportPolicyTests(unittest.TestCase):
         self.assertFalse(j.run["summary"]["pass"])
         with tempfile.TemporaryDirectory() as d:
             j = Judged(d, Transport(http(503), http(503), http(503)))
-        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), ("error", "JEV.HTTP", 3))
+        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.HTTP", 3))
 
     def test_invalid_response_is_retried_like_a_transport_failure(self):
         good = {"model": "jev-1.13.0", "answers": plan_answers()}
@@ -1638,7 +1658,7 @@ class TransportPolicyTests(unittest.TestCase):
         self.assertEqual((j.result["verdict"], j.result["attempts"], j.sleeps), ("satisfied", 3, [1.0, 2.0]))
         with tempfile.TemporaryDirectory() as d:
             j = Judged(d, Transport({"answers": {}}, {"answers": {}}, {"answers": {}}))
-        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), ("error", "JEV.RESPONSE_INVALID", 3))
+        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.RESPONSE_INVALID", 3))
 
     def test_credential_and_validation_errors_are_not_retried(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1648,6 +1668,7 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "questions.addressed.criteria must be an object"))
             j = Judged(d, t)
+        self.assertEqual((j.code, j.out["error"]["code"]), (2, "JEV.VALIDATION"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"], j.sleeps), ("error", "JEV.VALIDATION", 1, []))
         self.assertIn("questions.addressed.criteria", j.result["error"]["message"])
 
@@ -1655,8 +1676,12 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(529), http(529), http(529))  # first anchor exhausts; second anchor gets the default
             j = Judged(d, t, anchors=[anchor(), anchor("ANC-002")])
+            on_disk = json.loads(Path(j.run["run_path"]).read_text(encoding="utf-8"))
         verdicts = {r["anchor_id"]: r["verdict"] for r in j.run["results"]}
         self.assertEqual(verdicts, {"ANC-001": "error", "ANC-002": "satisfied"})
+        # 0.8.3: the command exits 2, and the run file on disk still keeps the answered anchor
+        self.assertEqual((j.code, j.out["error"]["code"], j.out["data"]["failures"][0]["id"]), (2, "JEV.OVERLOADED", "ANC-001"))
+        self.assertEqual({r["anchor_id"]: r["verdict"] for r in on_disk["results"]}, verdicts)
         self.assertEqual([r["verdict"] for r in j.run["results"]], ["satisfied", "error"])  # severity order: error sorts last
 
     def test_model_answered_is_recorded(self):
@@ -1857,7 +1882,8 @@ class PlanSizeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "max_tokens_exceeded"))
             j = Judged(d, t, item_text="y" * 6000)
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["error"]["code"]), (0, False, "error", "PLAN.TOO_LARGE"))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["error"]["code"]), (2, False, "error", "PLAN.TOO_LARGE"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
+        self.assertEqual(j.out["error"]["code"], "PLAN.TOO_LARGE")
         self.assertIn("Jev rejected it for context size", j.result["error"]["message"])
         self.assertEqual(j.result["error"]["data"]["shape"]["chars"], 6000)
         self.assertEqual(len(t.bodies), 1)
@@ -2067,8 +2093,10 @@ class RetireUpdateTests(unittest.TestCase):
             self.assertEqual(a["status"], "retired")
             self.assertEqual(a["history"][-1]["event"], "retired")
             self.assertEqual((a["history"][-1]["replaced_by"], a["history"][-1]["reason"]), ("ANC-002", "reworded"))
-            code, out = run_cli(["retire", "--anchors", path, "--id", "ANC-001"])
-            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
+            before = Path(path).read_text()
+            code, out = run_cli(["retire", "--anchors", path, "--id", "ANC-001"])  # already retired: a no-op, exit 0
+            self.assertEqual((code, out["data"]["status"], out["data"]["changed"], out["data"]["version"]), (0, "retired", False, 2))
+            self.assertEqual(Path(path).read_text(), before)
             code, out = run_cli(["retire", "--anchors", path, "--id", "ANC-002", "--replaced-by", "ANC-404"])
             self.assertEqual(out["error"]["code"], "ANCHOR.UNKNOWN")
             # retired anchors are skipped by --all and render still works
@@ -2088,9 +2116,10 @@ class RetireUpdateTests(unittest.TestCase):
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--clear-fixtures", "--fixture-pass", "only this", "--summary", "s"])
             a = json.loads(Path(path).read_text())["anchors"][0]
             self.assertEqual((a["fixtures"], a["version"]), ({"pass": ["only this"], "fail": []}, 3))
-            code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--summary", "s"])  # unchanged value
-            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
-            self.assertIn("--statement", out["error"]["suggested_action"])
+            before = Path(path).read_text()
+            code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--summary", "s"])  # unchanged value: a no-op, exit 0
+            self.assertEqual((code, out["data"]["updated"], out["data"]["changed"], out["data"]["version"]), (0, False, False, 3))
+            self.assertEqual(Path(path).read_text(), before)
 
     def test_update_statement_is_allowed_and_recorded(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2104,9 +2133,9 @@ class RetireUpdateTests(unittest.TestCase):
             self.assertEqual(a["history"][-1]["event"], "updated")
             self.assertEqual(a["history"][-1]["fields"], ["statement"])
             self.assertEqual(a["history"][-1]["previous_statement"], STATEMENT)
-            # the same statement again is "nothing to update"
+            # the same statement again is "nothing to update": a no-op, exit 0 with data.changed false
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", new])
-            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
+            self.assertEqual((code, out["data"]["updated"], out["data"]["changed"], out["data"]["version"]), (0, False, False, 2))
             # a hedged rewording is recorded with warnings, unless --strict
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", "The crates are probably copied from the legacy repo.", "--strict"])
             self.assertEqual((code, out["success"], out["data"]["updated"], out["data"]["refused"]["code"]), (0, True, False, "ANCHOR.LINT"))
@@ -2116,8 +2145,10 @@ class RetireUpdateTests(unittest.TestCase):
             self.assertEqual((code, out["data"]["updated"], out["data"]["version"], out["data"]["lint"]["warnings"]), (0, True, 3, ["hedged wording; state the requirement"]))
             # the statement may never become the quote, and the quote is immutable
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--statement", QUOTE.upper() + "."])
-            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
-            self.assertIn("statement is the verbatim quote", out["error"]["message"])
+            # 0.8.3: a refusal (exit 0, data.refused), as at add; nothing written
+            self.assertEqual((code, out["data"]["updated"], out["data"]["refused"]["code"]), (0, False, "VALIDATION.INPUT"))
+            self.assertIn("statement is the verbatim quote", out["data"]["refused"]["message"])
+            self.assertNotEqual(json.loads(Path(path).read_text())["anchors"][0]["statement"], QUOTE.upper() + ".")
             code, out = run_cli(["update", "--anchors", path, "--id", "ANC-001", "--quote", "other words"])
             self.assertEqual((code, out["error"]["code"], out["error"]["message"]), (2, "VALIDATION.INPUT", "quote is verbatim provenance and immutable"))
             self.assertEqual(json.loads(Path(path).read_text())["anchors"][0]["quote"], QUOTE)

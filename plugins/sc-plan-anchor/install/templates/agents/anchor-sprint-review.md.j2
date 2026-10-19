@@ -51,7 +51,7 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
      --item-id "$ITEM_ID" --item-title "$ITEM_TITLE" --item-file "$W/item.txt" \
      [--overrides-file "$W/overrides.json"] --threshold "$THRESHOLD" --run-dir "$RUN_DIR" [--dry-run]
    ```
-   Exit codes as for the planning gate: 0 the run completed (`data.summary.pass` false on failing or `error` verdicts; read it, not the exit code), 2 fatal. The script retries and shortens; do not re-run.
+   Exit codes as for the planning gate: 0 the run completed with an answer for every cell (`data.summary.pass` false on failing verdicts; read it, not the exit code), 2 fatal, including any anchor Jev gave no answer for (`data.run_path` names the partial run). The script retries and shortens; do not re-run.
 8. Point to the weak spot for each failing cell exactly as `anchor-plan-review` step 5, against `$W/item.txt`; here `change` says what the work or the sprint report should show. Then render: `python3 "$SCRIPT" report --run <run path> --format md`.
 9. Collect `deterministic_checks`: for every result whose `verdict` is `satisfied` or `asserted_only` and whose `deterministic_check` is non-empty, emit `{anchor_id, verdict, check}`.
 10. Return the envelope below. `results` copy the run's `results[]` unchanged plus `to_fix` on failing cells; `reused_run` is true when `run` was given. An `excluded` cell (`summary.excluded`) was not judged and passes: return it unchanged with its `exclusion`, no `to_fix` and no deterministic check. Measure `duration_ms`, count actual external tool calls, and derive `retry_count` from extra script attempts exactly as `anchor-plan-review` does; do not emit placeholder zeroes.
@@ -72,7 +72,6 @@ Return fenced JSON:
     "run_path": "doc/plan/phase-current/anchor-runs/dev-20261022T101500Z-A2.json",
     "dry_run": false,
     "reused_run": false,
-    "exit_code": 0,
     "pass": false,
     "failing": ["ANC-012"],
     "excluded": [],
@@ -93,20 +92,21 @@ Return fenced JSON:
 }
 ```
 
-On exit 2 or any fatal condition: `success: false`, `data: null`, `error: {code, message, recoverable, suggested_action}`, copying the script's error object unchanged.
+On exit 2 or any fatal condition: `success: false`, `data: null`, `error: {code, message, recoverable, suggested_action}`, copying the script's error object (and its `data`, which names the partial run after a Jev failure) unchanged.
 
 ## Error Handling
 
 ### Handled by agent (recoverable)
 - `gh` unavailable with `pr_number` set but `evidence` also given: proceed without the PR and files sections and omit them from `evidence_sections`.
 - Sprint text without a `## Closed beads` section: omit `Closed beads` from `evidence_sections`.
-- Missing dev-questions bead or empty override block: defaults apply.
-- Per-anchor `verdict: error` inside a successful run (script already retried): return it in `results` and `errors`; do not re-run.
+- A dev-questions bead with no or an empty override block: defaults apply.
 
 ### Propagated to skill (fatal)
 - `PREREQ.MISSING`, `EVIDENCE.NONE`.
 - `VALIDATION.PATH`, `VALIDATION.ID`: an untrusted path or identifier failed preflight.
 - `VALIDATION.INPUT`, `VALIDATION.TRACKER`: missing sprint inputs or a tracker mismatch; stop before judging.
+- `TRACKER.SHOW_FAILED`: a linked question bead could not be shown; stop before judging.
+- Script exit 2 because an anchor got no answer from Jev (the script already retried; `JEV.*` or `FIXTURE.MISSING`): return the error object with its `data.run_path` and `data.failures`; do not re-run.
 - `anchor_tracker.py resolve` errors (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `BEADS.METADATA_INVALID`, `BEADS.NOT_DIRECTORY`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`): return its error object unchanged; never switch trackers.
 - Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `SCRIPT.INTERNAL`: return the error object; never bypass.
 - Unparseable script stdout: `SCRIPT.OUTPUT`.

@@ -28,11 +28,11 @@ from test_jev_judge import (  # noqa: F401 - shared helpers
 )
 import plan_anchor_settings as settings_mod  # noqa: E402 - test_jev_judge put scripts/ on sys.path
 import anchor_tracker as tracker_mod  # noqa: E402
-from layout_support import TRACKERS, rendered_agent, rendered_skill  # noqa: E402
+from layout_support import SCRIPTS, TEST_TRACKER, TRACKERS, rendered_agent, rendered_skill  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SETTINGS_SCRIPT = SKILL / "scripts" / "plan_anchor_settings.py"
+SETTINGS_SCRIPT = SCRIPTS / "plan_anchor_settings.py"
 HAS_YAML = importlib.util.find_spec("yaml") is not None
 NO_YAML = "PyYAML is not installed (python3 -m pip install pyyaml); parsing a present settings file needs it"
 KEY = {"TYPESAFE_API_KEY": "sk-test-0001"}
@@ -133,7 +133,7 @@ class LiveCallConsentTests(unittest.TestCase):
 
     @yaml_test
     def test_file_without_the_key_is_refused_as_absent(self):
-        repo = Repo(self, "schema_version: 1\nanchor_tracker: br\n")
+        repo = Repo(self, f"schema_version: 1\nanchor_tracker: {TEST_TRACKER}\n")  # the tracker this install accepts
         j, t = judged(self, repo)
         self.assertEqual((j.code, j.out["error"]["suggested_action"], t.bodies), (2, ABSENT_ACTION, []))
 
@@ -167,7 +167,7 @@ class LiveCallConsentTests(unittest.TestCase):
         self.assertEqual(t.bodies, [])
 
     def test_usage_error_through_the_script_is_json_on_stdout(self):
-        proc = subprocess.run([sys.executable, str(SKILL / "scripts" / "jev_judge.py"), "judge", "--allow-remote"],
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--allow-remote"],
                               capture_output=True, text=True, encoding="utf-8",
                               env={k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"})
         self.assertEqual((proc.returncode, proc.stderr), (2, ""))
@@ -268,12 +268,12 @@ class SetCommandTests(unittest.TestCase):
         self.assertTrue(settings_mod.remote_judge_consent(repo.root).value)
 
     def test_set_false_keeps_the_tracker_and_reports_the_change(self):
-        repo = Repo(self, HEADER + "anchor_tracker: br\n")
+        repo = Repo(self, HEADER + f"anchor_tracker: {TEST_TRACKER}\n")
         self.main("set", "allow_remote_judge", "true", "--repository-root", str(repo.root))
         code, out = self.main("set", "allow_remote_judge", "false", "--repository-root", str(repo.root))
         self.assertEqual((code, out["data"]["previous"], out["data"]["value"], out["data"]["written"]), (0, True, False, True))
         self.assertEqual(repo.settings.read_text(encoding="utf-8"),
-                         HEADER + "anchor_tracker: br\n" + REMOTE_COMMENT + "allow_remote_judge: false\n")
+                         HEADER + f"anchor_tracker: {TEST_TRACKER}\n" + REMOTE_COMMENT + "allow_remote_judge: false\n")
         code, out = self.main("set", "allow_remote_judge", "false", "--repository-root", str(repo.root))
         self.assertEqual((code, out["data"]["written"], out["data"]["commit_paths"]), (0, False, []))
 
@@ -315,11 +315,14 @@ class SetCommandTests(unittest.TestCase):
 
     def test_anchor_tracker_write_keeps_the_answer(self):
         repo = Repo(self, "schema_version: 1\nallow_remote_judge: true\n")
+        if TEST_TRACKER == "bd":  # a bd install needs a Dolt-backed .beads/
+            (repo.root / ".beads").mkdir()
+            (repo.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
         with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
             outcome = tracker_mod.write(repo.root, which=lambda name: f"/fake/bin/{name}", run=lambda *a, **k: None)
         self.assertTrue(outcome.ok, getattr(outcome, "error", None))
         self.assertEqual(repo.settings.read_text(encoding="utf-8"),
-                         HEADER + "anchor_tracker: br\n" + REMOTE_COMMENT + "allow_remote_judge: true\n")
+                         HEADER + f"anchor_tracker: {TEST_TRACKER}\n" + REMOTE_COMMENT + "allow_remote_judge: true\n")
 
     def test_schema_version_stays_one(self):
         self.assertEqual(settings_mod.SCHEMA_VERSION, 1)

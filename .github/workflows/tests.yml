@@ -24,7 +24,13 @@ jobs:
       - run: python scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: python -m unittest discover -v -s tests/sc-plan-anchor
+      # The scripts are rendered for one tracker; the suite runs against each render.
+      - name: suite against the br render
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+      - name: suite against the bd render
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+        env:
+          PLAN_ANCHOR_TEST_TRACKER: bd
       - run: python scripts/check_version_sync.py
       - if: github.event_name == 'pull_request'
         run: python scripts/check_version_sync.py --base origin/${{ github.base_ref }}
@@ -46,9 +52,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - name: suite without PyYAML
         run: python -m unittest discover -v -s tests/sc-plan-anchor
+      - name: suite without PyYAML (bd render)
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+        env:
+          PLAN_ANCHOR_TEST_TRACKER: bd
       - run: python -m pip install "pyyaml==5.1"
       - name: suite on the PyYAML floor
         run: python -m unittest discover -v -s tests/sc-plan-anchor
+      - name: suite on the PyYAML floor (bd render)
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+        env:
+          PLAN_ANCHOR_TEST_TRACKER: bd
 
   installer:
     # sc-compose 1.7.0 publishes CPython 3.11 wheels; the rendering, install and
@@ -72,4 +86,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - run: python scripts/gen_install_data.py --check
-      - run: python -m unittest discover -v -s tests/sc-plan-anchor
+      - name: suite against the br render
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+      - name: suite against the bd render
+        run: python -m unittest discover -v -s tests/sc-plan-anchor
+        env:
+          PLAN_ANCHOR_TEST_TRACKER: bd

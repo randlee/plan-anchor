@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 sys.path.insert(0, str(SCRIPTS))
 import anchor_runner_contract as rc  # noqa: E402
 import anchor_tuning_contract as tc  # noqa: E402

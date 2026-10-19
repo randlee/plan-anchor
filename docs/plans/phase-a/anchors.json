@@ -2389,6 +2389,232 @@
           }
         }
       ]
+    },
+    {
+      "id": "ANC-032",
+      "source_type": "ANC",
+      "source_ref": null,
+      "statement": "A plan-anchor install rendered for one tracker must not name the other tracker as a whole word in any installed file except references/installation-and-troubleshooting.md.",
+      "quote": "I expect that installing 'bd' will ONLY have 'bd' commands in md files and scripts.  alternatively installing 'br' will ONLY have 'br' in md and scripts.\n\nbd and br should both be in installation & troubleshooting guide since  the install guide should explain how this switch works.",
+      "kind": "prohibition",
+      "stated_by": "randlee",
+      "stated_at": "2026-10-17",
+      "context": "plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent)",
+      "summary": "Install names only its tracker",
+      "scope": "changes install templates, the files install.py copies or renders, tracker-specific text or code in scripts, or the install guide",
+      "deterministic_check": "Fresh install.py run per tracker with --target claude,codex,cursor; grep -rnwI <other tracker> over .claude .codex .cursor .sc finds lines only in references/installation-and-troubleshooting.md (test_install.py::RealInstallTests.test_each_install_names_only_its_tracker).",
+      "fixtures": {
+        "pass": [
+          "The sprint renders jev_judge.py from jev_judge.py.j2 so a br install's help text says 'br show --json' and never names bd."
+        ],
+        "fail": [
+          "The sprint keeps scripts copied verbatim, so a br install's jev_judge.py still tells the user to run 'bd children'."
+        ]
+      },
+      "question_overrides": {},
+      "version": 2,
+      "status": "locked",
+      "promoted_to": null,
+      "beads": {
+        "anchor": null,
+        "plan_questions": null,
+        "dev_questions": null
+      },
+      "history": [
+        {
+          "at": "2026-10-18T06:21:50+00:00",
+          "event": "created",
+          "status": "locked"
+        },
+        {
+          "at": "2026-10-18T06:22:17+00:00",
+          "event": "updated",
+          "fields": [
+            "kind",
+            "fixtures"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ANC-033",
+      "source_type": "ANC",
+      "source_ref": null,
+      "statement": "Rerunning install.py with the other --tracker over an existing install must leave a folder byte-identical to a fresh install of that tracker, in both directions.",
+      "quote": "installing 'br' then installing 'bd' on top of it will look EXACTLY the same as just installing 'bd' in an empty location.  likewise for the opposite.",
+      "kind": "directive",
+      "stated_by": "randlee",
+      "stated_at": "2026-10-17",
+      "context": "plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent)",
+      "summary": "Tracker switch equals fresh install",
+      "scope": "changes tracker switching, the lock file, settings writes, file ownership or removal, or rendering in install.py",
+      "deterministic_check": "Install br then bd (and bd then br) for every target and compare with a fresh install of the second tracker: identical file lists, bytes and modes, lock and settings included (test_install.py::RealInstallTests.test_switching_trackers_equals_a_fresh_install).",
+      "fixtures": {
+        "pass": [
+          "The sprint checks that a br install switched to bd matches a fresh bd install byte for byte, lock and settings included, and the reverse."
+        ],
+        "fail": [
+          "After a switch the old tracker's rendered scripts and settings comments stay behind, so the folder differs from a fresh install."
+        ]
+      },
+      "question_overrides": {},
+      "version": 2,
+      "status": "locked",
+      "promoted_to": null,
+      "beads": {
+        "anchor": null,
+        "plan_questions": null,
+        "dev_questions": null
+      },
+      "history": [
+        {
+          "at": "2026-10-18T06:22:04+00:00",
+          "event": "created",
+          "status": "locked"
+        },
+        {
+          "at": "2026-10-18T06:22:17+00:00",
+          "event": "updated",
+          "fields": [
+            "fixtures"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ANC-034",
+      "source_type": "ANC",
+      "source_ref": null,
+      "statement": "Every Markdown file and Python script that install.py installs must be rendered at install time from a <file>.md.j2 or <script>.py.j2 template under install/templates/.",
+      "quote": "I expect the markdown files and scripts are <file>.md.j2 and <script>.py.j2 and are rendered when installed.",
+      "kind": "directive",
+      "stated_by": "randlee",
+      "stated_at": "2026-10-17",
+      "context": "plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent)",
+      "summary": "Installed md and py rendered from .j2",
+      "scope": "adds, moves or copies an installed Markdown file or script, or changes how install.py renders or copies files",
+      "deterministic_check": "Every installed .md and .py traces to an install template whose frontmatter name starts with sc-plan-anchor- (test_install.py::RealInstallTests.test_every_installed_md_and_py_is_rendered_from_a_template, RenderingTests.test_every_prompt_source_is_a_template).",
+      "fixtures": {
+        "pass": [
+          "Each script moves to scripts/<name>.py.j2 and install.py renders it for the selected tracker like every reference."
+        ],
+        "fail": [
+          "The scripts stay plain .py files that install.py copies unchanged into every install."
+        ]
+      },
+      "question_overrides": {},
+      "version": 2,
+      "status": "locked",
+      "promoted_to": null,
+      "beads": {
+        "anchor": null,
+        "plan_questions": null,
+        "dev_questions": null
+      },
+      "history": [
+        {
+          "at": "2026-10-18T06:22:04+00:00",
+          "event": "created",
+          "status": "locked"
+        },
+        {
+          "at": "2026-10-18T06:22:17+00:00",
+          "event": "updated",
+          "fields": [
+            "fixtures"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ANC-035",
+      "source_type": "ANC",
+      "source_ref": null,
+      "statement": "The sc-plan-anchor plugin must expose only the plan-anchor-installer skill, with no loadable plan-anchoring skill and no agents.",
+      "quote": "the ENTIRE reason we changed to ONLY advertising plan-anchor-installer and hiding plan anchor was what I outlined above.",
+      "kind": "directive",
+      "stated_by": "randlee",
+      "stated_at": "2026-10-17",
+      "context": "plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent)",
+      "summary": "Plugin exposes only the installer",
+      "scope": "changes the plugin's skills/ or agents directories, plugin or marketplace manifests, or what the marketplace plugin ships",
+      "deterministic_check": "plugins/sc-plan-anchor/skills/ holds only plan-anchor-installer and no .claude, .codex, .cursor or skills/plan-anchoring tree exists in the plugin (test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree).",
+      "fixtures": {
+        "pass": [
+          "The marketplace plugin's skills/ directory holds only plan-anchor-installer; plan-anchoring and its agents exist only in per-folder installs."
+        ],
+        "fail": [
+          "The plugin advertises the plan-anchoring skill and its agents again so a marketplace install can run the gates directly."
+        ]
+      },
+      "question_overrides": {},
+      "version": 2,
+      "status": "locked",
+      "promoted_to": null,
+      "beads": {
+        "anchor": null,
+        "plan_questions": null,
+        "dev_questions": null
+      },
+      "history": [
+        {
+          "at": "2026-10-18T06:22:04+00:00",
+          "event": "created",
+          "status": "locked"
+        },
+        {
+          "at": "2026-10-18T06:22:17+00:00",
+          "event": "updated",
+          "fields": [
+            "fixtures"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ANC-036",
+      "source_type": "ANC",
+      "source_ref": null,
+      "statement": "install.py must refuse a --dest inside the global ~/.claude, ~/.codex, ~/.cursor or ~/.agents folders with INSTALL.DEST_GLOBAL and write nothing.",
+      "quote": "we also block installing 'plan-anchor' in global .claude, .codex, .cursor, .agents folders",
+      "kind": "directive",
+      "stated_by": "randlee",
+      "stated_at": "2026-10-17",
+      "context": "plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent)",
+      "summary": "Global destinations refused",
+      "scope": "changes install.py destination checks, plan_anchor_paths.global_location, or the installer skill's destination handling",
+      "deterministic_check": "install.py --dest ~/.claude (and .codex, .cursor, .agents and their subfolders) exits 2 with INSTALL.DEST_GLOBAL and leaves the tree unchanged (test_installer_skill.py::GlobalDestinationTests).",
+      "fixtures": {
+        "pass": [
+          "install.py --dest ~/.codex exits 2 with INSTALL.DEST_GLOBAL and writes no file."
+        ],
+        "fail": [
+          "install.py accepts --dest ~/.claude and writes a shared plan-anchoring skill there for every repository."
+        ]
+      },
+      "question_overrides": {},
+      "version": 2,
+      "status": "locked",
+      "promoted_to": null,
+      "beads": {
+        "anchor": null,
+        "plan_questions": null,
+        "dev_questions": null
+      },
+      "history": [
+        {
+          "at": "2026-10-18T06:22:04+00:00",
+          "event": "created",
+          "status": "locked"
+        },
+        {
+          "at": "2026-10-18T06:22:17+00:00",
+          "event": "updated",
+          "fields": [
+            "fixtures"
+          ]
+        }
+      ]
     }
   ]
 }

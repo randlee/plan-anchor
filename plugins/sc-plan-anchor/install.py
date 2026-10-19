@@ -36,16 +36,20 @@ What it writes, per target (default ``claude``):
                                                ``allow_remote_judge`` when a flag gives it
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
 
-Tracker text. Every prompt file (SKILL.md, every reference, the .md assets and
-every agent body) is an sc-compose template under ``install/templates/`` that
-renders strictly for ``br`` or ``bd``, so an installed copy names one tracker.
-Scripts, schemas, JSON assets and the runtime ``templates/*.md.j2`` are code
-and data and are copied verbatim. A ``.j2`` file is an install-time template
-when its frontmatter ``name`` starts with ``sc-plan-anchor-``. Agent
+Tracker text. Every installed Markdown file and script (SKILL.md, every
+reference, the .md assets, every agent body and every ``scripts/*.py``) is an
+sc-compose template under ``install/templates/`` (``<file>.md.j2``,
+``<script>.py.j2``) that renders strictly for ``br`` or ``bd``, so an installed
+copy names one tracker; only the installation-and-troubleshooting reference
+explains both and how to switch. Schemas, JSON assets and the skill's runtime
+``templates/*.md.j2`` (sc-compose inputs the skill renders at run time) are
+copied verbatim. A ``.j2`` file is an install-time template when its
+frontmatter ``name`` starts with ``sc-plan-anchor-``. Agent
 frontmatter per harness lives in ``install/harness/<target>/agents/``, the
 agent registry in ``install/harness/<target>/registry.yaml``.
 
-Tracker choice reuses ``anchor_tracker.py``'s rules: ``--tracker``, else the
+Tracker choice follows ``anchor_tracker.py``'s rules for both trackers (the
+installed copy knows only its own): ``--tracker``, else the
 destination's settings file, else detection (a Dolt-backed ``.beads/`` is bd,
 anything else br). bd needs a Dolt-backed ``.beads/``; br needs one that is not.
 A repository with no ``.beads/`` fails unless ``--init-br`` runs ``br init``;
@@ -71,7 +75,7 @@ when its bytes match something an earlier version shipped
 
 Output: the JSON envelope ``{success, data, error}``; exit 0 when the command
 ran (``--status`` included, whatever it found), 2 on any error (an unexpected
-exception is ``SCRIPT.INTERNAL``).
+exception is ``SCRIPT.INTERNAL``), 130 on an interrupt (code ``CANCELED``).
 """
 
 from __future__ import annotations
@@ -89,7 +93,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from types import ModuleType
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 SKILL_NAME = "plan-anchoring"
@@ -98,18 +104,43 @@ TEMPLATES_DIR = INSTALL_DIR / "templates"
 SKILL_SRC = TEMPLATES_DIR / "skills" / SKILL_NAME
 HARNESS_DIR = INSTALL_DIR / "harness"
 SCRIPTS_DIR = SKILL_SRC / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+TEMPLATE_SYNTAX = ("{{", "{%", "{#")
 
-import anchor_tracker as rules  # noqa: E402
-from plan_anchor_paths import find_lock, global_location  # noqa: E402
-from plan_anchor_settings import (  # noqa: E402
-    SCHEMA_VERSION,
-    SETTINGS_RELPATH,
-    Settings,
-    read_settings,
-    write_settings,
-)
-from result import Err, Ok, Result, ToolError, err, utf8_stdio  # noqa: E402
+
+def template_body(text: str) -> str:
+    """The text after an sc-compose template's ``---`` frontmatter (the whole text when there is none)."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError("unterminated frontmatter")
+    return text[end + len("\n---\n"):]
+
+
+def _load_plain_script(name: str) -> ModuleType:
+    """Import ``scripts/<name>.py.j2``, a script template whose body has no template syntax.
+
+    Its rendering for either tracker is its body, byte for byte (test_install.py renders it
+    strictly and compares), so the installer runs the code it installs without needing
+    sc-compose to import. Only result.py and plan_anchor_paths.py are loaded this way; the
+    tracker-specific scripts are rendered for one tracker and never imported here.
+    """
+    path = SCRIPTS_DIR / f"{name}.py.j2"
+    body = template_body(path.read_text(encoding="utf-8"))
+    if any(token in body for token in TEMPLATE_SYNTAX):
+        raise RuntimeError(f"{path.name} uses template syntax; the installer cannot import it unrendered")
+    module = ModuleType(f"sc_plan_anchor_install_{name}")
+    module.__file__ = str(path)
+    sys.modules[module.__name__] = module  # dataclasses resolve their module through sys.modules
+    exec(compile(body, str(path), "exec"), module.__dict__)
+    return module
+
+
+_result = _load_plain_script("result")
+_paths = _load_plain_script("plan_anchor_paths")
+Err, Ok, Result, ToolError, err, utf8_stdio = (_result.Err, _result.Ok, _result.Result, _result.ToolError,
+                                               _result.err, _result.utf8_stdio)
+find_lock, find_settings, global_location = _paths.find_lock, _paths.find_settings, _paths.global_location
 
 PACKAGE = "sc-plan-anchor"
 LEGACY_PATH = INSTALL_DIR / "legacy-owned.json"
@@ -350,6 +381,255 @@ def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, s
     return json.dumps(body, indent=2) + "\n"
 
 
+# ---------------------------------------------------------------- settings and .beads/ (both trackers)
+#
+# The installer is the one program here that knows both trackers: it reads a settings file that may
+# name either, detects the tracker from .beads/ and switches an install between them. The installed
+# scripts are rendered for one tracker and name only it, so the installer does not import them. This
+# section follows their settings file format and .beads/ rules; test_install.py checks that the
+# installed copies parse, and would write, exactly the file the installer writes.
+
+SCHEMA_VERSION = 1
+SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
+SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge")
+METADATA_RELPATH = ".beads/metadata.json"
+INIT_TIMEOUT_SECONDS = 120
+SETTINGS_HEADER = """\
+# .sc/plan-anchor/settings.yaml
+# Repository settings for the sc-plan-anchor plugin; commit this file, never put secrets in it.
+schema_version: {schema_version}
+"""
+TRACKER_LINE = "anchor_tracker: {anchor_tracker}\n"
+REMOTE_JUDGE_LINES = """\
+# allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.
+allow_remote_judge: {value}
+"""
+DOLT_OUT_OF_SCOPE = (
+    "bd is supported only where a Dolt-backed .beads/ already exists; "
+    "provisioning Dolt (DoltHub or a Dolt server) is outside this skill."
+)
+INSTALL_HINT = {
+    "br": "Install br (beads_rust) and put it on PATH; see references/installation-and-troubleshooting.md.",
+    "bd": "Install bd and put it on PATH; see references/installation-and-troubleshooting.md.",
+}
+
+
+@dataclass(frozen=True)
+class Settings:
+    schema_version: int
+    anchor_tracker: Optional[str]
+    allow_remote_judge: Optional[bool] = None
+
+
+def _load_yaml() -> Result[Any, ToolError]:
+    try:
+        return Ok(importlib.import_module("yaml"))
+    except ImportError:
+        return err("DEPENDENCY.PYYAML", f"PyYAML is required to read and write {SETTINGS_RELPATH} and is not installed",
+                   f"Run with `uv run {Path(__file__).name}`, or install it: python3 -m pip install pyyaml")
+
+
+def _strict_loader(yaml: Any) -> type:
+    class StrictLoader(yaml.SafeLoader):  # type: ignore[name-defined, misc]
+        def construct_mapping(self, node, deep=False):  # noqa: D401 - PyYAML hook
+            seen = set()
+            for key_node, _ in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                try:
+                    duplicate = key in seen
+                except TypeError:
+                    break  # unhashable key: PyYAML reports it below
+                if duplicate:
+                    raise yaml.constructor.ConstructorError(None, None, f"duplicate key {key!r}", key_node.start_mark)
+                seen.add(key)
+            return super().construct_mapping(node, deep=deep)
+
+    return StrictLoader
+
+
+def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
+    path = SETTINGS_RELPATH
+    fix = (f"Edit {path}: it must hold 'schema_version: {SCHEMA_VERSION}' and optionally "
+           "'anchor_tracker: br' or 'anchor_tracker: bd' and 'allow_remote_judge: true' or 'allow_remote_judge: false'.")
+    try:
+        data: Any = yaml.load(text, Loader=_strict_loader(yaml))  # a SafeLoader subclass
+    except yaml.YAMLError as exc:
+        return err("SETTINGS.MALFORMED", f"{path} is not valid YAML: {exc}", fix)
+    if not isinstance(data, dict):
+        return err("SETTINGS.MALFORMED", f"{path} must be a YAML mapping, got {type(data).__name__}", fix)
+    unknown = sorted(str(k) for k in data if k not in SETTINGS_KEYS)
+    if unknown:
+        return err("SETTINGS.UNKNOWN_KEY", f"{path} has unknown key(s): {', '.join(unknown)}",
+                   f"Remove them; supported keys are {', '.join(SETTINGS_KEYS)}.", data={"unknown_keys": unknown})
+    version = data.get("schema_version")
+    if type(version) is not int or version != SCHEMA_VERSION:
+        return err("SETTINGS.SCHEMA_VERSION",
+                   f"{path} schema_version is {version!r}; this plugin reads schema_version {SCHEMA_VERSION}",
+                   fix, data={"schema_version": version if isinstance(version, (int, str)) else None})
+    tracker = data.get("anchor_tracker")
+    if "anchor_tracker" in data and tracker not in TRACKERS:
+        return err("SETTINGS.INVALID_TRACKER", f"{path} anchor_tracker is {tracker!r}; expected 'br' or 'bd'", fix)
+    remote = data.get("allow_remote_judge")
+    if "allow_remote_judge" in data and type(remote) is not bool:
+        return err("SETTINGS.INVALID_REMOTE_JUDGE", f"{path} allow_remote_judge is {remote!r}; expected true or false", fix)
+    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote))
+
+
+def settings_path(root: Path) -> Path:
+    return root.joinpath(*SETTINGS_RELPATH.split("/"))
+
+
+def read_settings(root: Path) -> Result[Optional[Settings], ToolError]:
+    """The settings file exactly at ``root`` (no lookup): ``Ok(None)`` when it is absent."""
+    yaml = _load_yaml()
+    if isinstance(yaml, Err):
+        return yaml
+    path = settings_path(root)
+    if not path.exists() and not path.is_symlink():
+        return Ok(None)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return err("SETTINGS.UNREADABLE", f"{SETTINGS_RELPATH} could not be read: {type(exc).__name__}",
+                   f"Make {SETTINGS_RELPATH} a readable UTF-8 file.")
+    return parse_settings(text, yaml.value)
+
+
+def render_settings(settings: Settings) -> str:
+    """The committed form: header comment, purpose line, one key per line (absent keys are omitted)."""
+    if settings.anchor_tracker is not None and settings.anchor_tracker not in TRACKERS:
+        raise ValueError(f"render_settings got tracker {settings.anchor_tracker!r}")  # caller bug
+    if settings.allow_remote_judge is not None and type(settings.allow_remote_judge) is not bool:
+        raise ValueError(f"render_settings got allow_remote_judge {settings.allow_remote_judge!r}")  # caller bug
+    text = SETTINGS_HEADER.format(schema_version=settings.schema_version)
+    if settings.anchor_tracker is not None:
+        text += TRACKER_LINE.format(anchor_tracker=settings.anchor_tracker)
+    if settings.allow_remote_judge is not None:
+        text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
+    return text
+
+
+def write_settings(root: Path, settings: Settings) -> Result[Path, ToolError]:
+    """Write ``root``'s settings file atomically, then read it back through the strict parser."""
+    yaml = _load_yaml()
+    if isinstance(yaml, Err):
+        return yaml
+    path = settings_path(root)
+    text = render_settings(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".settings.", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+    except OSError as exc:
+        return err("SETTINGS.WRITE_FAILED", f"could not write {SETTINGS_RELPATH}: {type(exc).__name__}: {exc}",
+                   f"Check permissions on {path.parent}.")
+    reread = parse_settings(text, yaml.value)
+    if isinstance(reread, Err) or reread.value != settings:
+        raise AssertionError("rendered settings do not round-trip")  # bug, not an expected failure
+    return Ok(path)
+
+
+@dataclass(frozen=True)
+class BeadsState:
+    exists: bool
+    metadata_present: bool
+    backend: Optional[str]
+
+    @property
+    def dolt(self) -> bool:
+        return self.backend == "dolt"
+
+    def to_json(self) -> dict:
+        return {
+            "beads_dir": self.exists,
+            "metadata_path": METADATA_RELPATH if self.metadata_present else None,
+            "backend": self.backend,
+            "dolt_backed": self.dolt,
+        }
+
+
+def inspect_beads(root: Path) -> Result[BeadsState, ToolError]:
+    beads = root / ".beads"
+    if not beads.exists():
+        return Ok(BeadsState(exists=False, metadata_present=False, backend=None))
+    if not beads.is_dir():
+        return err("BEADS.NOT_DIRECTORY", ".beads exists but is not a directory",
+                   "Move the .beads file aside; it must be the tracker workspace directory.")
+    metadata = beads / "metadata.json"
+    if not metadata.exists():
+        return Ok(BeadsState(exists=True, metadata_present=False, backend=None))
+    fix = f"Repair {METADATA_RELPATH} (a JSON object; bd's Dolt workspaces carry \"backend\": \"dolt\")."
+    try:
+        data: Any = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        return err("BEADS.METADATA_INVALID", f"{METADATA_RELPATH} could not be read: {type(exc).__name__}", fix)
+    except json.JSONDecodeError as exc:
+        return err("BEADS.METADATA_INVALID", f"{METADATA_RELPATH} is not valid JSON: {exc.msg}", fix)
+    if not isinstance(data, dict):
+        return err("BEADS.METADATA_INVALID", f"{METADATA_RELPATH} must be a JSON object", fix)
+    backend = data.get("backend")
+    if backend is not None and not isinstance(backend, str):
+        return err("BEADS.METADATA_INVALID", f"{METADATA_RELPATH} backend must be a string, got {backend!r}", fix)
+    return Ok(BeadsState(exists=True, metadata_present=True, backend=backend))
+
+
+def detect(beads: BeadsState) -> str:
+    return "bd" if beads.dolt else "br"
+
+
+def check_against_disk(tracker: str, beads: BeadsState, origin: str) -> Result[None, ToolError]:
+    if tracker == "bd" and not beads.dolt:
+        found = "no .beads/" if not beads.exists else f".beads/ without a Dolt backend (backend {beads.backend!r})"
+        return err("TRACKER.DOLT_REQUIRED", f"{origin} selects bd, but the repository has {found}. {DOLT_OUT_OF_SCOPE}",
+                   f"Use br (set 'anchor_tracker: br' in {SETTINGS_RELPATH}), or point the repository at an "
+                   "existing Dolt-backed .beads/ provisioned outside this skill.", data={"evidence": beads.to_json()})
+    if tracker == "br" and beads.dolt:
+        return err("TRACKER.MISMATCH", f"{origin} selects br, but .beads/ is Dolt-backed (bd's workspace)",
+                   f"Set 'anchor_tracker: bd' in {SETTINGS_RELPATH}, or remove the setting to detect bd.",
+                   data={"evidence": beads.to_json()})
+    return Ok(None)
+
+
+def locate_cli(tracker: str, which: Which) -> Result[str, ToolError]:
+    path = which(tracker)
+    if not path:
+        return err("TRACKER.CLI_MISSING", f"the selected anchor tracker {tracker!r} is not on PATH",
+                   INSTALL_HINT[tracker], data={"tracker": tracker})
+    return Ok(os.path.abspath(path))  # pin a relative which() answer to an absolute path
+
+
+def init_br(cli_path: str, root: Path, run: Runner) -> Result[BeadsState, ToolError]:
+    """Run ``br init`` with a fixed argv (no shell) and confirm a non-Dolt .beads/ appeared."""
+    try:
+        proc = run([cli_path, "init"], cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+                   errors="replace", check=False, stdin=subprocess.DEVNULL, timeout=INIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return err("TRACKER.INIT_FAILED", f"br init did not finish within {INIT_TIMEOUT_SECONDS} s",
+                   "Run 'br init' in the repository root by hand and inspect its output.")
+    except OSError as exc:
+        return err("TRACKER.INIT_FAILED", f"br init could not start: {type(exc).__name__}: {exc}", INSTALL_HINT["br"])
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()[-2000:]
+        return err("TRACKER.INIT_FAILED", f"br init exited {proc.returncode}: {stderr or '(no stderr)'}",
+                   "Fix the reported problem, then rerun 'anchor_tracker.py write --init'.",
+                   data={"returncode": proc.returncode, "stderr": stderr})
+    after = inspect_beads(root)
+    if isinstance(after, Err):
+        return after
+    if not after.value.exists or after.value.dolt:
+        return err("TRACKER.INIT_FAILED", "br init exited 0 but did not create a br .beads/ workspace",
+                   "Run 'br init' in the repository root by hand and inspect its output.",
+                   data={"evidence": after.value.to_json()})
+    return after
+
+
 # ---------------------------------------------------------------- tracker choice
 
 
@@ -358,39 +638,64 @@ class TrackerChoice:
     tracker: str
     origin: str               # "--tracker" | "settings" | "detected"
     settings: Optional[Settings]
-    beads: Any                # anchor_tracker.BeadsState
+    beads: BeadsState
     init_br: bool             # br init will run
     cli_path: str
     folder: bool = False      # not a repository and no .beads/: child repositories are checked at gate time
+    beads_root: Optional[Path] = None  # where .beads/ is checked (and br init runs): the destination, or the
+                                       # repository a destination folder sits inside
 
 
 def is_repository(root: Path) -> bool:
     return (root / ".git").exists()
 
 
+def enclosing_repository(root: Path) -> Optional[Path]:
+    """The repository ``root`` is, or sits inside: the nearest folder at or above it holding ``.git``
+    (walking up and stopping before the home directory, as every lookup here does), or None."""
+    for directory in _paths.ancestors(root):
+        if is_repository(directory):
+            return directory
+    return None
+
+
 def choose_tracker(root: Path, requested: Optional[str], init_br: bool, which: Which) -> Result[TrackerChoice, ToolError]:
     settings = read_settings(root)  # the destination's own file: the one this install writes
     if isinstance(settings, Err):
         return settings
-    beads = rules.inspect_beads(root)
+    # A destination inside a repository (a subfolder install) checks the repository's .beads/, as the
+    # installed anchor_tracker.py does from there, unless the destination has a .beads/ of its own.
+    repository = enclosing_repository(root)
+    beads_root = root if (root / ".beads").exists() or repository is None else repository
+    beads = inspect_beads(beads_root)
     if isinstance(beads, Err):
         return beads
     configured = settings.value.anchor_tracker if settings.value is not None else None
-    folder = not beads.value.exists and not is_repository(root)
+    configured_label = f"{SETTINGS_RELPATH} anchor_tracker"
+    if not configured and root.parent != root:
+        # No setting of its own: the settings file the gates would read here (the nearest one above) decides.
+        above = find_settings(root.parent)
+        if above is not None:
+            inherited = read_settings(above.parent.parent.parent)
+            if isinstance(inherited, Err):
+                return inherited
+            if inherited.value is not None and inherited.value.anchor_tracker:
+                configured, configured_label = inherited.value.anchor_tracker, f"{above} anchor_tracker"
+    folder = not beads.value.exists and repository is None
     if requested:
         tracker, origin, label = requested, "--tracker", "--tracker"
     elif configured:
-        tracker, origin, label = configured, "settings", f"{SETTINGS_RELPATH} anchor_tracker"
+        tracker, origin, label = configured, "settings", configured_label
     elif folder:
         return err("TRACKER.REQUIRED",
                    f"{root} is not a repository and has no .beads/, so the anchor tracker cannot be detected",
                    "Ask the user which tracker the repositories under this folder use, then rerun with "
                    "--tracker br or --tracker bd.", data={"evidence": beads.value.to_json()})
     else:
-        tracker, origin, label = rules.detect(beads.value), "detected", "detection"
+        tracker, origin, label = detect(beads.value), "detected", "detection"
     runs_init = False
     if not folder:
-        checked = rules.check_against_disk(tracker, beads.value, label)
+        checked = check_against_disk(tracker, beads.value, label)
         if isinstance(checked, Err):
             error = checked.error
             if error.code == "TRACKER.DOLT_REQUIRED":
@@ -410,10 +715,10 @@ def choose_tracker(root: Path, requested: Optional[str], init_br: bool, which: W
                            "or run 'br init' in the repository root yourself.",
                            data={"tracker": tracker, "evidence": beads.value.to_json()})
             runs_init = True
-    cli = rules.locate_cli(tracker, which)
+    cli = locate_cli(tracker, which)
     if isinstance(cli, Err):
         return cli
-    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value, folder))
+    return Ok(TrackerChoice(tracker, origin, settings.value, beads.value, runs_init, cli.value, folder, beads_root))
 
 
 # ---------------------------------------------------------------- plan
@@ -457,7 +762,7 @@ def wanted_files(package: Package, renderer: Renderer, targets: List[str],
             if isinstance(data, Err):
                 return data
             src = renderer.skill_source(rel, target)
-            executable = rel not in package.rendered and bool(src.stat().st_mode & stat.S_IXUSR)
+            executable = bool(src.stat().st_mode & stat.S_IXUSR)  # a script template keeps its source's mode
             out[_skill_prefix(target) + rel] = (data.value, executable)
         for name in package.agents:
             data = renderer.agent_file(target, name, tracker)
@@ -660,8 +965,9 @@ def _prune(root: Path, start: Path, stop: Path) -> None:
 def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[str], ToolError]:
     """Write the plan. Returns the paths to commit."""
     root = plan.root
+    beads_root = choice.beads_root or root
     if plan.br_init:
-        initialized = rules.init_br("br", choice.cli_path, root, run)
+        initialized = init_br(choice.cli_path, beads_root, run)
         if isinstance(initialized, Err):
             return initialized
     try:
@@ -707,7 +1013,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         commit.append(SETTINGS_RELPATH)
     if plan.br_init:
-        commit.append(".beads/")
+        commit.append(".beads/" if beads_root == root else Path(os.path.relpath(beads_root / ".beads", root)).as_posix() + "/")
     return Ok(commit)
 
 
@@ -851,6 +1157,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "previous_version": lock.value.version if lock.value is not None else None,
         "install_root": str(root.value),
         "repository": is_repository(root.value),
+        "repository_root": str(enclosing_repository(root.value)) if enclosing_repository(root.value) else None,
         "tracker": c.tracker,
         "tracker_origin": c.origin,
         "previous_tracker": previous,
@@ -964,5 +1271,4 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    sys.exit(_result.run_main(main))  # UTF-8 streams; an interrupt is the CANCELED envelope and exit 130

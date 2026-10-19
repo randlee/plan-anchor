@@ -20,7 +20,7 @@ from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubri
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPTS = PLUGIN / "install" / "templates" / "skills" / "plan-anchoring" / "scripts"
+from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only adds a status command and its tests.\n" * 3
@@ -165,7 +165,7 @@ class JevJudgeErrors(ConventionCase):
                                  "--anchors", path], None),
             "shape": (["shape", "--show-json", missing], None),
             "judge": (["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1",
-                       "--item-file", self.put("item.txt", ITEM)], None),
+                       "--item-file", self.put("item.txt", ITEM)], "AUTH.CREDENTIALS"),  # no key in clean_env()
             "check-fixtures": (["check-fixtures", "--anchors", path, "--gate", "plan", "--all", "--dry-run"], "FIXTURE.NONE"),
             "report": (["report", "--run", missing], None),
             "coverage": (["coverage", "--runs", str(self.d / "empty")], None),
@@ -178,6 +178,25 @@ class JevJudgeErrors(ConventionCase):
         for name, (argv, code) in cases.items():
             with self.subTest(name):
                 self.failed(JJ, *argv, code=code)
+
+
+    def test_live_judge_refusals_are_typed(self):
+        """A live call that must not go out: AUTH.CREDENTIALS without a key, POLICY.REMOTE_JUDGE_DISABLED without consent."""
+        path = self.put("anchors.json", record(anchor()))
+        argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
+        error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
+        self.assertEqual(error["message"], "TYPESAFE_API_KEY is not set")
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("the consent check reads settings.yaml with PyYAML")
+        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        # a dummy key only gets past the credential check; consent is absent, so nothing is sent
+        proc = subprocess.run([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
+                              capture_output=True, text=True, encoding="utf-8")
+        out = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, out["success"], out["error"]["code"]), (2, False, "POLICY.REMOTE_JUDGE_DISABLED"), out)
+        self.assertEqual(set(out["error"]), ERROR_KEYS)
 
 
 class OtherScripts(ConventionCase):
@@ -222,7 +241,9 @@ class NoExitOneInShippedText(unittest.TestCase):
     def test_no_prompt_or_reference_says_exit_1(self):
         files = [ROOT / "README.md"]
         for pattern in SHIPPED_TEXT:
-            files.extend(p for p in PLUGIN.rglob(pattern) if p.is_file())
+            # Script templates (*.py.j2) are code, as the scripts were before they became templates:
+            # their docstrings state the convention ("There is no exit 1"); prompts must not mention it.
+            files.extend(p for p in PLUGIN.rglob(pattern) if p.is_file() and not p.name.endswith(".py.j2"))
         self.assertGreater(len(files), 40)
         hits = [f"{p.relative_to(ROOT)}:{n}: {line.strip()}"
                 for p in files for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)

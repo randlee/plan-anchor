@@ -22,7 +22,8 @@ Layouts: ``skills/.claude/skills/plan-anchoring/``, ``skills/.{claude,codex}/age
 ``registry.yaml`` is never installed and never listed.
 
 Exit 0 on success; 2 when the file is stale (--check) or the script cannot do its
-job (missing history). A check script's job is
+job (missing history, a git command that fails, an unreadable or corrupt
+legacy-owned.json), with a one-line message on stderr. A check script's job is
 to fail CI, so staleness is nonzero; like every plan-anchor CLI it never exits 1.
 """
 
@@ -66,8 +67,18 @@ def _ignored(rel: str) -> bool:
     return bool(IGNORED & set(rel.split("/")))
 
 
+class Failure(Exception):
+    """The script could not do its job: main prints the message and exits 2 (never a traceback)."""
+
+
 def _git(*args: str, stdin: Optional[bytes] = None) -> bytes:
-    return subprocess.run(["git", "-C", str(ROOT), *args], input=stdin, capture_output=True, check=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(ROOT), *args], input=stdin, capture_output=True, check=True).stdout
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+        raise Failure(f"git {' '.join(args)} exited {exc.returncode}: {stderr or '(no stderr)'}") from None
+    except OSError as exc:
+        raise Failure(f"git could not start: {type(exc).__name__}: {exc}") from None
 
 
 def _has_commit(rev: str) -> Optional[str]:
@@ -150,7 +161,30 @@ def _subset(small: dict, big: dict) -> List[str]:
     return gaps
 
 
+def _read_legacy() -> Optional[dict]:
+    """The committed legacy-owned.json, None when it is missing; Failure when it is unreadable or corrupt."""
+    if not LEGACY.is_file():
+        return None
+    try:
+        data = json.loads(LEGACY.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Failure(f"{_shown(LEGACY)} could not be read: {type(exc).__name__}: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise Failure(f"{_shown(LEGACY)} is not valid JSON ({exc}); regenerate it with python3 scripts/gen_install_data.py") from None
+    if not isinstance(data, dict) or not isinstance(data.get("skill"), dict) or not isinstance(data.get("agents"), dict):
+        raise Failure(f"{_shown(LEGACY)} is not a legacy-ownership record; regenerate it with python3 scripts/gen_install_data.py")
+    return data
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    try:
+        return _main(argv)
+    except Failure as exc:
+        print(f"gen_install_data: {exc}", file=sys.stderr)
+        return FAIL
+
+
+def _main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="exit 2 when a generated file is stale")
     args = parser.parse_args(argv)
@@ -165,7 +199,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"wrote {_shown(LEGACY)} from {len(commits)} commits")
         return 0
     stale = []
-    have = json.loads(LEGACY.read_text(encoding="utf-8")) if LEGACY.is_file() else None
+    have = _read_legacy()
     if have is None:
         stale.append(f"{_shown(LEGACY)} is missing")
     elif not missing:

@@ -12,12 +12,12 @@ import sys
 import tempfile
 import unittest
 
-from layout_support import SKILL_SRC, TRACKERS, rendered_agent, rendered_skill
+from layout_support import SCRIPTS, SKILL_SRC, TRACKERS, rendered_agent, rendered_skill
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
-SCRIPT = SKILL_SRC / "scripts" / "jev_judge.py"
+SCRIPT = SCRIPTS / "jev_judge.py"
 EXAMPLE_ANCHORS = SKILL_SRC / "assets" / "examples" / "anchors.example.json"
 HARNESSES = ("claude", "codex", "cursor")
 GATES = ("anchor-plan-review.md", "anchor-sprint-review.md")

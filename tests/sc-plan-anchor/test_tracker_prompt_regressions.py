@@ -33,7 +33,7 @@ class TrackerPromptRegressionTests(unittest.TestCase):
         self.assertEqual(offenders, [], "bd init must never be recommended")
 
     def test_tracker_script_never_builds_a_bd_init_argv(self):
-        source = (SKILL_SRC / "scripts" / "anchor_tracker.py").read_text(encoding="utf-8")
+        source = (SKILL_SRC / "scripts" / "anchor_tracker.py.j2").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"""["']bd["']\s*,\s*["']init["']""")
         self.assertIn('argv = [cli_path, "init"]', source)
         self.assertIn('if tracker != "br":', source)

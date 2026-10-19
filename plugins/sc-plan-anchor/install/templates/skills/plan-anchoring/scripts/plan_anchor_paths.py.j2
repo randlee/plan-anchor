@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-plan_anchor_paths
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
 """Where a plan-anchor install lives, and which locations are global.
 
@@ -12,7 +21,12 @@ from the working directory, nearest first, and stop before the home directory.
     ``HOMEDRIVE``/``HOMEPATH``), the walk ends at the filesystem root.
   - ``find_installs(start)``: the nearest directory holding
     ``<dir>/<harness dir>/skills/plan-anchoring/scripts/jev_judge.py`` and every
-    copy in it (one per harness directory: .claude, .codex, .cursor, .agents).
+    copy in it (one per harness directory the installer writes: .claude,
+    .codex, .cursor; never .agents, which the installer does not write).
+  - ``trusted_script(script, start)``: the script must be one of those copies
+    and the install root must hold the installer's
+    ``.sc/plan-anchor/install-lock.json`` naming it; a hand-copied or lock-less
+    copy is refused.
   - ``find_settings(start)`` / ``find_lock(start)``: the nearest
     ``.sc/plan-anchor/settings.yaml`` / ``install-lock.json``.
   - ``global_location(path)``: why ``path`` is a global (user-wide or
@@ -31,12 +45,16 @@ Standard library only; importing it has no side effects.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
 SKILL_NAME = "plan-anchoring"
-HARNESS_DIRS = (".claude", ".codex", ".cursor", ".agents")
+HARNESS_DIRS = (".claude", ".codex", ".cursor")  # the directories install.py writes (--target)
+# User-wide harness directories: global, so never an install location. .agents (Codex's documented
+# user skill directory) is global here but is not a harness directory the installer writes.
+GLOBAL_HARNESS_DIRS = HARNESS_DIRS + (".agents",)
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
 LOCK_RELPATH = ".sc/plan-anchor/install-lock.json"
 SCRIPT_RELPATH = f"skills/{SKILL_NAME}/scripts/jev_judge.py"
@@ -92,7 +110,7 @@ def _within(path: Path, root: Path) -> bool:
 def global_roots(home: Optional[Path] = None) -> List[Path]:
     """The global directories: the harness directories under home (when it is known) and the machine-wide ones."""
     home = _home(home)
-    roots = [home / name for name in HARNESS_DIRS] if home is not None else []
+    roots = [home / name for name in GLOBAL_HARNESS_DIRS] if home is not None else []
     roots += [_resolve(Path(p)) for p in SYSTEM_GLOBALS]
     return roots
 
@@ -167,4 +185,33 @@ def trusted_script(script: Path, start: Path, home: Optional[Path] = None) -> Tu
     root, copies = nearest
     if resolved not in {_resolve(p) for p in copies}:
         return False, f"the nearest install is {root}; {resolved} is not one of its copies"
+    named, why = lock_names(root, resolved)
+    if not named:
+        return False, why
     return True, f"nearest install {root}"
+
+
+def lock_names(root: Path, script: Path) -> Tuple[bool, str]:
+    """Whether ``root``'s install lock (written by install.py) names ``script``; (ok, reason).
+
+    Only an install the installer wrote is trusted: a copy without the lock, or one the lock does not list,
+    was placed by hand.
+    """
+    lock = root.joinpath(*LOCK_RELPATH.split("/"))
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, (f"{root} has no {LOCK_RELPATH}: the copy was not written by the plan-anchor installer "
+                       "(install.py --dest <folder>)")
+    except (OSError, UnicodeError, ValueError) as exc:
+        return False, f"{lock} could not be read as JSON ({type(exc).__name__})"
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, dict):
+        return False, f"{lock} is not a plan-anchor install record"
+    try:
+        key = _resolve(script).relative_to(_resolve(root)).as_posix()
+    except ValueError:
+        return False, f"{script} is not inside the install root {root}"
+    if key not in files:
+        return False, f"{lock} does not list {key}: the copy was not written by the plan-anchor installer"
+    return True, f"{lock} lists {key}"

@@ -111,10 +111,18 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def run(entry=None) -> int:
+    """main() with the plan-anchor exit convention: 0 installed, 2 for any failure (never 1, never a traceback)."""
     try:
-        raise SystemExit(main())
+        return (entry or main)()
     except (RuntimeError, OSError, subprocess.CalledProcessError, tarfile.TarError, zipfile.BadZipFile) as exc:
         # exit 2, like every plan-anchor CLI: the install could not be done (there is no exit 1)
         print(f"install_sc_compose_ci: {exc}", file=sys.stderr)
-        raise SystemExit(2)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - anything else is still "could not install", not a traceback
+        print(f"install_sc_compose_ci: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

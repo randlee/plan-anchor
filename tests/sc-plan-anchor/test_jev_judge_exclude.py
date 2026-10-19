@@ -263,11 +263,13 @@ class ExcludeCommandTests(unittest.TestCase):
                 (["--id", "ANC-011", "--item", "ex-42"], "VALIDATION.INPUT"),
                 (["--id", "ANC-011", "--item", " ", "--reason", REASON], "VALIDATION.INPUT"),
                 (["--id", "ANC-099", "--item", "ex-42", "--reason", REASON], "ANCHOR.UNKNOWN"),
-                (["--id", "ANC-011", "--item", "ex-42", "--remove"], "VALIDATION.INPUT"),
             ):
                 with self.subTest(argv=argv):
                     code, out = run_cli(["exclude", "--anchors", path, *argv])
                     self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, code_expected))
+            # 0.8.3: --remove with nothing to remove is a no-op (exit 0, data.changed false), not a failure
+            code, out = run_cli(["exclude", "--anchors", path, "--id", "ANC-011", "--item", "ex-42", "--remove"])
+            self.assertEqual((code, out["success"], out["data"]["changed"], out["error"]), (0, True, False, None))
             self.assertEqual(Path(path).read_text(), before)
 
 

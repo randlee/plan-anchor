@@ -1,3 +1,12 @@
+---
+name: sc-plan-anchor-script-jev_judge
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
 #!/usr/bin/env python3
 """jev_judge.py - the deterministic half of plan anchoring.
 
@@ -38,7 +47,7 @@ Subcommands
   render          write anchors.md from anchors.json
   set-beads       record the anchor / plan-questions / dev-questions bead IDs
   promote         mark an anchor as promoted to an ADR (keeps its ID)
-  compose-item    build the labelled item text from `bd show --json` (and `bd children --json`)
+  compose-item    build the labelled item text from `{{ tracker }} show --json` (and `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %}`)
   agent-preflight validate and canonicalise agent paths and identifiers before any read or upload
   shape           size and shape metrics of plan beads (sections, code vs prose, references, repeated paragraphs); never gates
   judge           ask Jev about one item against one or more anchors, write a run; data.summary.pass
@@ -54,24 +63,32 @@ Exit codes
   A tool failure is an exit code; a negative answer from a command that ran
   properly is not. There is no exit 1.
   0  the command ran: {"success": true, "data": {...}, "error": null}. `data`
-     carries the outcome, negative ones included: a failing gate or a per-cell
-     `error` verdict (`judge` data.summary.pass false), a fixture mismatch
-     (`check-fixtures` data.pass false), problems in the record (`validate`
-     data.valid false), lint warnings (`lint` data.clean false), likely
-     duplicates (`dedupe` data.likely_duplicates non-empty), a statement that
-     is not testable (`rubric` data.pass false), and an anchor `add` refused
-     as a likely duplicate, untestable or lint-failing (data.added false with
-     data.refused {code, message, suggested_action}; `update --strict`:
-     data.updated false)
+     carries the outcome, negative ones included: a failing gate (`judge`
+     data.summary.pass false), a fixture mismatch (`check-fixtures` data.pass
+     false; data.judged 0 when nothing was judged), problems in the record
+     (`validate` data.valid false), lint warnings (`lint` data.clean false),
+     likely duplicates (`dedupe` data.likely_duplicates non-empty), a
+     statement that is not testable (`rubric` data.pass false), an anchor
+     `add` refused as a duplicate, a likely duplicate, the verbatim quote,
+     untestable or lint-failing (data.added false with data.refused {code,
+     message, recoverable, suggested_action}; `update --strict`: data.updated
+     false), and a no-op `update`, `retire` of a retired anchor or
+     `exclude --remove` with nothing to remove (data.changed false)
   2  the command could not do its job: {"success": false, "data": null|{...},
      "error": {code, message, recoverable, suggested_action}} (bad input or
      arguments as VALIDATION.INPUT, a missing or unreadable file, a malformed
      record or override, bad credentials, remote judging not allowed by
      allow_remote_judge in .sc/plan-anchor/settings.yaml as
      POLICY.REMOTE_JUDGE_DISABLED, a plan bead that does not fit one Jev
-     request as PLAN.TOO_LARGE, Jev unreachable before any verdict, a missing
-     dependency, or an internal error as SCRIPT.INTERNAL)
-  130 interrupted
+     request as PLAN.TOO_LARGE, a missing dependency, an internal error as
+     SCRIPT.INTERNAL, and any Jev call that produced no answer: a Jev HTTP
+     error, a network or transport failure, an invalid response, or a missing
+     or malformed answers-file entry, in `judge`, `check-fixtures`,
+     `dedupe --jev`, `rubric` and `add --rubric`. A failed call is never
+     folded into a negative result: the error names the first failure, and
+     data holds the partial work (`judge`: data.run_path, the run file written
+     with the failing cells as verdict `error`; data.failures lists each one)
+  130 interrupted: the error envelope with code CANCELED (recoverable true)
 
 Plan-gate size handling
   The plan gate never shortens prose. A bead that fits (--max-item-chars, and
@@ -80,7 +97,8 @@ Plan-gate size handling
   a redaction marker, longest first and one at a time, until it fits; a bead
   that does not fit with all of them reduced is refused before anything is
   sent (PLAN.TOO_LARGE), and
-  a context overflow from Jev is recorded per anchor as PLAN.TOO_LARGE. The
+  a context overflow from Jev fails the run as PLAN.TOO_LARGE (exit 2; the
+  partial run file is kept). The
   development gate keeps the truncate-and-halve behaviour.
 """
 from __future__ import annotations
@@ -217,6 +235,23 @@ def fail(code: str, message: str, **fields) -> Err[JudgeError]:
     return Err(JudgeError(code, message, **fields))
 
 
+def jev_failure(what: str, failures: list, total: int, data: dict) -> Err[JudgeError]:
+    """Some Jev calls produced no answer: the command could not do its job (exit 2), never a negative result.
+
+    ``failures`` is ``[(label, JudgeError)]`` in report order; the envelope takes the first failure's code and
+    action, and ``data`` (the partial work, e.g. the run path) gains ``failures`` so nothing judged is lost.
+    """
+    first = failures[0][1]
+    shown = "; ".join(f"{label}: {e.code} ({e.message})" for label, e in failures[:5])
+    if len(failures) > 5:
+        shown += f"; +{len(failures) - 5} more"
+    out = JudgeError(first.code, f"{len(failures)} of {total} {what} got no answer from Jev: {shown}",
+                     recoverable=all(e.recoverable for _, e in failures),
+                     action=first.action or "Fix the cause named in the message and rerun the command.")
+    out.data = dict(data, failures=[{"id": label, "code": e.code, "message": e.message} for label, e in failures])
+    return Err(out)
+
+
 def redact_sensitive(value):
     """Remove the live TypeSafe credential and bearer tokens from every emitted value."""
     if isinstance(value, dict):
@@ -305,7 +340,8 @@ def write_text_atomic(path: str, text: str) -> None:
 
 
 def save_json(path: str, obj: dict) -> None:
-    write_text_atomic(path, json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
+    """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout (REQ-017): no key or bearer token reaches a file."""
+    write_text_atomic(path, json.dumps(redact_sensitive(obj), indent=2, ensure_ascii=False) + "\n")
 
 
 def short_date(iso: str) -> str:
@@ -561,26 +597,37 @@ def similar_anchors(anchors: list, statement: str, quote: str, floor: float = SI
 
 
 def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -> Result[list, JudgeError]:
-    """Run the lint; the verbatim rule is always a refusal for ANC, every other warning only under --strict."""
+    """Run the lint; the verbatim rule is always a refusal for ANC, every other warning only under --strict.
+
+    Both are refusals (``is_refusal``): the caller reports them in data.refused with exit 0.
+    """
     warnings = lint_statement(statement, quote, source_type)
     if LINT_VERBATIM in warnings:
-        return fail("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, recoverable=True,
-                    action="Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote.")
+        refused = JudgeError("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, recoverable=True,
+                             action="Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote.")
+        refused.refusal = True
+        return Err(refused)
     if strict and warnings:
         return fail("ANCHOR.LINT", "statement has testability warnings: " + "; ".join(warnings), recoverable=True,
                     action="Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway.")
     return Ok(warnings)
 
 
-REFUSAL_CODES = ("ANCHOR.LINT", "ANCHOR.DUPLICATE_CANDIDATE", "ANCHOR.NOT_TESTABLE")
+REFUSAL_CODES = ("ANCHOR.LINT", "ANCHOR.DUPLICATE_CANDIDATE", "ANCHOR.NOT_TESTABLE", "ANCHOR.DUPLICATE")
+
+
+def is_refusal(error: JudgeError) -> bool:
+    """A quality gate's no (lint, duplicate, verbatim quote, rubric): a negative answer, not a tool failure."""
+    return error.code in REFUSAL_CODES or getattr(error, "refusal", False)
 
 
 def refusal(error: JudgeError, verb: str, **data) -> Ok:
     """A quality gate said no (`add`/`update`): a completed negative answer, so success with data.<verb> false and exit 0.
 
-    data.refused keeps the code, message and suggested action the refusal used to carry as an error.
+    data.refused keeps the code, message, recoverable flag and suggested action the refusal used to carry as an error.
     """
-    out = {verb: False, "refused": {"code": error.code, "message": error.message, "suggested_action": error.action}}
+    out = {verb: False, "refused": {"code": error.code, "message": error.message, "recoverable": error.recoverable,
+                                    "suggested_action": error.action}}
     out.update(data)
     return Ok({"success": True, "data": out, "error": None})
 
@@ -617,7 +664,9 @@ def cmd_add(args) -> Result[dict, JudgeError]:
         anchor_id = args.source_ref
         source_ref = args.source_ref
         if any(isinstance(a, dict) and a.get("id") == anchor_id for a in anchors):
-            return fail("ANCHOR.DUPLICATE", f"{anchor_id} already recorded")
+            refused = JudgeError("ANCHOR.DUPLICATE", f"{anchor_id} already recorded", recoverable=True,
+                                 action=f"Update {anchor_id} instead (`update --id {anchor_id}`), or retire it first.")
+            return refusal(refused, "added", path=args.anchors)
     quote = (args.quote or "").strip()
     if args.source_type == "ANC":
         if not quote:
@@ -627,7 +676,7 @@ def cmd_add(args) -> Result[dict, JudgeError]:
         quote = statement  # register text: the quote is the statement
     linted = lint_or_refuse(statement, quote, args.source_type, bool(args.strict))
     if isinstance(linted, Err):
-        if linted.error.code in REFUSAL_CODES:
+        if is_refusal(linted.error):
             return refusal(linted.error, "added", path=args.anchors, lint={"warnings": lint_statement(statement, quote, args.source_type)})
         return linted
     warnings = linted.value
@@ -728,11 +777,13 @@ def cmd_update(args) -> Result[dict, JudgeError]:
     if json.dumps(fixtures, sort_keys=True) != before:
         a["fixtures"] = fixtures
         changed.append("fixtures")
-    if not changed:
-        return fail("VALIDATION.INPUT", "nothing to update", action="Pass --statement, --scope, --summary, --deterministic-check, --fixture-pass, --fixture-fail or --clear-fixtures.")
+    if not changed:  # every value given already holds: a no-op, not a failure; nothing is saved
+        # data.changed is the list of changed fields on an update, false on a no-op (ADR-007)
+        return Ok({"success": True, "data": {"updated": False, "changed": False, "id": a["id"],
+                                             "version": a.get("version", 1), "anchor": a}, "error": None})
     linted = lint_or_refuse(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC", bool(getattr(args, "strict", False)))
     if isinstance(linted, Err):
-        if linted.error.code in REFUSAL_CODES:  # nothing is saved
+        if is_refusal(linted.error):  # nothing is saved
             return refusal(linted.error, "updated", id=args.id, changed=changed,
                            lint={"warnings": lint_statement(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC")})
         return linted
@@ -752,8 +803,9 @@ def cmd_retire(args) -> Result[dict, JudgeError]:
     if isinstance(loaded, Err):
         return loaded
     rec, a = loaded.value
-    if a.get("status") == "retired":
-        return fail("VALIDATION.INPUT", f"{args.id} is already retired")
+    if a.get("status") == "retired":  # already done: a no-op, not a failure; nothing is saved
+        return Ok({"success": True, "data": {"id": a["id"], "status": "retired", "changed": False,
+                                             "replaced_by": args.replaced_by or None, "version": a.get("version", 1)}, "error": None})
     if args.replaced_by:
         replacement = find_anchor(rec, args.replaced_by)  # the replacement must exist
         if isinstance(replacement, Err):
@@ -762,7 +814,8 @@ def cmd_retire(args) -> Result[dict, JudgeError]:
     a["version"] = int(a.get("version", 1)) + 1
     a.setdefault("history", []).append(history_event("retired", replaced_by=args.replaced_by or None, reason=args.reason or ""))
     save_json(args.anchors, rec)
-    return Ok({"success": True, "data": {"id": a["id"], "status": "retired", "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None})
+    return Ok({"success": True, "data": {"id": a["id"], "status": "retired", "changed": True,
+                                         "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None})
 
 
 def cmd_exclude(args) -> Result[dict, JudgeError]:
@@ -784,8 +837,9 @@ def cmd_exclude(args) -> Result[dict, JudgeError]:
     kept = [x for x in (exclude or []) if not (isinstance(x, dict) and x.get("item") == item)]
     removed = len(kept) != len(exclude or [])
     if args.remove:
-        if not removed:
-            return fail("VALIDATION.INPUT", f"{args.id} has no exclusion for {item}")
+        if not removed:  # nothing to remove: a no-op, not a failure; nothing is saved
+            return Ok({"success": True, "data": {"id": a["id"], "item": item, "removed": True, "changed": False,
+                                                 "exclude": a.get("exclude", []), "version": a.get("version", 1)}, "error": None})
         a["exclude"] = kept
         if not kept:
             del a["exclude"]
@@ -795,7 +849,7 @@ def cmd_exclude(args) -> Result[dict, JudgeError]:
         event = history_event("excluded", item=item, reason=reason, replaced=removed)
     a.setdefault("history", []).append(event)
     save_json(args.anchors, rec)
-    return Ok({"success": True, "data": {"id": a["id"], "item": item, "removed": bool(args.remove),
+    return Ok({"success": True, "data": {"id": a["id"], "item": item, "removed": bool(args.remove), "changed": True,
                                          "exclude": a.get("exclude", []), "version": a.get("version", 1)}, "error": None})
 
 
@@ -868,7 +922,7 @@ def exclusion_problems(aid: str, exclude) -> list:
     if exclude is None:
         return []
     if not isinstance(exclude, list):
-        return [f"{aid}: exclude must be a list of {{item, reason}} objects"]
+        return [f"{aid}: exclude must be a list of " "{item, reason} objects"]
     problems, seen = [], set()
     for n, x in enumerate(exclude):
         where = f"{aid}: exclude[{n}]"
@@ -1023,7 +1077,7 @@ def cmd_promote(args) -> Result[dict, JudgeError]:
 
 
 # --------------------------------------------------------------------------- #
-# item composition (from bd JSON; the script never runs bd)
+# item composition (from {{ tracker }} JSON; the script never runs {{ tracker }})
 # --------------------------------------------------------------------------- #
 SECTION_KEYS = tuple(k for k, _ in ITEM_SECTIONS)
 COMPOSE_FOR = {"plan": ("description", "acceptance_criteria"), "dev": SECTION_KEYS}  # plan: what Jev reads; verdicts matched the full text on 6/6 pairs
@@ -1046,15 +1100,15 @@ def demote_headings(body: str) -> str:
 
 
 def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeError]:
-    """Markdown item from bd JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
+    """Markdown item from {{ tracker }} JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
     if sections is not None:
         bad = [s for s in sections if s not in SECTION_KEYS]
         if bad:
             return fail("VALIDATION.INPUT", f"unknown section(s) {bad}; choose from {list(SECTION_KEYS)}")
     if isinstance(show, list):
         if len(show) != 1 or not isinstance(show[0], dict):
-            return fail("INPUT.MALFORMED", "bd show --json output must be a one-element array holding the bead object",
-                        action="Pass the unmodified output of `bd show <id> --json`.")
+            return fail("INPUT.MALFORMED", "{{ tracker }} show --json output must be a one-element array holding the bead object",
+                        action="Pass the unmodified output of `{{ tracker }} show <id> --json`.")
         show = show[0]
     if not isinstance(show, dict):
         return fail("INPUT.MALFORMED", "bead JSON must be an object or a one-element array")
@@ -1071,7 +1125,7 @@ def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeE
             sections_used.append(heading)
     if children is not None:
         if not isinstance(children, list):
-            return fail("INPUT.MALFORMED", "bd children --json output must be an array", action="Pass the unmodified output of `bd children <id> --json`.")
+            return fail("INPUT.MALFORMED", "{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %} output must be an array", action="Pass the unmodified output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`.")
         closed = [c for c in children if isinstance(c, dict) and c.get("status") == "closed"]
         if closed:
             rows = [f"- {c.get('id', '?')} {str(c.get('title') or '').strip()}: {str(c.get('close_reason') or '').strip()}".rstrip() for c in closed]
@@ -1082,13 +1136,13 @@ def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeE
 
 
 def cmd_compose_item(args) -> Result[dict, JudgeError]:
-    loaded = load_json(args.show_json, "bd show output")
+    loaded = load_json(args.show_json, "{{ tracker }} show output")
     if isinstance(loaded, Err):
         return loaded
     show = loaded.value
     children = None
     if args.children_json:
-        loaded = load_json(args.children_json, "bd children output")
+        loaded = load_json(args.children_json, "{% if tracker == "br" %}br show output (children){% elif tracker == "bd" %}bd children output{% endif %}")
         if isinstance(loaded, Err):
             return loaded
         children = loaded.value
@@ -1341,16 +1395,16 @@ def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, Judge
 
 
 def beads_from_json(obj, what: str) -> Result[list, JudgeError]:
-    """bd JSON in any of its shapes: one bead object, `bd show --json` (one-element array) or `bd children --json` (array)."""
+    """{{ tracker }} JSON in any of its shapes: one bead object, `{{ tracker }} show --json` (one-element array) or `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %}` (array)."""
     if isinstance(obj, dict):
         return Ok([obj])
     if isinstance(obj, list) and all(isinstance(b, dict) for b in obj):
         return Ok(obj)
-    return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified `bd show --json` / `bd children --json` output.")
+    return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified {% if tracker == "br" %}`br show --json`{% elif tracker == "bd" %}`bd show --json` / `bd children --json`{% endif %} output.")
 
 
 def load_beads(path: str, what: str) -> Result[list, JudgeError]:
-    """Read one bd JSON file and return its beads."""
+    """Read one {{ tracker }} JSON file and return its beads."""
     loaded = load_json(path, what)
     if isinstance(loaded, Err):
         return loaded
@@ -1450,11 +1504,11 @@ def cmd_shape(args) -> Result[Any, JudgeError]:
     if args.beads:
         d = pathlib.Path(args.beads)
         if not d.is_dir():
-            return fail("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `bd show --json` files.")
+            return fail("INPUT.MISSING", f"--beads directory not found: {args.beads}", action="Pass a directory of `{{ tracker }} show --json` files.")
         sources += [(str(f), f"bead file {f.name}") for f in sorted(d.glob("*.json"))]
     if args.children_json:
-        sources.append((args.children_json, "bd children output"))
-    sources += [(path, "bd show output") for path in args.show_json or []]
+        sources.append((args.children_json, "{% if tracker == "br" %}br show output (children){% elif tracker == "bd" %}bd children output{% endif %}"))
+    sources += [(path, "{{ tracker }} show output") for path in args.show_json or []]
     beads = []
     for path, what in sources:
         loaded = load_beads(path, what)
@@ -1978,8 +2032,8 @@ def confirm_enabled(args) -> bool:
 
 
 REMOTE_JUDGE_SETTING = ".sc/plan-anchor/settings.yaml"
-REPO_ROOT_HELP = ("any path inside the repository whose .sc/plan-anchor/settings.yaml holds allow_remote_judge "
-                  "(read for live Jev calls only; default .)")
+REPO_ROOT_HELP = ("any path inside the repository; the nearest .sc/plan-anchor/settings.yaml at or above it holds "
+                  "allow_remote_judge (read for live Jev calls only; default .)")
 REMOTE_JUDGE_SET = "python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false"
 
 
@@ -1992,10 +2046,12 @@ def remote_judge_consent(args, what: str) -> Result[None, JudgeError]:
     import plan_anchor_settings as settings  # lazy: dry runs and fixture answers stay stdlib-only
 
     start = pathlib.Path(getattr(args, "repository_root", "") or ".")
-    root = settings.find_repo_root(start)
+    root = settings.find_repo_root(start)  # consent is a repository's answer: outside one there is none
     if not root.ok:
         return Err(_from_tool_error(root.error))
-    answer = settings.remote_judge_consent(root.value)
+    # The nearest settings file at or above the given path wins (REQ-070), not the one at the git top level:
+    # an install in a folder inside the repository writes its settings there.
+    answer = settings.remote_judge_consent(start.resolve())
     if answer.ok and answer.value is True:
         return Ok(None)
     disabled = f"Sending plan text to TypeSafe is disabled. {what} would leave this machine."
@@ -2070,7 +2126,8 @@ def ask_jev_once(args, api_key: str, body: dict, questions: dict, fixture, fixtu
             if fx is not None:
                 break
         if fx is None:
-            return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_keys[0]} (or '*')")
+            return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_keys[0]} (or '*')",
+                        action=f"Add an entry for {fixture_keys[0]} (or '*') to the answers file.")
         checked = validate_response({"model": "fixture", "answers": fx}, questions)
         if isinstance(checked, Err):
             return checked
@@ -2104,7 +2161,8 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
     if ctx["answers_fixture"] is not None:
         fx = ctx["answers_fixture"].get(fixture_key(a)) or ctx["answers_fixture"].get("*")
         if fx is None:
-            return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_key(a)} (or '*')")
+            return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_key(a)} (or '*')",
+                        action=f"Add an entry for {fixture_key(a)} (or '*') to the answers file.")
         meta["attempts"] = 1
         checked = validate_response({"model": "fixture", "answers": fx}, qs["questions"])
         if isinstance(checked, Err):
@@ -2138,7 +2196,11 @@ def excluded_entry(a: dict, exclusion: dict, gate: str) -> dict:
 
 
 def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[tuple, JudgeError]:
-    """One Jev request per anchor. Returns Ok((results, requests_out, model_answered)); Err only for an ABORT_CODES error."""
+    """One Jev request per anchor. Returns Ok((results, requests_out, model_answered)); Err only for an ABORT_CODES error.
+
+    A cell whose Jev call produced no answer gets verdict ``error`` (a failed near-threshold confirmation keeps
+    the first verdict and records ``confirm_error``); ``cell_failures`` lists both, and the caller exits 2.
+    """
     results, requests_out, model_answered = [], [], None
     for a, qs, overridden in prepared:
         body = {"model": ctx["model"], "state": build_state(a, item), "questions": qs["questions"]}
@@ -2212,6 +2274,19 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         results.append(entry)
     results.sort(key=lambda r: (SEVERITY.get(r["verdict"] or "error", 99), r["anchor_id"]))
     return Ok((results, requests_out, model_answered))
+
+
+def cell_failures(results: list, label=lambda r: r["anchor_id"]) -> list:
+    """[(label, JudgeError)] for every judged cell whose Jev call produced no answer (first or confirming call)."""
+    out = []
+    for r in results:
+        for key, suffix in (("error", ""), ("confirm_error", " (confirmation)")):
+            e = r.get(key)
+            if not e or (key == "error" and r.get("verdict") != "error"):
+                continue  # a dry run's "does not fit" note is not a call
+            out.append((label(r) + suffix, JudgeError(e["code"], e["message"], recoverable=bool(e.get("recoverable")),
+                                                      action=e.get("suggested_action") or "")))
+    return out
 
 
 def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: list, requests_out: list, model_answered) -> dict:
@@ -2342,7 +2417,12 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
     results = results + [excluded_entry(a, exclusions[a["id"]], ctx["gate"]) for a in anchors if exclusions[a["id"]] is not None]
     results.sort(key=lambda r: (SEVERITY.get(r["verdict"] or "error", 99), r["anchor_id"]))
     run = assemble_run(ctx, rec, args.anchors, item, results, requests_out, model_answered)
-    write_run(run, args.out, default_run_dir(args))
+    path = write_run(run, args.out, default_run_dir(args))
+    # a dry run asks Jev nothing, so an unsendable request is reported in its cell, not as a Jev failure
+    failures = [] if ctx["dry_run"] else cell_failures(results)
+    if failures:  # the partial run is kept on disk; the command still could not do its job
+        judged = sum(1 for r in results if r["verdict"] not in ("excluded", "deterministic_only"))
+        return jev_failure("judged cells", failures, judged, run)  # data is the run as written (run_path, results, summary)
     return Ok({"success": True, "data": run, "error": None})
 
 
@@ -2389,6 +2469,8 @@ def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
                          "expected_ok": (verdict in FIXTURE_EXPECTED[kind]) if not ctx["dry_run"] and verdict != "deterministic_only" else None}
                 if results[0].get("error"):
                     check["error"] = results[0]["error"]
+                if results[0].get("confirm_error"):
+                    check["confirm_error"] = results[0]["confirm_error"]
                 if fixtures_dir is not None:
                     written.append(write_run(run, "", fixtures_dir))
                     check["run_path"] = run["run_path"]
@@ -2398,10 +2480,19 @@ def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
         return fail("FIXTURE.NONE", "no fixture sentences recorded on the selected anchors",
                     action="Add fixtures with `update --id ANC-NNN --fixture-pass ... --fixture-fail ...`.")
     mismatches = [f"{c['anchor_id']}:{c['kind']}:{c['index']}" for c in checks if c["expected_ok"] is False]
+    judged = sum(1 for c in checks if c["expected_ok"] is not None)
     data = {"gate": args.gate, "dry_run": ctx["dry_run"], "fixture": ctx["answers_fixture"] is not None,
-            "checks": checks, "mismatches": mismatches, "pass": not mismatches and not ctx["dry_run"],
+            "checks": checks, "mismatches": mismatches, "judged": judged,
+            # nothing judged (every check deterministic_only, or a dry run) is never a pass: no fixture was tested
+            "pass": not mismatches and not ctx["dry_run"] and judged > 0,
             "path": str(fixtures_dir) if fixtures_dir is not None else None,
             "run_path": str(fixtures_dir) if fixtures_dir is not None else None, "runs": written}
+    if judged == 0 and not ctx["dry_run"]:
+        data["note"] = ("no fixture was judged: every selected check is deterministic_only (a structural anchor at the plan "
+                        "gate is never sent to Jev), so pass is false; test these anchors with their deterministic_check")
+    failures = [] if ctx["dry_run"] else cell_failures(checks, lambda c: f"{c['anchor_id']}:{c['kind']}:{c['index']}")
+    if failures:
+        return jev_failure("fixture checks", failures, len(checks), data)
     if ctx["dry_run"]:
         data["requests"] = [b for r in runs for b in r.get("requests", [])]
         data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(encode_body(b)) for b in data["requests"]),
@@ -2453,7 +2544,7 @@ def cmd_lint(args) -> Result[dict, JudgeError]:
 def plan_item_ids(args) -> Result[Any, JudgeError]:
     """Plan item ids for the exclusion check: --plan-item (repeatable) plus --plan-items FILE; None when neither is given.
 
-    FILE is `bd show --json` / `br show --json` output (one record or a list, each with `id`) or a JSON list of ids.
+    FILE is `{{ tracker }} show --json` output (one record or a list, each with `id`) or a JSON list of ids.
     """
     ids = [i for i in (getattr(args, "plan_item", None) or []) if i]
     path = getattr(args, "plan_items", "")
@@ -2465,8 +2556,8 @@ def plan_item_ids(args) -> Result[Any, JudgeError]:
         if isinstance(obj, dict):
             obj = [obj]
         if not isinstance(obj, list) or not all(isinstance(x, str) or (isinstance(x, dict) and isinstance(x.get("id"), str)) for x in obj):
-            return fail("INPUT.MALFORMED", "plan items file must be bd/br show JSON or a list of item ids",
-                        action="Pass `bd show --json` or `br show --json` output, or a JSON array of ids.")
+            return fail("INPUT.MALFORMED", "plan items file must be {{ tracker }} show JSON or a list of item ids",
+                        action="Pass `{{ tracker }} show --json` output, or a JSON array of ids.")
         ids.extend(x if isinstance(x, str) else x["id"] for x in obj)
     if not ids and not path:
         return Ok(None)
@@ -2531,7 +2622,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                 return cleared
             api_key = cleared.value
         by_id = {a.get("id"): a for a in anchors}
-        requests_out = []
+        requests_out, failures = [], []
         for pair in pairs:
             a, b = by_id[pair["a"]], by_id[pair["b"]]
             body = {"model": args.model, "questions": qs["questions"], "state": {
@@ -2555,12 +2646,15 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                 if exc.code in ABORT_CODES:
                     return asked
                 pair["jev"] = {"choice": None, "confidence": None, "attempts": (exc.meta or {}).get("attempts"), "error": exc.to_json()["error"]}
+                failures.append((f"{pair['a']}|{pair['b']}", exc))
         if dry_run:
             data["requests"] = requests_out
             data["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
             data["likely_duplicates"] = [p for p in pairs if p["jaccard"] >= LIKELY_DUPLICATE_JACCARD]
         else:
             data["likely_duplicates"] = [p for p in pairs if p.get("jev") and p["jev"].get("choice") == "yes" and (p["jev"].get("confidence") or 0.0) >= DEFAULT_THRESHOLD]
+            if failures:  # an unanswered pair is not "not a duplicate"
+                return jev_failure("pairs", failures, len(pairs), data)
     else:
         data["likely_duplicates"] = [p for p in pairs if p["jaccard"] >= LIKELY_DUPLICATE_JACCARD]
     return Ok({"success": True, "data": data, "error": None})
@@ -2651,10 +2745,12 @@ def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: d
         if value is not None:
             break
     if value is None:
-        return fail("FIXTURE.MISSING", f"answers fixture has no entry for {keys[0]} (or '*')")
+        return fail("FIXTURE.MISSING", f"answers fixture has no entry for {keys[0]} (or '*')",
+                    action=f"Add an entry for {keys[0]} (or '*') to the answers file.")
     if isinstance(value, list):
         if index >= len(value):
-            return fail("FIXTURE.MISSING", f"answers fixture has no confirmation {index + 1} for {keys[0]}")
+            return fail("FIXTURE.MISSING", f"answers fixture has no confirmation {index + 1} for {keys[0]}",
+                        action=f"Give {keys[0]} one answer object per confirmation in the answers file.")
         value = value[index]
     return validate_response({"model": "fixture", "answers": value}, questions)
 
@@ -2713,7 +2809,7 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
         if isinstance(cleared, Err):
             return cleared
         api_key = cleared.value
-    entries, requests_out = [], []
+    entries, requests_out, failures = [], [], []
     for c in candidates:
         warnings = lint_statement(c["statement"], c["quote"], c.get("source_type") or "ANC")
         lint_errors = [w for w in warnings if w == LINT_VERBATIM or w in REQUIREMENT_FORM_WARNINGS]
@@ -2746,7 +2842,10 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             entry["verdict"] = "error"
             entry["failing"] = [f"error: {exc.code}"] + lint_errors
             entry["error"] = exc.to_json()["error"]
+            failures.append((str(c["id"]), exc))
         entries.append(entry)
+    if failures:  # a rubric that could not run is never needs_work, and `add --rubric` never records on it
+        return jev_failure("rubric candidates", failures, len(candidates), {"anchors": entries})
     return Ok((entries, requests_out))
 
 
@@ -2802,7 +2901,8 @@ def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Resul
     """`add --rubric`: judge the candidate before writing: Ok((entry, refusal)).
 
     refusal is an ANCHOR.NOT_TESTABLE JudgeError (reported as data.refused, exit 0) unless the rubric passed or
-    --allow-untestable was given, else None. Err only when the rubric could not run.
+    --allow-untestable was given, else None. Err when the rubric could not run (a Jev failure or a missing
+    answers entry): exit 2 and nothing is recorded, --allow-untestable or not.
     """
     loaded = load_answers_fixture(getattr(args, "answers_file", ""), "'candidate'")
     if isinstance(loaded, Err):
@@ -3163,7 +3263,7 @@ def build_parser() -> argparse.ArgumentParser:
     ln.add_argument("--anchors", required=True)
     ln.add_argument("--id", default="", help="one anchor id")
     ln.add_argument("--all", action="store_true", help="every non-retired anchor (the default when --id is not given)")
-    ln.add_argument("--plan-items", default="", help="bd/br show JSON or a JSON list of ids: warn on exclusions naming another item")
+    ln.add_argument("--plan-items", default="", help="{{ tracker }} show JSON or a JSON list of ids: warn on exclusions naming another item")
     ln.add_argument("--plan-item", action="append", help="a plan item id for the exclusion check; repeatable")
     ln.set_defaults(func=cmd_lint)
 
@@ -3212,9 +3312,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--adr", required=True)
     pr.set_defaults(func=cmd_promote)
 
-    ci = sub.add_parser("compose-item", help="build the labelled item text from bd JSON")
-    ci.add_argument("--show-json", required=True, help="output of `bd show <id> --json` (file, or - for stdin)")
-    ci.add_argument("--children-json", default="", help="output of `bd children <id> --json`; closed children are appended (ignored with --for plan)")
+    ci = sub.add_parser("compose-item", help="build the labelled item text from {{ tracker }} JSON")
+    ci.add_argument("--show-json", required=True, help="output of `{{ tracker }} show <id> --json` (file, or - for stdin)")
+    ci.add_argument("--children-json", default="", help="output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`; closed children are appended (ignored with --for plan)")
     ci.add_argument("--sections", default="", help=f"comma list from {list(SECTION_KEYS)}; default all non-empty sections")
     ci.add_argument("--for", dest="for_gate", choices=tuple(COMPOSE_FOR), default="",
                     help="plan: title, description and acceptance criteria (what Jev reads; identical verdicts to the full text, 2.6x fewer tokens); "
@@ -3234,9 +3334,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.set_defaults(func=cmd_agent_preflight)
 
     sh = sub.add_parser("shape", help="size and shape metrics of plan beads; informs, never gates")
-    sh.add_argument("--beads", default="", help="directory of `bd show --json` files")
-    sh.add_argument("--children-json", default="", help="output of `bd children <id> --json`: every child is shaped")
-    sh.add_argument("--show-json", action="append", help="output of `bd show <id> --json`; repeatable")
+    sh.add_argument("--beads", default="", help="directory of `{{ tracker }} show --json` files")
+    sh.add_argument("--children-json", default="", help="output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`: every child is shaped")
+    sh.add_argument("--show-json", action="append", help="output of `{{ tracker }} show <id> --json`; repeatable")
     sh.add_argument("--anchors", default="", help="anchors.json: report unknown ANC references and anchors no bead references")
     sh.add_argument("--max-code-lines", type=int, default=DEFAULT_MAX_CODE_LINES, help="chars_after_reduction reduces every fenced block longer than this (the plan gate's floor)")
     sh.add_argument("--format", choices=("json", "md"), default="json")
@@ -3270,8 +3370,27 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+CANCELED_EXIT = 130
+
+
+def canceled_envelope() -> dict:
+    """The interrupt envelope: typed like every error, plus the canceled / aborted_by flags."""
+    out = JudgeError("CANCELED", "interrupted before the command finished", recoverable=True,
+                     action="Rerun the command; a judge run is written only when it completes, so nothing partial was recorded.").to_json()
+    out.update({"canceled": True, "aborted_by": "user"})
+    return out
+
+
 def main(argv=None) -> int:
     """0 when the command ran (its outcome, negative or not, is in data); 2 when it could not; 130 on interrupt."""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        emit(canceled_envelope())
+        return CANCELED_EXIT
+
+
+def _main(argv=None) -> int:
     try:
         args = build_parser().parse_args(argv)
     except _UsageError as exc:
@@ -3280,9 +3399,6 @@ def main(argv=None) -> int:
     fmt = getattr(args, "format", "json")
     try:
         outcome = args.func(args)
-    except KeyboardInterrupt:
-        emit({"success": False, "canceled": True, "aborted_by": "user", "data": None, "error": None})
-        return 130
     except Exception as exc:  # noqa: BLE001 - a JSON error object beats a traceback for the calling agent
         emit(JudgeError("SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
                         action="Report this with the command line; check the JSON inputs against references/anchor-document.md.").to_json())
@@ -3295,5 +3411,10 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    utf8_stdio()
-    sys.exit(main())
+    try:
+        utf8_stdio()
+        code = main()
+    except KeyboardInterrupt:  # between the imports and main's own handler
+        emit(canceled_envelope())
+        code = CANCELED_EXIT
+    sys.exit(code)

@@ -108,7 +108,7 @@ class NoHomeDirectoryTests(Scratch):
         settings.parent.mkdir(parents=True)
         settings.write_text("schema_version: 1\n", encoding="utf-8")
         lock = root / ".sc" / "plan-anchor" / "install-lock.json"
-        lock.write_text("{}", encoding="utf-8")
+        lock.write_text('{"files": {".claude/skills/plan-anchoring/scripts/jev_judge.py": ""}}', encoding="utf-8")
         script = root / ".claude" / "skills" / "plan-anchoring" / "scripts" / "jev_judge.py"
         script.parent.mkdir(parents=True)
         script.write_text("", encoding="utf-8")

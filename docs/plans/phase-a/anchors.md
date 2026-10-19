@@ -37,6 +37,11 @@ Intent: `docs/plans/phase-a/intent.md`
 | ANC-029 | locked | Render planner feedback through checked-in sc-compose template | 2026-10-11 |
 | ANC-030 | locked | Require binary evidence-backed tuner disposition | 2026-10-11 |
 | ANC-031 | locked | Forbid pass-seeking retuning from planner pressure | 2026-10-11 |
+| ANC-032 | locked | Install names only its tracker | 2026-10-17 |
+| ANC-033 | locked | Tracker switch equals fresh install | 2026-10-17 |
+| ANC-034 | locked | Installed md and py rendered from .j2 | 2026-10-17 |
+| ANC-035 | locked | Plugin exposes only the installer | 2026-10-17 |
+| ANC-036 | locked | Global destinations refused | 2026-10-17 |
 
 ## ANC-001
 
@@ -660,3 +665,95 @@ Beads: anchor `pa-y6o`, plan questions `pa-y6o.1`, dev questions `pa-y6o.2`
 Fixtures:
 - pass: A planner asks to fix a question for a known plan defect; the tuner rejects the request as plan_violation and preserves the sealed question digest.
 - fail: A planner says the plan must pass, so the tuner weakens an accurate question until Jev returns pass.
+
+## ANC-032
+
+Anchor: A plan-anchor install rendered for one tracker must not name the other tracker as a whole word in any installed file except references/installation-and-troubleshooting.md.
+
+> I expect that installing 'bd' will ONLY have 'bd' commands in md files and scripts.  alternatively installing 'br' will ONLY have 'br' in md and scripts.
+
+bd and br should both be in installation & troubleshooting guide since  the install guide should explain how this switch works.
+
+Said by randlee, plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent), 2026-10-17. Status: locked. Version 2.
+
+Summary: Install names only its tracker
+
+Scope: changes install templates, the files install.py copies or renders, tracker-specific text or code in scripts, or the install guide
+
+Deterministic check to pair with the development gate: Fresh install.py run per tracker with --target claude,codex,cursor; grep -rnwI <other tracker> over .claude .codex .cursor .sc finds lines only in references/installation-and-troubleshooting.md (test_install.py::RealInstallTests.test_each_install_names_only_its_tracker).
+
+Fixtures:
+- pass: The sprint renders jev_judge.py from jev_judge.py.j2 so a br install's help text says 'br show --json' and never names bd.
+- fail: The sprint keeps scripts copied verbatim, so a br install's jev_judge.py still tells the user to run 'bd children'.
+
+## ANC-033
+
+Anchor: Rerunning install.py with the other --tracker over an existing install must leave a folder byte-identical to a fresh install of that tracker, in both directions.
+
+> installing 'br' then installing 'bd' on top of it will look EXACTLY the same as just installing 'bd' in an empty location.  likewise for the opposite.
+
+Said by randlee, plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent), 2026-10-17. Status: locked. Version 2.
+
+Summary: Tracker switch equals fresh install
+
+Scope: changes tracker switching, the lock file, settings writes, file ownership or removal, or rendering in install.py
+
+Deterministic check to pair with the development gate: Install br then bd (and bd then br) for every target and compare with a fresh install of the second tracker: identical file lists, bytes and modes, lock and settings included (test_install.py::RealInstallTests.test_switching_trackers_equals_a_fresh_install).
+
+Fixtures:
+- pass: The sprint checks that a br install switched to bd matches a fresh bd install byte for byte, lock and settings included, and the reverse.
+- fail: After a switch the old tracker's rendered scripts and settings comments stay behind, so the folder differs from a fresh install.
+
+## ANC-034
+
+Anchor: Every Markdown file and Python script that install.py installs must be rendered at install time from a <file>.md.j2 or <script>.py.j2 template under install/templates/.
+
+> I expect the markdown files and scripts are <file>.md.j2 and <script>.py.j2 and are rendered when installed.
+
+Said by randlee, plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent), 2026-10-17. Status: locked. Version 2.
+
+Summary: Installed md and py rendered from .j2
+
+Scope: adds, moves or copies an installed Markdown file or script, or changes how install.py renders or copies files
+
+Deterministic check to pair with the development gate: Every installed .md and .py traces to an install template whose frontmatter name starts with sc-plan-anchor- (test_install.py::RealInstallTests.test_every_installed_md_and_py_is_rendered_from_a_template, RenderingTests.test_every_prompt_source_is_a_template).
+
+Fixtures:
+- pass: Each script moves to scripts/<name>.py.j2 and install.py renders it for the selected tracker like every reference.
+- fail: The scripts stay plain .py files that install.py copies unchanged into every install.
+
+## ANC-035
+
+Anchor: The sc-plan-anchor plugin must expose only the plan-anchor-installer skill, with no loadable plan-anchoring skill and no agents.
+
+> the ENTIRE reason we changed to ONLY advertising plan-anchor-installer and hiding plan anchor was what I outlined above.
+
+Said by randlee, plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent), 2026-10-17. Status: locked. Version 2.
+
+Summary: Plugin exposes only the installer
+
+Scope: changes the plugin's skills/ or agents directories, plugin or marketplace manifests, or what the marketplace plugin ships
+
+Deterministic check to pair with the development gate: plugins/sc-plan-anchor/skills/ holds only plan-anchor-installer and no .claude, .codex, .cursor or skills/plan-anchoring tree exists in the plugin (test_install.py::RenderingTests.test_plugin_ships_only_the_installer_skill_and_no_rendered_tree).
+
+Fixtures:
+- pass: The marketplace plugin's skills/ directory holds only plan-anchor-installer; plan-anchoring and its agents exist only in per-folder installs.
+- fail: The plugin advertises the plan-anchoring skill and its agents again so a marketplace install can run the gates directly.
+
+## ANC-036
+
+Anchor: install.py must refuse a --dest inside the global ~/.claude, ~/.codex, ~/.cursor or ~/.agents folders with INSTALL.DEST_GLOBAL and write nothing.
+
+> we also block installing 'plan-anchor' in global .claude, .codex, .cursor, .agents folders
+
+Said by randlee, plan-anchor 0.8.2 tracker-pure installs (operator, relayed by the coordinating agent), 2026-10-17. Status: locked. Version 2.
+
+Summary: Global destinations refused
+
+Scope: changes install.py destination checks, plan_anchor_paths.global_location, or the installer skill's destination handling
+
+Deterministic check to pair with the development gate: install.py --dest ~/.claude (and .codex, .cursor, .agents and their subfolders) exits 2 with INSTALL.DEST_GLOBAL and leaves the tree unchanged (test_installer_skill.py::GlobalDestinationTests).
+
+Fixtures:
+- pass: install.py --dest ~/.codex exits 2 with INSTALL.DEST_GLOBAL and writes no file.
+- fail: install.py accepts --dest ~/.claude and writes a shared plan-anchoring skill there for every repository.
