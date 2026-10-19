@@ -63,10 +63,50 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
-| `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Export it in the shell that launches Claude Code, Codex, or Cursor |
+| `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Set it in the environment for local sessions and for cloud or remote agents (platform secrets); never commit it |
 | `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
+
+## Cloud and remote agents
+
+Plan-anchor is **installed per repository** (not globally): each repo carries its own tracker choice, Jev consent, rendered skill text, and gate agents. Commit and push the install with the repo so every clone — including workers that run away from your laptop — sees the same configuration.
+
+That model applies to **any cloud or remote agent** that checks out the repository and runs tools against it (hosted IDE agents, cloud coding agents, CI agents with an LLM step, self-hosted workers, and similar). Nothing here is specific to one vendor; the checklist is the same wherever the agent's environment is a git checkout plus a shell.
+
+**What travels in git (per repo).**
+
+- `.sc/plan-anchor/settings.yaml` — `anchor_tracker` (`br` or `bd`) and `allow_remote_judge` (policy, not a secret).
+- `.sc/plan-anchor/install-lock.json` — installed version and owned file list.
+- The harness tree you installed: `.claude/`, `.codex/`, and/or `.cursor/` (`skills/plan-anchoring/`, `agents/anchor-*.md`).
+- Anchors, plans, and run history under your repo (for example `doc/plan/.../anchors.json`).
+
+**What does not go in git.**
+
+- `TYPESAFE_API_KEY` — the only environment variable the scripts read. Configure it in the **remote environment** (platform secrets, worker env, or your host's secret injection). It must be present when `jev_judge.py` makes a live call.
+
+**Live Jev in cloud (same gate as local).**
+
+Both must be true before any live rubric, tuning, fixture check, or gate run sends text to TypeSafe:
+
+1. `TYPESAFE_API_KEY` is set in the agent's environment.
+2. The repository's committed settings file sets `allow_remote_judge: true`.
+
+If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED`) and send nothing. Consent is **repository policy** (committed once per repo); the key is **runtime credentials** (injected per environment). Offline commands (`--dry-run`, `--answers-file`, lint, render) still work without the key.
+
+**Runtime the worker must provide.**
+
+- A checkout that includes the vendored install above (gates refuse the marketplace plugin copy with `VALIDATION.PATH`; they use the nearest `.../skills/plan-anchoring/scripts/jev_judge.py` under the working tree).
+- `python3` 3.9+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
+- Outbound HTTPS to the Jev endpoint (see the installed `references/jev-api.md`).
+
+**Operational notes.**
+
+- Install into the **repository root** (or a parent folder you actually open as the workspace) so skill discovery and nearest-install trust match where the agent runs.
+- Parent-folder installs and per-repo overrides follow the same rules as on a local machine: nearest `.sc/plan-anchor/settings.yaml` wins; tracker must match each repo's `.beads/` layout.
+- Gate subagents are the **installed** agent definitions under `.claude/agents/`, `.codex/agents/`, or `.cursor/agents/` in that tree — not the marketplace plugin bundle.
+
+For PATH, GUI-launched hosts, and Codex shell policy around `TYPESAFE_API_KEY`, see the installed `references/installation-and-troubleshooting.md`.
 
 ## Quick start
 
@@ -92,7 +132,7 @@ python3 $S report --run doc/plan/phase-current/anchor-runs/<run>.json --format m
 python3 $S coverage --runs doc/plan/phase-current/anchor-runs --gate plan --format md
 ```
 
-In a Claude Code, Codex, or Cursor session the skill does this for you: say "anchor this" or "lock this" while planning, then "run the planning gate on the sprint 2 beads" or "review sprint 2 against the anchors". Claude Code invokes Sonnet gate agents and an Opus tuner from the plugin's `.claude/agents/`; Codex invokes Luna gate agents and a Sol tuner from `.codex/agents/`. Claude uses the Agent tool, never the Task tool. Cursor invokes Composer gate agents and a Grok-high tuner from `.cursor/agents/` through the Task tool, with no model override.
+In a Claude Code, Codex, or Cursor session the installed skill does this for you: say "anchor this" or "lock this" while planning, then "run the planning gate on the sprint 2 beads" or "review sprint 2 against the anchors". Claude Code invokes Sonnet gate agents and an Opus tuner from the install folder's `.claude/agents/`; Codex invokes Luna gate agents and a Sol tuner from `.codex/agents/`. Claude uses the Agent tool, never the Task tool. Cursor invokes Composer gate agents and a Grok-high tuner from `.cursor/agents/` through the Task tool, with no model override.
 
 ## What you get back
 
