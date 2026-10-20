@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.8.3
+version: 0.8.4
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: opus
 color: purple

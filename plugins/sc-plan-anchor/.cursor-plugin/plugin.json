@@ -1,7 +1,7 @@
 {
   "name": "sc-plan-anchor",
   "displayName": "Plan Anchor",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Install plan-anchor (Jev-backed anchors and gates that keep plans and delivered work aligned) into a repository or a parent folder, rendered for br or bd.",
   "author": {
     "name": "randlee"

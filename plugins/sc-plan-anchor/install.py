@@ -14,68 +14,105 @@
     uv run install.py --dest <folder> --status     # read-only: installed vs installer version
 
 The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
-this script. Everything the script reads is inside this plugin directory.
+this script.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
 sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
 header pins 3.11 (uv downloads it when needed); the code itself runs on
 Python 3.9+, so ``python3 install.py`` works wherever both packages import.
 
-Destination. Any folder: a repository, or a parent folder holding many
-repositories (they inherit it: the gates walk up from the working directory to
-the nearest install, and the nearest settings file wins). Global harness
-locations are refused with ``INSTALL.DEST_GLOBAL``: the home directory itself,
-anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``, ``~/.agents``,
-``/etc/codex`` or Claude Code's managed-settings directory
+What it reads:
+  - Its package files, under this plugin directory: ``plugin.json`` (the
+    version), the templates and verbatim assets under ``install/templates/``,
+    the harness frontmatter and registries under ``install/harness/`` and
+    ``install/legacy-owned.json``.
+  - At and above the destination: the destination's
+    ``.sc/plan-anchor/settings.yaml`` or, when that sets no ``anchor_tracker``,
+    the nearest one above it (the nearest wins; ``allow_remote_judge`` is read
+    only from the destination's own file); the destination's
+    ``.sc/plan-anchor/install-lock.json`` (when it has none, ``--status``
+    reports the nearest one above); ``.beads/`` and its ``metadata.json`` (the tracker /
+    Dolt check), at the destination or else at the repository it sits in;
+    ``.git``, only whether it exists, to find the repository root (git is
+    never run); and the files already at the install paths, to check
+    ownership.
+  - The home directory (``HOME``, else the password database; on Windows
+    ``USERPROFILE`` or ``HOMEDRIVE`` + ``HOMEPATH``), to refuse global destinations and to end
+    each upward walk before it (at the filesystem root when it is unknown).
+  - ``PATH``, to find the chosen tracker's CLI (``TRACKER.CLI_MISSING``).
+
+What it runs: sc-compose and PyYAML are imported as Python libraries, never
+run as commands. The only external command is ``br init``, with ``--init-br``
+when there is no ``.beads/``; it never runs git or bd's init.
+
+Destination. Any folder: a repository, a folder inside one, or a parent folder
+holding many repositories (they inherit it: the gates walk up from the working
+directory to the nearest install, and the nearest settings file wins). Global
+harness locations are refused with ``INSTALL.DEST_GLOBAL``: the home directory
+itself, anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``,
+``~/.agents``, ``/etc/codex`` or Claude Code's managed-settings directory
 (which covers every plugin cache), and this plugin's own directory.
 
-What it writes, per target (default ``claude``):
+What it writes, per target (default ``claude``; a rerun keeps every target the
+lock records):
   <dest>/.<target>/skills/plan-anchoring/...   the skill (and registry.yaml for the agents)
   <dest>/.<target>/agents/anchor-*.md          the agents
+and once per destination:
   <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
-                                               ``allow_remote_judge`` when a flag gives it
+                                               ``allow_remote_judge`` when a flag gives it;
+                                               written when either value changes
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
+  <dest>/.backup/<UTC>/<path>                  files ``--overwrite`` moved aside, and
+  <dest>/.backup/.gitignore                    ``*``, so the backups are not committed
+  <repository>/.beads/                         created by ``br init`` (``--init-br``)
 
 Tracker text. Every installed Markdown file and script (SKILL.md, every
 reference, the .md assets, every agent body and every ``scripts/*.py``) is an
 sc-compose template under ``install/templates/`` (``<file>.md.j2``,
-``<script>.py.j2``) that renders strictly for ``br`` or ``bd``, so an installed
-copy names one tracker; only the installation-and-troubleshooting reference
-explains both and how to switch. Schemas, JSON assets and the skill's runtime
-``templates/*.md.j2`` (sc-compose inputs the skill renders at run time) are
-copied verbatim. A ``.j2`` file is an install-time template when its
-frontmatter ``name`` starts with ``sc-plan-anchor-``. Agent
-frontmatter per harness lives in ``install/harness/<target>/agents/``, the
-agent registry in ``install/harness/<target>/registry.yaml``.
+``<script>.py.j2``) that renders strictly for the one chosen tracker, ``br`` or
+``bd``, so an installed copy names one tracker; only the
+installation-and-troubleshooting reference explains both and how to switch.
+Schemas, JSON assets and the skill's runtime ``templates/*.md.j2`` (sc-compose
+inputs the skill renders at run time) are copied verbatim. A ``.j2`` file is
+an install-time template when its frontmatter ``name`` starts with
+``sc-plan-anchor-``. Agent frontmatter per harness lives in
+``install/harness/<target>/agents/``, the agent registry in
+``install/harness/<target>/registry.yaml``.
 
 Tracker choice follows ``anchor_tracker.py``'s rules for both trackers (the
-installed copy knows only its own): ``--tracker``, else the
-destination's settings file, else detection (a Dolt-backed ``.beads/`` is bd,
-anything else br). bd needs a Dolt-backed ``.beads/``; br needs one that is not.
-A repository with no ``.beads/`` fails unless ``--init-br`` runs ``br init``;
-it never runs bd's init. A folder that is not a repository and has no
-``.beads/`` (a parent folder) needs ``--tracker`` (or its settings file); each
-child repository's ``.beads/`` is checked against it when the gates resolve the
-tracker there. Rerunning with another ``--tracker`` re-renders every installed
-target and updates the setting; it never migrates issue data.
+installed copy knows only its own): ``--tracker``, else the settings file
+(the destination's, else the nearest above), else detection (a Dolt-backed
+``.beads/`` is bd, anything else br). bd needs a Dolt-backed ``.beads/``; br
+needs one that is not. A repository with no ``.beads/`` fails unless
+``--init-br`` runs ``br init`` (at the repository root). A folder that is not a repository and has no ``.beads/`` (a parent
+folder) needs ``--tracker`` (or a settings file); each child repository's
+``.beads/`` is checked against it when the gates resolve the tracker there.
+Rerunning with another ``--tracker`` re-renders every installed target and
+updates the setting; it never migrates issue data.
 
 Remote judging. ``--allow-remote-judge`` / ``--no-remote-judge`` record the
 user's answer to whether plan text may be sent to TypeSafe (Jev) as
 ``allow_remote_judge: true|false``; live Jev calls are refused until it is
-``true``. Without either flag the existing value (or its absence) is kept.
+``true``. Without either flag the destination's existing value (or its
+absence) is kept; a parent folder's consent is never copied.
 
 Ownership. A rerun (the upgrade path) replaces a file only when its bytes are
 what the lock says this installer wrote; it removes files this version no
 longer ships when they are unchanged; it fails naming a modified or foreign
-file unless ``--overwrite`` moves it to ``<dest>/.backup/<UTC>/<path>``. A
-repository vendored before the lock existed is migrated once: a file is owned
-when its bytes match something an earlier version shipped
-(``install/legacy-owned.json``). Every check runs before anything is written;
-``--dry-run`` stops there.
+file (``INSTALL.CONFLICT``) unless ``--overwrite`` moves it to
+``<dest>/.backup/<UTC>/<path>``. A repository vendored before the lock existed
+is migrated once: a file is owned when its bytes match something an earlier
+version shipped (``install/legacy-owned.json``) or this version renders for
+either tracker. Every check runs before anything is written; ``--dry-run``
+stops there.
+
+The plugin's SessionStart hook (``hooks/check_install.py``) is registered for
+Claude Code only; the Codex and Cursor manifests declare no hooks.
 
 Output: the JSON envelope ``{success, data, error}``; exit 0 when the command
-ran (``--status`` included, whatever it found), 2 on any error (an unexpected
-exception is ``SCRIPT.INTERNAL``), 130 on an interrupt (code ``CANCELED``).
+ran, with negative results in ``data`` (``--status`` included, whatever state
+it found); 2 with a typed ``error.code`` on any error (an unexpected exception
+is ``SCRIPT.INTERNAL``); 130 on an interrupt (code ``CANCELED``).
 """
 
 from __future__ import annotations

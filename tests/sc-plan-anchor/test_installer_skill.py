@@ -433,7 +433,7 @@ class InstallerSkillTextTests(unittest.TestCase):
 
 @needs_wheel
 class SelfContainedPluginTests(Scratch):
-    """Everything install.py reads is inside the plugin directory: a lone copy of it installs the same bytes."""
+    """Every package file install.py reads is inside the plugin directory: a lone copy of it installs the same bytes."""
 
     def test_a_copy_of_the_plugin_alone_installs(self):
         copy = self.tmp / "cache" / "sc-plan-anchor"

@@ -408,9 +408,12 @@ Decision:
 - **Plugin.** The marketplace plugin's only skill is `plan-anchor-installer`;
   it registers no agents (see Single-tracker installs for why). The skill runs `uv run
   "${CLAUDE_PLUGIN_ROOT}/install.py"`. The installer reads its package files
-  from the plugin directory and, at the destination and above it, the
-  settings file, the install lock, `.beads/` and whether `.git` exists; it
-  never runs git and runs only `br init` (on `--init-br`). It first runs `install.py --dest <folder>
+  from the plugin directory; at the destination and above it, the settings
+  file, the install lock, `.beads/`, whether `.git` exists and the files
+  already at the install paths; the home directory (to refuse global
+  destinations and end the upward walks); and `PATH` (to find the tracker
+  CLI). sc-compose and PyYAML run in-process; it never runs git and runs only
+  `br init` (on `--init-br`). It first runs `install.py --dest <folder>
   --status` (read-only; `data.state` is `not_installed`, `older`, `current` or
   `newer`, and it stops on `newer`), asks the user once for a setting the
   folder does not record (tracker; remote-judge consent), never infers
