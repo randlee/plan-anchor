@@ -2,7 +2,7 @@
 name: plan-anchor-installer
 description: Install or upgrade plan-anchor (the plan-anchoring skill and its anchor-plan-review, anchor-sprint-review and anchor-tuning agents) into a repository or a parent folder of repositories, rendered for one anchor tracker (br or bd). Use when the user asks to install, set up, upgrade, reinstall or switch the tracker of plan-anchor or plan anchoring, or when the session-start notice says a newer plan-anchor is available. Never installs globally.
 metadata:
-  version: "0.8.4"
+  version: "0.8.5"
 ---
 
 # plan-anchor installer
@@ -13,16 +13,23 @@ user names by running `install.py`, which sits in this plugin's directory
 
 The installer reads its templates, harness frontmatter and verbatim assets from
 the plugin directory. From the folder and the folders above it, it reads
-`.sc/plan-anchor/settings.yaml` (the folder's own, else the nearest above), the
-install lock `.sc/plan-anchor/install-lock.json`, `.beads/` (the tracker and
-Dolt check), whether `.git` exists (to find the repository root; it never runs
-git) and the files already at the install paths. It reads the home directory
-only to refuse global folders and to stop its upward walks, and `PATH` to find
-`br` or `bd`. It renders every Markdown file and script for the one tracker
-you pass with `--tracker br|bd` (sc-compose runs in-process) and copies the verbatim assets.
+`.sc/plan-anchor/settings.yaml` (the folder's own, else the nearest above),
+`.beads/` (the tracker and Dolt check) and whether `.git` exists (to find the
+repository root; it never runs git). In the folder only, it reads the install
+lock `.sc/plan-anchor/install-lock.json` (only `--status` also reports the
+nearest lock above) and the files already at the install paths, under
+`.<target>/skills/plan-anchoring/` and, on a first upgrade of a hand-vendored
+copy, at paths earlier versions shipped. It reads the home directory only to
+refuse global folders and to stop its upward walks, and `PATH` to find `br` or
+`bd`. It renders every Markdown file and script for one tracker, `br` or `bd`
+(sc-compose runs in-process), and copies the verbatim assets. Without
+`--tracker` the installer takes the tracker from the settings file, else
+detects it from `.beads/`; this skill always passes `--tracker`.
 It writes `.<target>/skills/plan-anchoring/` and `.<target>/agents/`, the lock,
-the settings file and, with `--overwrite`, `.backup/<UTC>/` and
-`.backup/.gitignore`. The only command it runs is `br init`, with `--init-br`.
+the settings file, `.beads/` (with `--init-br`, through `br init`) and, with
+`--overwrite`, `.backup/<UTC>/` and `.backup/.gitignore`; it removes unchanged files
+this version no longer ships. The only command it runs is
+`br init`, with `--init-br`.
 
 ## 1. Pick the folder and report versions
 

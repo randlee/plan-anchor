@@ -473,8 +473,8 @@ Decision:
   without migrating issue data. Every check runs before anything is written;
   `--dry-run` stops there.
 - **SessionStart hook.** `hooks/hooks.json` registers `hooks/check_install.py`
-  (standard library) for SessionStart, in Claude Code only; the Codex and
-  Cursor manifests declare no hooks. It prints one line when the nearest
+  (standard library) for SessionStart. Claude Code runs it; Codex and
+  Cursor plugin hook discovery is untested. It prints one line when the nearest
   lock is older than the plugin (`plan-anchor <installed> installed,
   <available> available: run plan-anchor-installer (<folder>)`) and is
   otherwise silent (no lock, current or newer, unreadable). It writes nothing,

@@ -3,7 +3,8 @@
 Every case runs a real process. ``judge``, ``check-fixtures``, ``dedupe --jev``,
 ``rubric`` and ``add --rubric`` exit 2 with the typed envelope when any cell, pair
 or candidate has no answer, and keep the partial work in ``data``. Live failures
-use a closed local port (127.0.0.1:9) with a dummy key in the child only, and
+use a refused connection (``urlopen`` patched to raise it; ``JEV_URL`` still points
+at the closed local port 127.0.0.1:9) with a dummy key in the child only, and
 consent recorded in a scratch repository; fixture failures use answers files. Jev
 is never called. Refusals and no-ops exit 0; run files are redacted; every CLI
 prints a CANCELED envelope and exits 130 on interrupt.
@@ -16,7 +17,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 from layout_support import PLUGIN, SCRIPTS
@@ -25,16 +25,41 @@ from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubri
 JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "Sprint 2 copies the legacy runtime crates into crates/runtime and deletes the legacy-specific modules.\n"
-DUMMY_KEY = "sk-test-closed-port-0000"  # never a real key: the only URL it can reach is a closed local port
-# jev_judge.main with JEV_URL pointed at a closed local port (the connection is refused) and no back-off sleep;
-# the retries themselves still run. argv[1] is the scripts directory, the rest is the command line.
-CLOSED_PORT_RUNNER = (
-    "import sys\n"
+DUMMY_KEY = "sk-test-closed-port-0000"  # never a real key: nothing is ever sent with it
+# jev_judge.main with every Jev call refused and no back-off sleep; the retries themselves still run. urlopen
+# raises the refusal itself, so the result never depends on what listens on port 9 or how a firewall answers;
+# JEV_URL still names a closed local port, so even an unpatched call could not leave the host.
+# argv[1] is the scripts directory, the rest is the command line.
+REFUSED_RUNNER = (
+    "import errno, sys, urllib.error, urllib.request\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
+    "def refused(*args, **kwargs):\n"
+    "    raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused'))\n"
+    "urllib.request.urlopen = refused\n"
     "jev_judge.JEV_URL = 'http://127.0.0.1:9/v1/systemone'\n"
     "jev_judge._sleep = lambda seconds: None\n"
     "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
+)
+# Runs a CLI as __main__ and interrupts it exactly where it reads one input file: the first Path.read_text of
+# argv[2] sends SIGINT to the process itself. kill() to the calling single-threaded process delivers the
+# signal before it returns, so Python's SIGINT handler raises KeyboardInterrupt at the next bytecode, inside
+# that read. If the signal is ignored or lost, the runner exits 3 instead, and the test fails on the exit code.
+# argv[1] is the CLI script, argv[2] the input file, the rest is the CLI's command line.
+INTERRUPT_RUNNER = (
+    "import os, pathlib, runpy, signal, sys\n"
+    "script, target = sys.argv[1], os.path.realpath(sys.argv[2])\n"
+    "real_read_text = pathlib.Path.read_text\n"
+    "def read_text(self, *args, **kwargs):\n"
+    "    if os.path.realpath(self) == target:\n"
+    "        os.kill(os.getpid(), signal.SIGINT)\n"
+    "        sys.stderr.write('SIGINT was not delivered\\n')\n"
+    "        os._exit(3)\n"
+    "    return real_read_text(self, *args, **kwargs)\n"
+    "pathlib.Path.read_text = read_text\n"
+    "sys.argv = [script, *sys.argv[3:]]\n"
+    "sys.path.insert(0, os.path.dirname(script))\n"
+    "runpy.run_path(script, run_name='__main__')\n"
 )
 try:
     import yaml  # noqa: F401 - consent lives in settings.yaml, which the settings module reads with PyYAML
@@ -71,7 +96,7 @@ class ProcessCase(unittest.TestCase):
 
     def run_jj(self, *argv, live=False, env=None):
         if live:
-            cmd = [sys.executable, "-c", CLOSED_PORT_RUNNER, str(SCRIPTS), *argv]
+            cmd = [sys.executable, "-c", REFUSED_RUNNER, str(SCRIPTS), *argv]
             environment = child_env(TYPESAFE_API_KEY=DUMMY_KEY, **(env or {}))
         else:
             cmd = [sys.executable, str(JJ), *argv]
@@ -259,53 +284,35 @@ class RunFileRedaction(ProcessCase):
         self.assert_redacted(self.judge("--dry-run"), "debug: TYPESAFE_API_KEY=")
 
 
-@unittest.skipUnless(hasattr(os, "mkfifo"), "the interrupt is timed with a FIFO the command blocks on (POSIX)")
-class Interrupts(unittest.TestCase):
-    """SIGINT while a command waits on input: the CANCELED envelope on stdout and exit 130, from each CLI."""
+def _default_sigint():
+    """In the child before exec: a parent that ignores SIGINT (a background ``&`` job) would pass the ignore on,
+    and Python then installs no KeyboardInterrupt handler."""
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    def interrupt(self, argv, fifo_rel, env=None, git=False, files=None):
+
+@unittest.skipUnless(os.name == "posix", "the runner signals itself with os.kill and the child resets SIGINT (POSIX)")
+class Interrupts(unittest.TestCase):
+    """SIGINT while a command reads its input: the CANCELED envelope on stdout and exit 130, from each CLI.
+
+    Each CLI runs under INTERRUPT_RUNNER, which raises SIGINT inside the read of ``input_rel``; nothing is timed.
+    """
+
+    def interrupt(self, argv, input_rel, env=None, git=False, files=None):
         with tempfile.TemporaryDirectory() as td:
             d = Path(td).resolve()
             if git:
                 subprocess.run(["git", "init", "-q", str(d)], check=True)
             for name, value in (files or {}).items():
                 (d / name).write_text(json.dumps(value), encoding="utf-8")
-            fifo = d / fifo_rel
-            fifo.parent.mkdir(parents=True, exist_ok=True)
-            os.mkfifo(str(fifo))
-            argv = [str(a).replace("{FIFO}", str(fifo)) for a in argv]
-            proc = subprocess.Popen([sys.executable, *argv], cwd=str(d), env=child_env(**(env or {})),
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
-            writer, deadline = None, time.monotonic() + 30
-            while writer is None and time.monotonic() < deadline and proc.poll() is None:
-                try:  # succeeds only once the command has opened the FIFO for reading, i.e. it is blocked on it
-                    writer = os.open(str(fifo), os.O_WRONLY | os.O_NONBLOCK)
-                except OSError:
-                    time.sleep(0.02)
-            try:
-                if writer is None:
-                    out, err = proc.communicate(timeout=30)
-                    self.fail(f"{argv[0]} never opened {fifo_rel}: exit {proc.returncode} {out} {err}")
-                # The FIFO is open, so the command is in or about to enter its blocking read. A signal that lands
-                # between open() returning and read() starting is only noticed at the next bytecode, which a
-                # blocking read never reaches; wait first, and repeat the signal if the command is still blocked.
-                out = err = None
-                for _ in range(3):
-                    time.sleep(0.2)
-                    proc.send_signal(signal.SIGINT)
-                    try:
-                        out, err = proc.communicate(timeout=10)
-                        break
-                    except subprocess.TimeoutExpired:
-                        continue
-                if out is None:
-                    self.fail(f"{argv[0]} did not exit after SIGINT")
-            finally:
-                if writer is not None:
-                    os.close(writer)
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.communicate()
+            target = d / input_rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}\n", encoding="utf-8")
+            script, *rest = argv
+            rest = [str(a).replace("{INPUT}", str(target)) for a in rest]
+            proc = subprocess.run([sys.executable, "-c", INTERRUPT_RUNNER, str(script), str(target), *rest], cwd=str(d),
+                                  env=child_env(**(env or {})), preexec_fn=_default_sigint, capture_output=True,
+                                  text=True, encoding="utf-8", timeout=120)  # a hang guard only
+        out, err = proc.stdout, proc.stderr
         self.assertEqual(proc.returncode, 130, out + err)
         envelope = json.loads(out)
         self.assertEqual((envelope["success"], envelope["data"]), (False, None))
@@ -314,16 +321,16 @@ class Interrupts(unittest.TestCase):
         self.assertNotIn("Traceback", err)
 
     def test_jev_judge(self):
-        # a dry-run judge blocks reading its item from the FIFO: no settings file, no PyYAML, no request is ever built
+        # a dry-run judge is interrupted reading its item: no settings file, no PyYAML, no request is ever built
         self.interrupt([JJ, "judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "ex-42",
-                        "--item-file", "{FIFO}", "--run-dir", "runs", "--dry-run"], "item.txt", git=True,
+                        "--item-file", "{INPUT}", "--run-dir", "runs", "--dry-run"], "item.txt", git=True,
                        files={"anchors.json": record(anchor())})
 
     def test_anchor_runner_contract(self):
-        self.interrupt([SCRIPTS / "anchor_runner_contract.py", "validate-fence", "--kind", "request", "--file", "{FIFO}"], "f.md")
+        self.interrupt([SCRIPTS / "anchor_runner_contract.py", "validate-fence", "--kind", "request", "--file", "{INPUT}"], "f.md")
 
     def test_anchor_tuning_contract(self):
-        self.interrupt([SCRIPTS / "anchor_tuning_contract.py", "request", "{FIFO}"], "r.json")
+        self.interrupt([SCRIPTS / "anchor_tuning_contract.py", "request", "{INPUT}"], "r.json")
 
     @unittest.skipUnless(HAVE_YAML, "the settings file is read with PyYAML")
     def test_plan_anchor_settings(self):

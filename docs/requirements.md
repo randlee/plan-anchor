@@ -334,9 +334,9 @@ Verified (0.8.3): `test_subfolder_and_trust.py::SubfolderInstall.test_install_in
 Source: OPERATOR; ADR-015. Status: shipped.
 Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_resolves_real_claude_and_codex_registries`, `test_error_contracts.py::RunnerContractErrorContracts.test_resolve_error_envelopes` (the `--plugin-root` alias only on an error path).
 
-**REQ-072** A SessionStart hook (registered for Claude Code only; the Codex and Cursor manifests declare no hooks) shall print one line when the nearest install lock is older than the plugin and otherwise stay silent (no lock, current or newer, or anything unreadable); it shall write nothing, use no network and exit 0.
+**REQ-072** A SessionStart hook (`hooks/hooks.json`; Claude Code runs it; Codex and Cursor plugin hook discovery is untested) shall print one line when the nearest install lock is older than the plugin and otherwise stay silent (no lock, current or newer, or anything unreadable); it shall write nothing, use no network and exit 0.
 Source: OPERATOR; ADR-015. Status: shipped.
-Verified: `test_installer_skill.py::SessionStartHookTests` (all). Claude-only registration is untested.
+Verified: `test_installer_skill.py::SessionStartHookTests` (all). Which harnesses discover and run the hook is untested.
 
 **REQ-073** Every plan-anchor CLI and the SessionStart hook shall read and write UTF-8 on stdin, stdout and stderr on every platform, and the nearest-install, settings and lock lookups, the global-location refusal and `install.py`'s destination check shall work when the home directory cannot be determined (the walk then ends at the filesystem root; a `--dest` starting with `~` is `INSTALL.DEST`).
 Source: OPERATOR (0.8.1). Status: shipped.

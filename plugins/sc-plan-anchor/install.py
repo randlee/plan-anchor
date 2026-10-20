@@ -34,8 +34,12 @@ What it reads:
     reports the nearest one above); ``.beads/`` and its ``metadata.json`` (the tracker /
     Dolt check), at the destination or else at the repository it sits in;
     ``.git``, only whether it exists, to find the repository root (git is
-    never run); and the files already at the install paths, to check
-    ownership.
+    never run); the files already at the install paths and at the paths the
+    lock records, to check ownership; every file under each existing
+    ``.<target>/skills/plan-anchoring/`` (read when the lock records none
+    there, to spot a foreign directory, and listed to warn about stray
+    files); and, with no lock (a migration), the paths earlier versions
+    shipped (``install/legacy-owned.json``).
   - The home directory (``HOME``, else the password database; on Windows
     ``USERPROFILE`` or ``HOMEDRIVE`` + ``HOMEPATH``), to refuse global destinations and to end
     each upward walk before it (at the filesystem root when it is unknown).
@@ -106,8 +110,8 @@ version shipped (``install/legacy-owned.json``) or this version renders for
 either tracker. Every check runs before anything is written; ``--dry-run``
 stops there.
 
-The plugin's SessionStart hook (``hooks/check_install.py``) is registered for
-Claude Code only; the Codex and Cursor manifests declare no hooks.
+The plugin's SessionStart hook (``hooks/hooks.json``, ``hooks/check_install.py``):
+Claude Code runs it; Codex and Cursor plugin hook discovery is untested.
 
 Output: the JSON envelope ``{success, data, error}``; exit 0 when the command
 ran, with negative results in ``data`` (``--status`` included, whatever state

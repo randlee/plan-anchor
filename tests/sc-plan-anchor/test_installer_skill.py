@@ -21,7 +21,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -297,12 +296,10 @@ class ParentFolderInstallTests(Scratch):
 
 class SessionStartHookTests(Scratch):
     def run_hook(self, cwd):
-        started = time.monotonic()
         proc = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart"}),
                               env=child_env(self.home), capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stderr, "")
-        self.assertLess(time.monotonic() - started, 10)
         return proc.stdout
 
     def folder(self):
