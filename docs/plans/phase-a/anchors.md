@@ -349,19 +349,20 @@ Anchor: The plan-anchoring gate must accept both a Markdown plan and its copy in
 
 > You should be able to run the /plan-anchor skill both against the md plan and against a copy of the plan in br database
 
-Said by randlee, plan-anchor Phase A dogfood correction; live rubric pending explicit TypeSafe payload approval, 2026-10-10. Status: locked. Version 7.
+Said by randlee, plan-anchor Phase A dogfood correction; live rubric pending explicit TypeSafe payload approval, 2026-10-10. Status: locked. Version 8.
 
 Summary: Dual plan sources
 
 Scope: changes plan-source selection, sprint discovery, item composition, source digests, planning-gate invocation, or source parity tests
 
-Deterministic check to pair with the development gate: Materialize the Phase A Markdown sprints and their br copies, assert identical ordered request digests, require both recorded-answer parity and independent live passing results, and classify differing live answers as model instability.
+Deterministic check to pair with the development gate: The calling agent reads the sprint text from the Markdown file or from its `br` or `bd` tracker copy and passes it to `jev_judge.py judge --item-id --item-title --item-file` (or stdin); `FreeFormSprintDryRunTests.test_free_form_sprint_builds_a_request_at_both_gates` asserts that a dry run at both the plan and dev gates sends that text unchanged as `state.item.text`, and `GatePromptTests.test_both_gates_take_the_callers_text_as_item_file` and `GatePromptTests.test_no_gate_references_plan_source_descriptors_or_discovery` assert that neither gate parses, discovers or normalizes plans.
 
 Beads: anchor `pa-bxu`, plan questions `pa-bxu.1`, dev questions `pa-bxu.2`
 
 Fixtures:
-- pass: The Markdown and br-copy adapters normalize Sprint A2 to the same request digest, pass independently, and reserve exact verdict equality for recorded-answer parity.
-- fail: The skill can review only tracker issue bodies and rejects the equivalent Markdown sprint file.
+- pass: The calling agent passes Sprint A2 through `judge --item-file` whether it read the text from the Markdown sprint file or from the `br` or `bd` tracker copy, and both gates judge that text the same way with no plan parsing.
+- fail: The skill reviews only `br` or `bd` tracker issue bodies and refuses the equivalent Markdown sprint file.
+- fail: The skill reviews only Markdown sprint files and refuses the same sprint text read from a `br` or `bd` tracker copy.
 
 ## ANC-017
 

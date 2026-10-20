@@ -1365,13 +1365,14 @@
       "context": "plan-anchor Phase A dogfood correction; live rubric pending explicit TypeSafe payload approval",
       "summary": "Dual plan sources",
       "scope": "changes plan-source selection, sprint discovery, item composition, source digests, planning-gate invocation, or source parity tests",
-      "deterministic_check": "Materialize the Phase A Markdown sprints and their br copies, assert identical ordered request digests, require both recorded-answer parity and independent live passing results, and classify differing live answers as model instability.",
+      "deterministic_check": "The calling agent reads the sprint text from the Markdown file or from its `br` or `bd` tracker copy and passes it to `jev_judge.py judge --item-id --item-title --item-file` (or stdin); `FreeFormSprintDryRunTests.test_free_form_sprint_builds_a_request_at_both_gates` asserts that a dry run at both the plan and dev gates sends that text unchanged as `state.item.text`, and `GatePromptTests.test_both_gates_take_the_callers_text_as_item_file` and `GatePromptTests.test_no_gate_references_plan_source_descriptors_or_discovery` assert that neither gate parses, discovers or normalizes plans.",
       "fixtures": {
         "pass": [
-          "The Markdown and br-copy adapters normalize Sprint A2 to the same request digest, pass independently, and reserve exact verdict equality for recorded-answer parity."
+          "The calling agent passes Sprint A2 through `judge --item-file` whether it read the text from the Markdown sprint file or from the `br` or `bd` tracker copy, and both gates judge that text the same way with no plan parsing."
         ],
         "fail": [
-          "The skill can review only tracker issue bodies and rejects the equivalent Markdown sprint file."
+          "The skill reviews only `br` or `bd` tracker issue bodies and refuses the equivalent Markdown sprint file.",
+          "The skill reviews only Markdown sprint files and refuses the same sprint text read from a `br` or `bd` tracker copy."
         ]
       },
       "question_overrides": {
@@ -1379,26 +1380,26 @@
           "questions": {
             "addressed": {
               "type": "choice",
-              "instructions": "Does `item.text` explicitly plan or preserve dual-source support in the plan-anchoring gate for both a Markdown plan or sprint document and the corresponding plan copy stored in a `br` database? Judge only whether support for both required source forms is present; source parity details and conflict are separate judgments.",
+              "instructions": "Does `item.text` explicitly plan or preserve dual-source support in the plan-anchoring gate for both a Markdown plan or sprint document and the corresponding plan copy in a `br` or `bd` tracker? Judge only whether support for both required source forms is present; source parity details and conflict are separate judgments.",
               "criteria": {
-                "yes": "The item says both Markdown and `br` plan sources are accepted, reviewed, ingested, or normalized, or gives equivalent behavior such as Markdown and `br` adapters operating on the same plan or request digest.",
-                "no": "The item is silent about supporting both source forms, adds or mentions a different source without the required pair, provides support for only one required source, or explicitly rejects Markdown or `br` plan input.",
-                "unclear": "The item mentions Markdown and `br` plan material but does not make clear whether the plan-anchoring gate supports both as plan inputs."
+                "yes": "The item says both Markdown and tracker (`br`/`bd`) plan sources are accepted, reviewed, ingested, or normalized, or gives equivalent behavior such as Markdown and tracker (`br`/`bd`) adapters operating on the same plan or request digest.",
+                "no": "The item is silent about supporting both source forms, adds or mentions a different source without the required pair, provides support for only one required source, or explicitly rejects Markdown or tracker (`br`/`bd`) plan input.",
+                "unclear": "The item mentions Markdown and tracker (`br`/`bd`) plan material but does not make clear whether the plan-anchoring gate supports both as plan inputs."
               }
             },
             "contradicted": {
               "type": "choice",
-              "instructions": "Does `item.text` explicitly conflict with the requirement that the plan-anchoring gate accept both a Markdown plan and the corresponding plan copy in a `br` database? Judge only exclusion or incompatibility with that required pair. Silence, refactoring source selection, or adding another source format is not a conflict unless the item also excludes or makes unusable Markdown or `br` input.",
+              "instructions": "Does `item.text` explicitly conflict with the requirement that the plan-anchoring gate accept both a Markdown plan and the corresponding plan copy in a `br` or `bd` tracker? Judge only exclusion or incompatibility with that required pair. Silence, refactoring source selection, or adding another source format is not a conflict unless the item also excludes or makes unusable Markdown or tracker (`br`/`bd`) input.",
               "criteria": {
-                "yes": "The item says the gate will accept only one required source, reject or disable Markdown or `br` plan input, or otherwise makes it impossible to review both members of the required pair.",
-                "no": "The item accepts both required sources, is silent about the pair, changes source-selection internals without excluding either source, or adds another source while leaving Markdown and `br` compatible.",
-                "unclear": "The item may limit Markdown or `br` plan input, but it is not clear whether both required sources remain usable."
+                "yes": "The item says the gate will accept only one required source, reject or disable Markdown or tracker (`br`/`bd`) plan input, or otherwise makes it impossible to review both members of the required pair.",
+                "no": "The item accepts both required sources, is silent about the pair, changes source-selection internals without excluding either source, or adds another source while leaving Markdown and tracker (`br`/`bd`) compatible.",
+                "unclear": "The item may limit Markdown or tracker (`br`/`bd`) plan input, but it is not clear whether both required sources remain usable."
               }
             }
           }
         }
       },
-      "version": 7,
+      "version": 8,
       "status": "locked",
       "promoted_to": null,
       "beads": {
@@ -1467,6 +1468,15 @@
             "statement"
           ],
           "previous_statement": "The plan-anchoring gate must accept both a Markdown plan and its copy in a br database."
+        },
+        {
+          "at": "2026-10-20T03:16:59+00:00",
+          "event": "updated",
+          "fields": [
+            "deterministic_check",
+            "fixtures",
+            "question_overrides"
+          ]
         }
       ]
     },
