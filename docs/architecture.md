@@ -408,9 +408,12 @@ Decision:
 - **Plugin.** The marketplace plugin's only skill is `plan-anchor-installer`;
   it registers no agents (see Single-tracker installs for why). The skill runs `uv run
   "${CLAUDE_PLUGIN_ROOT}/install.py"`. The installer reads its package files
-  from the plugin directory and, at the destination and above it, the
-  settings file, the install lock, `.beads/` and whether `.git` exists; it
-  never runs git and runs only `br init` (on `--init-br`). It first runs `install.py --dest <folder>
+  from the plugin directory; at the destination and above it, the settings
+  file, the install lock, `.beads/`, whether `.git` exists and the files
+  already at the install paths; the home directory (to refuse global
+  destinations and end the upward walks); and `PATH` (to find the tracker
+  CLI). sc-compose and PyYAML run in-process; it never runs git and runs only
+  `br init` (on `--init-br`). It first runs `install.py --dest <folder>
   --status` (read-only; `data.state` is `not_installed`, `older`, `current` or
   `newer`, and it stops on `newer`), asks the user once for a setting the
   folder does not record (tracker; remote-judge consent), never infers
@@ -470,8 +473,8 @@ Decision:
   without migrating issue data. Every check runs before anything is written;
   `--dry-run` stops there.
 - **SessionStart hook.** `hooks/hooks.json` registers `hooks/check_install.py`
-  (standard library) for SessionStart, in Claude Code only; the Codex and
-  Cursor manifests declare no hooks. It prints one line when the nearest
+  (standard library) for SessionStart. Claude Code runs it; Codex and
+  Cursor plugin hook discovery is untested. It prints one line when the nearest
   lock is older than the plugin (`plan-anchor <installed> installed,
   <available> available: run plan-anchor-installer (<folder>)`) and is
   otherwise silent (no lock, current or newer, unreadable). It writes nothing,
