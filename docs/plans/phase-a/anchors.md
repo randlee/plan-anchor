@@ -345,11 +345,11 @@ Fixtures:
 
 ## ANC-016
 
-Anchor: The plan-anchoring gate must accept both a Markdown plan and its copy in a br database.
+Anchor: The plan-anchoring gate must accept both a Markdown plan and its copy in a br or bd tracker.
 
 > You should be able to run the /plan-anchor skill both against the md plan and against a copy of the plan in br database
 
-Said by randlee, plan-anchor Phase A dogfood correction; live rubric pending explicit TypeSafe payload approval, 2026-10-10. Status: locked. Version 6.
+Said by randlee, plan-anchor Phase A dogfood correction; live rubric pending explicit TypeSafe payload approval, 2026-10-10. Status: locked. Version 7.
 
 Summary: Dual plan sources
 

@@ -666,6 +666,22 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((self.tracker_setting(repo), self.remote_setting(repo)),
                          ("anchor_tracker: bd", ["allow_remote_judge: true"]))
 
+    def test_a_hand_written_yaml_yes_reads_as_true_and_writes_back_as_bools(self):
+        """Operator decision 2026-10-19: ``yes`` counts as true; the installer only ever writes true or false."""
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo, allow_remote_judge=True))
+        settings = repo.path(".sc/plan-anchor/settings.yaml")
+        settings.write_text(settings.read_text(encoding="utf-8").replace("allow_remote_judge: true\n",
+                                                                         "allow_remote_judge: yes\n"), encoding="utf-8")
+        before = repo.snapshot()
+        data = self.ok(run_install(repo, allow_remote_judge=True))  # same answer: nothing to change or rewrite
+        self.assertEqual((data["allow_remote_judge"], data["plan"]["allow_remote_judge"], data["commit_paths"]), (True, None, []))
+        self.assertEqual(repo.snapshot(), before)
+        data = self.ok(run_install(repo, allow_remote_judge=False))
+        self.assertEqual(data["plan"]["allow_remote_judge"],
+                         {"path": ".sc/plan-anchor/settings.yaml", "from": True, "to": False})
+        self.assertEqual(self.remote_setting(repo), ["allow_remote_judge: false"])
+
     def test_remote_judge_dry_run_writes_nothing(self):
         repo = TempRepo(self, beads="sqlite")
         data = self.ok(run_install(repo, allow_remote_judge=True, dry_run=True))
