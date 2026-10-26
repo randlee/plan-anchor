@@ -24,7 +24,7 @@ Judges delivered work. The same anchors are asked of an account of what was buil
 | Sprint | the sprint text the caller already has, as `item_file`: the Markdown sprint file, or `"$ANCHOR_TRACKER" show <id> --json` composed with `compose-item --show-json <file> [--children-json <file>] --for dev`, or text from the caller's context | Item ID and text for the run, unchanged; any layout is accepted |
 | Anchor tracker | `anchor_tracker.py resolve` | Passed as `anchor_tracker`; the agent resolves it again and rejects a mismatch |
 | Evidence | sprint report file, PR number or body file, test summary file | In that order; the request cap at this gate is 64,000 bytes (`jev-api.md`) and Jev reads the start most reliably (measured-behaviour.md) |
-| Anchors | `doc/plan/phase-current/anchors.json` | `locked` and `promoted` only |
+| Anchors | `$A`: `docs/plans/phase-<current>/anchors.json` | `locked` and `promoted` only |
 | Question overrides | each anchor's dev-questions bead | Fenced JSON; `{}` means defaults |
 | Script | `scripts/jev_judge.py` next to `SKILL.md`, absolute | Passed as `script` |
 
@@ -38,7 +38,7 @@ Delegate to the harness-specific `anchor-sprint-review` definition. Claude Code 
 
 ```bash
 python3 "$S" judge --anchors "$A" --gate dev --all --item-id <sprint ID> --item-title "<sprint title>" \
-  --item-file "$W/item.txt" [--overrides-file "$W/overrides.json"] --run-dir doc/plan/phase-current/anchor-runs
+  --item-file "$W/item.txt" [--overrides-file "$W/overrides.json"] --run-dir "$P/anchor-runs"
 ```
 
 Exit codes as at the planning gate: 0 the run completed with an answer for every anchor (read `data.summary.pass`: false on failing verdicts, with the run file written), 2 fatal, including any anchor Jev gave no answer for (`data.run_path` names the partial run).

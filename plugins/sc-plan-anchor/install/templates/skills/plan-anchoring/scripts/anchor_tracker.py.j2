@@ -326,9 +326,9 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     path = sel.settings_file if own else settings_path(sel.root)
     shown = commit_path(path, sel.root)
     if sel.settings is None or sel.settings.anchor_tracker is None:
-        kept = sel.settings.allow_remote_judge if sel.settings is not None else None
+        kept = sel.settings if sel.settings is not None else Settings(schema_version=SCHEMA_VERSION, anchor_tracker=None)
         saved = write_settings_file(path, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker,
-                                                   allow_remote_judge=kept))
+                                                   allow_remote_judge=kept.allow_remote_judge, plan_dir=kept.plan_dir))
         if isinstance(saved, Err):
             return saved
         written = True

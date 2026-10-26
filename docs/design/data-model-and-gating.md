@@ -6,7 +6,7 @@ Companion to [architecture and call graphs](architecture-and-call-graphs.md). Co
 
 ```mermaid
 flowchart LR
-    subgraph Plan["doc/plan/phase-current/ (git)"]
+    subgraph Plan["docs/plans/phase-#lt;current#gt;/ (git)"]
         Intent["intent.md<br/>one page, frames everything, never judged"]
         Rec["anchors.json<br/>record of truth, script-edited"]
         Md["anchors.md<br/>rendered view, never hand-edited"]

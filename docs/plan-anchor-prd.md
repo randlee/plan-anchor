@@ -31,7 +31,7 @@ All three fact types (ANC, REQ, ADR) become Jev questions. Intent is somewhat ou
 
 The plan produces two written documents and a tree of beads.
 
-**Documents** land in `doc/plan/phase-current/` for reference:
+**Documents** land in the current phase folder, `docs/plans/phase-<current>/` (`plan_dir` in `.sc/plan-anchor/settings.yaml`), for reference:
 
 - An **Intent document** — the high-level overview of the plan.
 - An **Anchor document** — all anchors, numbered (ANC-001, ANC-002, …), each with its verbatim source statement.

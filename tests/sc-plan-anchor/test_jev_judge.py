@@ -64,7 +64,7 @@ def anchor(aid="ANC-001", status="locked", source_type="ANC", source_ref=None, s
 
 
 def record(*anchors):
-    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "doc/plan/phase-current/intent.md",
+    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-z", "intent_ref": "docs/plans/phase-z/intent.md",
             "anchors": list(anchors)}
 
 
@@ -1060,7 +1060,7 @@ class ValidateTests(unittest.TestCase):
             code, out = run_cli(["validate", "--anchors", path])
             self.assertEqual((code, out["data"]["valid"], out["data"]["problems"]), (0, True, []))
             self.assertIn("no locked anchors", out["data"]["warnings"])
-            self.assertIn("intent_ref file not found: doc/plan/phase-current/intent.md", out["data"]["warnings"])
+            self.assertIn("intent_ref file not found: docs/plans/phase-z/intent.md", out["data"]["warnings"])
             Path(d, "intent.md").write_text("# intent\n")
             code, out = run_cli(["validate", "--anchors", path])
             self.assertEqual([w for w in out["data"]["warnings"] if "intent_ref" in w], [])
@@ -1457,11 +1457,11 @@ class AgentPreflightTests(unittest.TestCase):
             root = (Path(d) / "repo").resolve()
             root.mkdir()
             script = self.install(root)
-            anchors = write(root, "doc/plan/phase-current/anchors.json", record(anchor()))
+            anchors = write(root, "docs/plans/phase-a/anchors.json", record(anchor()))
             evidence = write(root, "reports/sprint.md", "done")
             code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", str(script),
-                "--anchors", "doc/plan/phase-current/anchors.json", "--run-dir", "doc/plan/phase-current/runs",
+                "--anchors", "docs/plans/phase-a/anchors.json", "--run-dir", "docs/plans/phase-a/runs",
                 "--evidence", evidence, "--identifier", "proj-s2", "--pr-number", "12",
                 "--correlation-id", "proj-s2:dev",
             ], cwd=root)
@@ -2258,7 +2258,7 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
             r["error"] = {"code": "JEV.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
     failing = [a for a, v in verdicts.items() if v in jj.FAILING]
     run = {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-{created_at}-{item}", "gate": gate, "created_at": created_at,
-           "anchors_path": "anchors.json", "plan": "phase-current",
+           "anchors_path": "anchors.json", "plan": "phase-a",
            "item": {"id": item, "title": title, "source": "f", "chars": 10, "truncated": False},
            "model_requested": "jev-latest", "model_answered": "jev-1.13.0", "threshold": 0.6, "dry_run": False, "fixture": False,
            "results": results, "summary": {"counts": {}, "failing": failing, "errors": [a for a, v in verdicts.items() if v == "error"],

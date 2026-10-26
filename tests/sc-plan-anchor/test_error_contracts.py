@@ -57,7 +57,7 @@ def anchor(aid="ANC-001", status="locked", statement=STATEMENT, quote=QUOTE, **e
 
 
 def record(*anchors):
-    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "intent.md", "anchors": list(anchors)}
+    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-a", "intent_ref": "intent.md", "anchors": list(anchors)}
 
 
 def run_file(gate="plan", item="ex-42", results=None):

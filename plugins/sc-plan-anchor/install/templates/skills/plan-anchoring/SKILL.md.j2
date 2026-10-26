@@ -62,11 +62,14 @@ Then resolve the script once. It sits next to this file:
 
 ```bash
 S="<this skill's directory>/scripts/jev_judge.py"   # absolute: <install folder>/.<harness>/skills/plan-anchoring/scripts/jev_judge.py
-A=doc/plan/phase-current/anchors.json
+P="$(python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq -r '.data.plan_dir // empty')"   # e.g. docs/plans/phase-b
+A="$P/anchors.json"
 python3 "$S" --help
 ```
 
-Every command below uses `$S` and `$A`; every agent invocation passes `$S` as `script`.
+`P` is the current phase's plan folder, `docs/plans/phase-<current>`, where `<current>` is the phase id (`docs/plans/phase-b`); it holds `intent.md`, `anchors.json`, `anchors.md` and `anchor-runs/`. It is `plan_dir` in the committed `.sc/plan-anchor/settings.yaml`. Empty (never set): ask the user which phase is current, record it with `python3 "<this skill's directory>/scripts/plan_anchor_settings.py" set plan_dir docs/plans/phase-<id>`, commit the file, then continue. When the phase changes, set it again. Never write anchors to a folder the user has not named.
+
+Every command below uses `$S`, `$P` and `$A`; every agent invocation passes `$S` as `script` and `$A` as `anchors_path`.
 
 ## Select the workflow
 

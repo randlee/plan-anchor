@@ -99,7 +99,7 @@ All read-only. Agents never create, update, close or comment on beads.
 The planning gate posts its report on the judged planning bead; the development gate on the sprint bead or the PR. Done in the main session after the agent returns:
 
 ```bash
-python3 "$S" report --run doc/plan/phase-current/anchor-runs/<run>.json --format md > "$W/report.md"
+python3 "$S" report --run "$P/anchor-runs/<run>.json" --format md > "$W/report.md"
 {% if tracker == "br" %}
 br comments add <bead> --file "$W/report.md"     # or: br comments add <bead> "$(cat "$W/report.md")"
 {% elif tracker == "bd" %}

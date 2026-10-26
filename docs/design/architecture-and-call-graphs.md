@@ -34,7 +34,7 @@ flowchart LR
     Jev[("TypeSafe Jev<br/>POST /v1/systemone")]
     Beads[("$ANCHOR_TRACKER<br/>anchor bead tree, question beads")]
     Plan[("the caller's plan<br/>Markdown, br/bd beads or its own context")]
-    Docs[("doc/plan/phase-current/<br/>intent.md, anchors.json, anchors.md, anchor-runs/")]
+    Docs[("docs/plans/phase-#lt;current#gt;/<br/>intent.md, anchors.json, anchors.md, anchor-runs/")]
 
     Skill -- "lock / promote / retire" --> Record
     Record --> Docs

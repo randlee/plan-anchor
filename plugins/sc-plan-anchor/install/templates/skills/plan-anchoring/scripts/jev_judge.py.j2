@@ -640,7 +640,9 @@ def cmd_add(args) -> Result[dict, JudgeError]:
             return loaded
         rec = loaded.value
     else:
-        rec = empty_record(args.plan, args.intent_ref)
+        # Defaults follow --anchors: docs/plans/phase-b/anchors.json is plan "phase-b", intent docs/plans/phase-b/intent.md.
+        rec = empty_record(args.plan or p.resolve().parent.name,
+                           args.intent_ref or (pathlib.PurePath(args.anchors).parent / "intent.md").as_posix())
     listed = anchor_list(rec)
     if isinstance(listed, Err):
         return listed
@@ -3221,8 +3223,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--source-type", choices=SOURCE_TYPES, default="ANC")
     a.add_argument("--source-ref", default="", help="REQ-014 / ADR-0007 when source type is REQ/ADR")
     a.add_argument("--status", choices=STATUSES, default="proposed", help="proposed or locked; retired is refused")
-    a.add_argument("--plan", default="phase-current", help="used only when creating a new anchors.json")
-    a.add_argument("--intent-ref", default="doc/plan/phase-current/intent.md")
+    a.add_argument("--plan", default="", help="used only when creating a new anchors.json; default: the name of the folder holding --anchors (phase-b)")
+    a.add_argument("--intent-ref", default="", help="used only when creating a new anchors.json; default: intent.md beside --anchors")
     a.set_defaults(func=cmd_add)
 
     u = sub.add_parser("update", help="edit statement, scope, summary, deterministic check or fixtures (never the quote)")
