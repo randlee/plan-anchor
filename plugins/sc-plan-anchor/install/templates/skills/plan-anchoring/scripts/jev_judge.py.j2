@@ -2863,6 +2863,75 @@ def _rubric_judgement(args, api_key: str, body: dict, qs: dict, fixture, cid, th
     return Ok((responses, attempts, outcome.value))
 
 
+def load_rubric_inputs(args) -> Result[tuple, JudgeError]:
+    """Optional confined inputs; seals establish integrity, not calibration or approval."""
+    questions_path = getattr(args, "questions", "")
+    intent_path = getattr(args, "approved_intent_file", "")
+    default = load_simple_question_set("testability", RUBRIC_QUESTIONS)
+    if isinstance(default, Err) or not (questions_path or intent_path):
+        return default if isinstance(default, Err) else Ok((default.value, None, False))
+    import plan_anchor_settings as settings  # stdlib-only until settings are read
+    from anchor_tuning_contract import validate_intent_descriptor, validate_questions
+
+    root = settings.find_repo_root(pathlib.Path(getattr(args, "repository_root", ".")))
+    if isinstance(root, Err):
+        return Err(_from_tool_error(root.error))
+
+    def reject_constant(value):
+        raise ValueError(f"non-finite number {value}")
+
+    def unique_keys(pairs):
+        value = {}
+        for key, child in pairs:
+            if key in value:
+                raise ValueError(f"duplicate key {key}")
+            value[key] = child
+        return value
+
+    def read(raw, label):
+        path = canonical_workspace_path(raw, root.value, label, must_exist=True, regular_file=True)
+        if isinstance(path, Err):
+            return path
+        try:
+            value = json.loads(path.value.read_text(encoding="utf-8"),
+                               parse_constant=reject_constant, object_pairs_hook=unique_keys)
+            # Escaped lone surrogates and overflowing JSON numbers are not
+            # representable in the UTF-8 request, even when the file is ASCII.
+            json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            return Ok(value)
+        except (OSError, UnicodeError, ValueError) as exc:
+            return fail("INPUT.MALFORMED", f"{label} is not readable strict UTF-8 JSON: {exc}")
+
+    qs, intent = default.value, None
+    if questions_path:
+        loaded = read(questions_path, "sealed rubric")
+        if isinstance(loaded, Err):
+            return loaded
+        sealed = loaded.value
+        if not isinstance(sealed, dict) or set(sealed) != {"questions", "digest"}:
+            return fail("RUBRIC.QUESTIONS", "sealed rubric requires exactly questions and digest")
+        checked = validate_questions("testability", sealed)
+        if isinstance(checked, Err):
+            return Err(_from_tool_error(checked.error))
+        for question in sealed["questions"].values():
+            if (not isinstance(question, dict) or set(question) != {"type", "instructions", "criteria"}
+                    or question["type"] != "choice" or not isinstance(question["instructions"], str)
+                    or not question["instructions"].strip() or not isinstance(question["criteria"], dict)
+                    or set(question["criteria"]) != {"yes", "no", "unclear"}
+                    or any(not isinstance(v, str) or not v.strip() for v in question["criteria"].values())):
+                return fail("RUBRIC.QUESTIONS", "rubric requires five choice questions with instructions and yes/no/unclear criteria")
+        qs = {"questions": sealed["questions"]}
+    if intent_path:
+        loaded = read(intent_path, "approved intent")
+        if isinstance(loaded, Err):
+            return loaded
+        checked = validate_intent_descriptor(loaded.value)
+        if isinstance(checked, Err):
+            return Err(_from_tool_error(checked.error))
+        intent = loaded.value
+    return Ok((qs, intent, True))
+
+
 def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixture, what: str) -> Result[tuple, JudgeError]:
     """Lint, then one Jev request per candidate {id, statement, quote, scope, source_type}. Returns Ok((entries, requests_out)).
 
@@ -2871,24 +2940,38 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
     third call is made only when the first two choices disagree. Nothing is
     written to disk.
     """
-    loaded = load_simple_question_set("testability", RUBRIC_QUESTIONS)
+    loaded = load_rubric_inputs(args)
     if isinstance(loaded, Err):
         return loaded
-    qs = loaded.value
+    qs, intent, explicit_inputs = loaded.value
+    bodies = []
+    for candidate in candidates:
+        body = {"model": args.model, "questions": qs["questions"], "state": {"anchor": {
+            "statement": candidate["statement"], "quote": candidate["quote"], "scope": candidate.get("scope") or ""}}}
+        if intent is not None:
+            body["state"]["intent"] = intent
+        if explicit_inputs:
+            fitted = fit_request(body, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, {})
+            if isinstance(fitted, Err):
+                return fitted  # refuse before credentials, emission or any transport
+        bodies.append(body)
     api_key = ""
     if candidates and not dry_run and fixture is None:
-        cleared = remote_preflight(args, what)
+        cleared = remote_preflight(args, what + (" and the explicitly selected approved intent" if intent is not None else ""))
         if isinstance(cleared, Err):
             return cleared
         api_key = cleared.value
     entries, requests_out, failures = [], [], []
-    for c in candidates:
+    for c, body in zip(candidates, bodies):
         warnings = lint_statement(c["statement"], c["quote"], c.get("source_type") or "ANC")
         lint_errors = [w for w in warnings if w == LINT_VERBATIM or w in REQUIREMENT_FORM_WARNINGS]
         entry = {"id": c["id"], "statement": c["statement"], "quote": c["quote"], "scope": c.get("scope") or "",
                  "verdict": None, "failing": list(lint_errors), "answers": None, "lint": {"warnings": warnings, "errors": lint_errors}}
-        body = {"model": args.model, "questions": qs["questions"],
-                "state": {"anchor": {"statement": c["statement"], "quote": c["quote"], "scope": c.get("scope") or ""}}}
+        if explicit_inputs:
+            entry["inputs"] = {"question_seal": questions_digest({"questions": qs["questions"]}),
+                               "request_sha256": questions_digest(body)}
+            if intent is not None:
+                entry["inputs"]["intent"] = {key: intent[key] for key in ("id", "version", "sha256")}
         if dry_run:
             fitted = fit_request(body, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, {})
             if isinstance(fitted, Err):
@@ -3357,6 +3440,8 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--statement", help="judge a candidate not yet in the record (id 'candidate'); needs --quote")
     rb.add_argument("--quote", default="", help="the candidate's verbatim quote")
     rb.add_argument("--scope", default="", help="the candidate's scope")
+    rb.add_argument("--approved-intent-file", default="", help="repository-local JSON {id,version,sha256,content}; explicitly select already approved provenance")
+    rb.add_argument("--questions", default="", help="repository-local sealed rubric JSON {questions,digest}; select an independently accepted calibration")
     rb.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="minimum confidence for a yes to count")
     rb.add_argument("--dry-run", action="store_true", help="show the requests; call nothing")
     rb.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id ('candidate' for --statement) or '*'; no network")

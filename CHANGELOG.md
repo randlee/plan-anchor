@@ -2,6 +2,11 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.8.8 — 2026-11-02
+
+- Add optional repository-confined approved-intent and sealed-question inputs to `rubric`, with strict integrity checks, request provenance, and unchanged default questions and confidence rules.
+- Bind context-bearing testability triage to the exact approved intent, preserving legacy requests without context.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the

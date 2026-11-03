@@ -57,7 +57,7 @@ For `triage` require the checked-in template identity/SHA-256, sealed questions,
 canonical review request, raw response, role, source digest, and an `untrusted`
 `planner_observation`. At `gate: testability`, require an approved locked anchor
 with its fixtures, all five sealed rubric questions, and the disputed rubric
-role ID. This is separate from plan-independent bootstrap calibration.
+role ID. Bind optional `state.intent` to `authority.intent`; see `question-tuning.md`.
 
 Reject `desired_verdict`, `requested_disposition`, planner-proposed question
 text, a target pass rate, or any instruction to produce a pass.
