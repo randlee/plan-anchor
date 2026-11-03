@@ -186,6 +186,12 @@ class RubricInputTests(unittest.TestCase):
                     self.assert_refused_before_credentials(self.args(root) + flags, 'JEV.CONTEXT_EXCEEDED')
 
     def test_context_does_not_bypass_consent(self):
+        try:
+            import yaml  # noqa: F401 - live consent reads settings through this optional dependency
+        except ImportError:
+            expected = 'DEPENDENCY.PYYAML'
+        else:
+            expected = 'POLICY.REMOTE_JUDGE_DISABLED'
         with tempfile.TemporaryDirectory() as root:
             self.inputs(root)
             for value in ('false', ''):
@@ -195,6 +201,6 @@ class RubricInputTests(unittest.TestCase):
                 before = settings.read_bytes()
                 with env(TYPESAFE_API_KEY='sk-test'), mock.patch.object(jj, 'call_jev') as transport:
                     code, out = run_cli(self.args(root))
-                self.assertEqual((code, out['error']['code']), (2, 'POLICY.REMOTE_JUDGE_DISABLED'), out)
+                self.assertEqual((code, out['error']['code']), (2, expected), out)
                 transport.assert_not_called()
                 self.assertEqual(settings.read_bytes(), before)
