@@ -87,8 +87,12 @@ def run_cli(argv):
         return code, out
 
 
+@contextlib.contextmanager
 def env(**values):
-    return mock.patch.dict(os.environ, values, clear=True)
+    # Unit fixtures control both credential sources; never consult a developer's store.
+    with mock.patch.dict(os.environ, values, clear=True), \
+            mock.patch.object(jj, "credential_store_api_key", return_value=""):
+        yield
 
 
 def consented():
@@ -150,6 +154,11 @@ class Transport:
 
 
 class CredentialLookupTests(unittest.TestCase):
+    def test_absent_environment_and_empty_store_have_no_key(self):
+        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="") as store:
+            self.assertEqual(jj.resolved_api_key(), "")
+        store.assert_called_once_with()
+
     def test_environment_key_wins_without_consulting_the_platform_store(self):
         with env(TYPESAFE_API_KEY="env-key"), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
             self.assertEqual(jj.resolved_api_key(), "env-key")

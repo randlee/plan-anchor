@@ -282,6 +282,190 @@ class AnchorTuningContractTests(unittest.TestCase):
         invalid["data"]["sealed_question_set_digest_after"] = "f" * 64
         self.violation(self.contract.validate_result(invalid))
 
+    def _testability_triage_pair(self):
+        variables = json.loads(
+            (PLAN / "templates" / "anchor-tuning-review-feedback.sample-vars.json").read_text()
+        )
+        questions = json.loads(
+            (SKILL / "assets" / "questions" / "testability.json").read_text()
+        )["questions"]
+        sealed = {"questions": questions, "digest": self.contract.sha256({"questions": questions})}
+        anchor = {
+            "statement": "The CLI must emit JSON and the daemon must write an audit log.",
+            "quote": "emit JSON from the CLI and write a daemon audit log",
+            "scope": "CLI output and daemon logging",
+        }
+        variables["sealed_question_set"] = sealed
+        variables["authority"]["anchors"]["records"][0].update(anchor, fixtures={
+            "pass": ["The CLI emits JSON and the daemon writes audit logs."],
+            "fail": ["The CLI and daemon emit no output."],
+        })
+        variables["authority"]["anchors"]["sha256"] = self.contract.sha256(variables["authority"]["anchors"]["records"])
+        intent = variables["authority"]["intent"]
+        intent["sha256"] = hashlib.sha256(intent["content"].encode("utf-8")).hexdigest()
+        variables["review"].update(
+            gate="testability", role="single_constraint",
+            source_digest=self.contract.sha256(anchor),
+            canonical_request={"model": "jev-1.14.0", "questions": questions, "state": {"anchor": anchor}},
+            raw_response={"answers": {
+                role: {"type": "choice", "choice": "no" if role == "single_constraint" else "yes",
+                       "confidence": 0.95,
+                       "probabilities": {"yes": 0.02 if role == "single_constraint" else 0.96,
+                                         "no": 0.96 if role == "single_constraint" else 0.02,
+                                         "unclear": 0.02}}
+                for role in questions
+            }},
+        )
+        request = self.render("anchor-tuning-review-feedback.md.j2", variables)
+        result_variables = json.loads(
+            (PLAN / "templates" / "anchor-tuning-result-triage.sample-vars.json").read_text()
+        )
+        result_variables["data"].update(
+            gate="testability", disposition="anchor_defect", sealed_question_set=sealed,
+            sealed_question_set_digest_before=sealed["digest"],
+            sealed_question_set_digest_after=sealed["digest"],
+            explanation="The approved anchor joins two independently enforceable duties.",
+            planner_action="Present a proposed split to the user; do not edit the approved record here.",
+        )
+        result = self.render("anchor-tuning-result.md.j2", result_variables)
+        return request, result
+
+    def test_testability_triage_strict_render_and_result_validate(self):
+        request, result = self._testability_triage_pair()
+        self.validate(request, "anchor-tuning-request.schema.json")
+        self.valid(self.contract.validate_request(request))
+        self.validate(result, "anchor-tuning-result.schema.json")
+        self.validate(result, "agent-runner-result.schema.json")
+        self.valid(self.contract.validate_result(result))
+        self.assertEqual(result["data"]["disposition"], "anchor_defect")
+        self.assertEqual(result["data"]["question_action"], "unchanged")
+        self.assertEqual(set(request["sealed_question_set"]["questions"]), self.contract.ROLE_IDS["testability"])
+        self.assertEqual(self.runner.parse_result(
+            "```json\n" + json.dumps(result) + "\n```", result["metadata"]["correlation_id"]
+        ), self.runner.Ok(result))
+
+        question_defect = copy.deepcopy(result)
+        question_defect["data"]["disposition"] = "question_defect"
+        question_defect["data"]["question_action"] = "reopen_affected_tournament"
+        self.validate(question_defect, "anchor-tuning-result.schema.json")
+        self.valid(self.contract.validate_result(question_defect))
+        without_optional_type = copy.deepcopy(request)
+        del without_optional_type["review"]["raw_response"]["answers"]["single_constraint"]["type"]
+        self.validate(without_optional_type, "anchor-tuning-request.schema.json")
+        self.valid(self.contract.validate_request(without_optional_type))
+
+    def test_testability_triage_rejects_empty_authority_wrong_role_and_bad_seal(self):
+        request, _ = self._testability_triage_pair()
+        for mutate, pattern in (
+            (lambda r: r["authority"]["anchors"].update(records=[]), "VALIDATION.AUTHORITY"),
+            (lambda r: r["review"].update(role="anchor-plan-review"), "VALIDATION.ROLE"),
+            (lambda r: r["sealed_question_set"]["questions"].pop("faithful"), "TOURNAMENT.ROLE_SET"),
+        ):
+            invalid = copy.deepcopy(request)
+            mutate(invalid)
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(self.jsonschema.ValidationError):
+                    self.validate(invalid, "anchor-tuning-request.schema.json")
+                self.violation(self.contract.validate_request(invalid), pattern)
+        invalid = copy.deepcopy(request)
+        invalid["sealed_question_set"]["digest"] = "0" * 64
+        self.violation(self.contract.validate_request(invalid), "TOURNAMENT.QUESTION_DIGEST")
+
+    def test_testability_triage_binds_authority_source_questions_and_raw_evidence(self):
+        request, _ = self._testability_triage_pair()
+        for mutate, pattern in (
+            (lambda r: r["authority"]["anchors"].update(sha256="0" * 64), "TRIAGE.AUTHORITY_DIGEST"),
+            (lambda r: r["authority"]["intent"].update(sha256="0" * 64), "TRIAGE.AUTHORITY_DIGEST"),
+            (lambda r: r["review"].update(source_digest="0" * 64), "TRIAGE.SOURCE_DIGEST"),
+            (lambda r: r["review"]["canonical_request"]["questions"]["faithful"].update(instructions="A different question."), "TRIAGE.REQUEST_QUESTIONS"),
+            (lambda r: r["review"].update(raw_response={}), "TRIAGE.RESPONSE"),
+            (lambda r: r["review"]["raw_response"]["answers"]["single_constraint"].update(confidence=True), "TRIAGE.RESPONSE"),
+            (lambda r: r["review"]["raw_response"]["answers"]["single_constraint"].update(probabilities={"yes": 1, "no": 1, "unclear": 1}), "TRIAGE.RESPONSE"),
+        ):
+            invalid = copy.deepcopy(request)
+            mutate(invalid)
+            with self.subTest(pattern=pattern):
+                self.violation(self.contract.validate_request(invalid), pattern)
+        invalid = copy.deepcopy(request)
+        invalid["review"]["canonical_request"]["state"]["anchor"]["statement"] = "The CLI must emit XML."
+        invalid["review"]["source_digest"] = self.contract.sha256(invalid["review"]["canonical_request"]["state"]["anchor"])
+        self.violation(self.contract.validate_request(invalid), "TRIAGE.SOURCE_AUTHORITY")
+
+        for fixtures in ({}, [], {"pass": [], "fail": ["Fails."]}, {"pass": ["Passes."], "fail": []}):
+            invalid = copy.deepcopy(request)
+            invalid["authority"]["anchors"]["records"][0]["fixtures"] = fixtures
+            invalid["authority"]["anchors"]["sha256"] = self.contract.sha256(invalid["authority"]["anchors"]["records"])
+            with self.subTest(fixtures=fixtures):
+                with self.assertRaises(self.jsonschema.ValidationError):
+                    self.validate(invalid, "anchor-tuning-request.schema.json")
+                self.violation(self.contract.validate_request(invalid), "VALIDATION.FIXTURES")
+
+    def test_triage_gate_and_sealed_roles_cannot_be_mixed(self):
+        request, result = self._testability_triage_pair()
+        planning = self.render(
+            "anchor-tuning-review-feedback.md.j2", "anchor-tuning-review-feedback.sample-vars.json"
+        )
+        for gate in ("planning", "development"):
+            invalid = copy.deepcopy(request)
+            invalid["gate"] = gate
+            with self.subTest(kind="request", gate=gate):
+                with self.assertRaises(self.jsonschema.ValidationError):
+                    self.validate(invalid, "anchor-tuning-request.schema.json")
+                self.violation(self.contract.validate_request(invalid), "TOURNAMENT.ROLE_SET")
+            invalid_result = copy.deepcopy(result)
+            invalid_result["data"]["gate"] = gate
+            with self.subTest(kind="result", gate=gate):
+                with self.assertRaises(self.jsonschema.ValidationError):
+                    self.validate(invalid_result, "anchor-tuning-result.schema.json")
+                self.violation(self.contract.validate_result(invalid_result), "TOURNAMENT.ROLE_SET")
+        invalid = copy.deepcopy(request)
+        invalid["sealed_question_set"] = planning["sealed_question_set"]
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate(invalid, "anchor-tuning-request.schema.json")
+        self.violation(self.contract.validate_request(invalid), "TOURNAMENT.ROLE_SET")
+
+    def test_triage_disposition_and_actions_are_gate_specific(self):
+        _, result = self._testability_triage_pair()
+        invalid = copy.deepcopy(result)
+        invalid["data"]["disposition"] = "plan_violation"
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate(invalid, "anchor-tuning-result.schema.json")
+        self.violation(self.contract.validate_result(invalid), "TRIAGE.DISPOSITION")
+
+        planning = self.render("anchor-tuning-result.md.j2", "anchor-tuning-result-triage.sample-vars.json")
+        planning["data"]["disposition"] = "anchor_defect"
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate(planning, "anchor-tuning-result.schema.json")
+        self.violation(self.contract.validate_result(planning), "TRIAGE.DISPOSITION")
+
+        invalid = copy.deepcopy(result)
+        invalid["data"]["question_action"] = "reopen_affected_tournament"
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate(invalid, "anchor-tuning-result.schema.json")
+        self.violation(self.contract.validate_result(invalid), "TRIAGE.QUESTION_ACTION")
+        invalid = copy.deepcopy(result)
+        invalid["data"]["sealed_question_set_digest_after"] = "f" * 64
+        self.violation(self.contract.validate_result(invalid), "TRIAGE.DIGEST_CHANGED")
+        invalid = copy.deepcopy(result)
+        invalid["data"]["sealed_question_set_digest_before"] = "0" * 64
+        invalid["data"]["sealed_question_set_digest_after"] = "0" * 64
+        self.violation(self.contract.validate_result(invalid), "TRIAGE.QUESTION_DIGEST")
+
+    def test_testability_triage_incomplete_evidence_is_a_failure_not_a_disposition(self):
+        result = self.render("anchor-tuning-result.md.j2", {
+            "success": False, "canceled": False, "aborted_by": None, "data": None,
+            "error": {"code": "EVIDENCE.INCOMPLETE", "message": "Low confidence alone does not establish a defect.",
+                      "recoverable": True, "suggested_action": "Supply the approved authority and frozen evidence."},
+            "metadata": {"duration_ms": 0, "tool_calls": 0, "retry_count": 0,
+                         "correlation_id": "testability-triage-incomplete", "jev_run_ids": [],
+                         "planner_observation_trust": "untrusted", "authoritative_sources_unchanged": True},
+        })
+        self.validate(result, "anchor-tuning-result.schema.json")
+        self.validate(result, "agent-runner-result.schema.json")
+        self.valid(self.contract.validate_result(result))
+        self.assertIsNone(result["data"])
+        self.assertFalse(result["success"])
+
     def tuning_pair(self):
         request = self.render(
             "anchor-tuning-tune-request.md.j2",
@@ -431,6 +615,8 @@ class AnchorTuningContractTests(unittest.TestCase):
                     self.assertIn("confidence threshold `0.0`", text)
                     self.assertIn("Never use threshold-free tournament semantics for production", text)
                     self.assertIn("production_confidence_threshold", text)
+                    self.assertIn("anchor_defect", text)
+                    self.assertIn("EVIDENCE.INCOMPLETE", text)
 
 
 if __name__ == "__main__":

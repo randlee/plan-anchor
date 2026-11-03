@@ -2,6 +2,20 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.8.7 — 2026-11-02
+
+- Independent triage now accepts disputed testability-rubric results with the
+  exact five-role sealed rubric and an approved locked anchor. The request and
+  result schemas agree with the relational validator. Testability uses
+  `anchor_defect` for an unclear or bundled anchor and `question_defect` for a
+  demonstrated instrument defect; planning and development keep their existing
+  dispositions. Accurate failures preserve the question digest. Incomplete
+  evidence stays a typed failure and cannot turn an inconclusive gate into a
+  pass. Production thresholds and default question wording are unchanged.
+- Strict rendered-request and result regressions cover the new gate, empty
+  authority, mixed role sets, wrong dispositions/actions, tampered seals, and
+  incomplete evidence across both tracker renders.
+
 ## 0.8.6 — 2026-10-25
 
 - Live Jev authentication now resolves `TYPESAFE_API_KEY` first and, only when it is absent, retrieves the same key from the platform credential store: macOS Keychain (`plan-anchor` / `typesafe-api-key`), Windows Credential Manager (`plan-anchor:typesafe-api-key`), or Linux Secret Service (the equivalent `secret-tool lookup service plan-anchor account typesafe-api-key`). Invalid environment values fail closed rather than falling through. Values never appear in the result envelope, standard output, or diagnostics.

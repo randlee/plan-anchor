@@ -28,7 +28,8 @@ ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only ad
 
 def clean_env():
     keep = ("PATH", "HOME", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "PYTHONPATH")
-    return {k: os.environ[k] for k in keep if k in os.environ}
+    # An explicitly empty environment key fails closed before native-store fallback.
+    return {**{k: os.environ[k] for k in keep if k in os.environ}, "TYPESAFE_API_KEY": ""}
 
 
 class ConventionCase(unittest.TestCase):
