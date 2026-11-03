@@ -97,6 +97,7 @@ def call_main(main, argv, *, env=None, stdin=None):
     buf = io.StringIO()
     environment = {"PATH": os.environ.get("PATH", ""), **(env or {})}
     with mock.patch.dict(os.environ, environment, clear=True), contextlib.redirect_stdout(buf), \
+            mock.patch.object(jj, "credential_store_api_key", return_value=""), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
         code = main(argv)
     return code, json.loads(buf.getvalue())
