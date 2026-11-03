@@ -21,8 +21,8 @@ Jev is TypeSafe's decision model: it answers typed questions about a piece of st
 
 A gate run sends the anchor statement and scope and the item text (a plan bead or an account of delivered work) off the machine. `rubric` also sends the verbatim quote; `dedupe --jev` sends pairs of statements and quotes. Sending a plan to TypeSafe is the user's decision, so the script fails closed:
 
-- `TYPESAFE_API_KEY` must be set and well-formed (non-empty, ASCII, no control characters), and
-- the repository's committed `.sc/plan-anchor/settings.yaml` must set `allow_remote_judge: true`. `false` is the user's no; an absent key means nobody has asked yet. Both are refused.
+- `TYPESAFE_API_KEY`, when present, must be well-formed (non-empty, ASCII, no control characters); when it is absent the script tries the documented platform credential store, and
+- the repository's committed `.sc/plan-anchor/settings.yaml` must set `allow_remote_judge: true`. `false` is the user's no; an absent resolved credential means the live call is refused. Both are refused.
 
 Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --jev` return `AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED` and send nothing. The answer is recorded once per repository, never per session: ask the user, then `python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false` (or the installer's `--allow-remote-judge` / `--no-remote-judge`), and commit the file. Only the user decides it: agents never write it and never infer it from existing run files or past runs. The setting is found from `--repository-root` (default `.`) by the same lookup as `anchor_tracker.py`; reading a present settings file needs PyYAML (`DEPENDENCY.PYYAML`, exit 2, otherwise), and nothing else in `jev_judge.py` does. `--dry-run` writes the exact request bodies and `totals {requests, bytes}` to the run directory. `--answers-file` runs the gating with fixture answers, offline. The key is never printed, logged, written to a run file, or included in an error.
 
@@ -175,8 +175,8 @@ TypeSafe prices input tokens only (output is free) at a fraction of a cent per m
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY` | none | Required for live runs |
+| `TYPESAFE_API_KEY` | none | Preferred TypeSafe credential for live runs; when absent, use the documented platform credential store |
 
-It is the only environment variable the plugin reads. Model, threshold, size limits and near-threshold confirmation are the flags above, with checked-in defaults.
+It is the only environment variable the plugin reads. Model, threshold, size limits and near-threshold confirmation are the flags above, with checked-in defaults. The installed troubleshooting reference specifies the Keychain, Credential Manager, and Secret Service fallback entries.
 
 Codex environment policy for `TYPESAFE_API_KEY`: `installation-and-troubleshooting.md`.

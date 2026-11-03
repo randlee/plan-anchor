@@ -38,7 +38,7 @@ ANCHOR = {
     "question_overrides": {}, "version": 1, "status": "locked", "promoted_to": None,
     "beads": {"anchor": None, "plan_questions": None, "dev_questions": None}, "history": [],
 }
-RECORD = {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "intent.md", "anchors": [ANCHOR]}
+RECORD = {"schema": "plan-anchoring/anchors/1", "plan": "phase-a", "intent_ref": "intent.md", "anchors": [ANCHOR]}
 ITEM = "Sprint 2 adds a CLI command and no new dependency.\n"
 JUDGE = ["judge", "--anchors", "anchors.json", "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", "item.txt",
          "--run-dir", "runs"]

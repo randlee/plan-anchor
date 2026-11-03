@@ -64,7 +64,7 @@ def anchor(aid="ANC-001", status="locked", source_type="ANC", source_ref=None, s
 
 
 def record(*anchors):
-    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-current", "intent_ref": "doc/plan/phase-current/intent.md",
+    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-z", "intent_ref": "docs/plans/phase-z/intent.md",
             "anchors": list(anchors)}
 
 
@@ -147,6 +147,49 @@ class Transport:
 
     def default(self):
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
+
+
+class CredentialLookupTests(unittest.TestCase):
+    def test_environment_key_wins_without_consulting_the_platform_store(self):
+        with env(TYPESAFE_API_KEY="env-key"), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
+            self.assertEqual(jj.resolved_api_key(), "env-key")
+        store.assert_not_called()
+
+    def test_present_but_invalid_environment_key_fails_closed_without_consulting_store(self):
+        with env(TYPESAFE_API_KEY="  "), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
+            self.assertEqual(jj.resolved_api_key(), "")
+        store.assert_not_called()
+
+    def test_macos_uses_the_documented_keychain_item(self):
+        completed = mock.Mock(returncode=0, stdout="mac-key\n")
+        with mock.patch.object(jj.sys, "platform", "darwin"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(jj.credential_store_api_key(), "mac-key")
+        run.assert_called_once_with(
+            ["security", "find-generic-password", "-s", "plan-anchor", "-a", "typesafe-api-key", "-w"],
+            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
+            text=True, encoding="utf-8", timeout=5, check=False,
+        )
+
+    def test_linux_uses_the_documented_secret_service_item(self):
+        completed = mock.Mock(returncode=0, stdout="linux-key\n")
+        with mock.patch.object(jj.sys, "platform", "linux"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(jj.credential_store_api_key(), "linux-key")
+        run.assert_called_once_with(
+            ["secret-tool", "lookup", "service", "plan-anchor", "account", "typesafe-api-key"],
+            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
+            text=True, encoding="utf-8", timeout=5, check=False,
+        )
+
+    def test_windows_uses_credential_manager(self):
+        with mock.patch.object(jj.sys, "platform", "win32"), mock.patch.object(jj, "_windows_credential", return_value="windows-key") as credential:
+            self.assertEqual(jj.credential_store_api_key(), "windows-key")
+        credential.assert_called_once_with()
+
+    def test_missing_or_invalid_store_key_fails_closed_without_contacting_jev(self):
+        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="bad key"), consented():
+            error = failure(jj.remote_preflight(mock.Mock(), "anchor text"))
+        self.assertEqual(error.code, "AUTH.CREDENTIALS")
+        self.assertNotIn("bad key", error.message)
 
 
 def http(status, text="", retry_after=None):
@@ -1060,7 +1103,7 @@ class ValidateTests(unittest.TestCase):
             code, out = run_cli(["validate", "--anchors", path])
             self.assertEqual((code, out["data"]["valid"], out["data"]["problems"]), (0, True, []))
             self.assertIn("no locked anchors", out["data"]["warnings"])
-            self.assertIn("intent_ref file not found: doc/plan/phase-current/intent.md", out["data"]["warnings"])
+            self.assertIn("intent_ref file not found: docs/plans/phase-z/intent.md", out["data"]["warnings"])
             Path(d, "intent.md").write_text("# intent\n")
             code, out = run_cli(["validate", "--anchors", path])
             self.assertEqual([w for w in out["data"]["warnings"] if "intent_ref" in w], [])
@@ -1457,11 +1500,11 @@ class AgentPreflightTests(unittest.TestCase):
             root = (Path(d) / "repo").resolve()
             root.mkdir()
             script = self.install(root)
-            anchors = write(root, "doc/plan/phase-current/anchors.json", record(anchor()))
+            anchors = write(root, "docs/plans/phase-a/anchors.json", record(anchor()))
             evidence = write(root, "reports/sprint.md", "done")
             code, out = run_installed(script, [
                 "agent-preflight", "--workspace-root", str(root), "--script", str(script),
-                "--anchors", "doc/plan/phase-current/anchors.json", "--run-dir", "doc/plan/phase-current/runs",
+                "--anchors", "docs/plans/phase-a/anchors.json", "--run-dir", "docs/plans/phase-a/runs",
                 "--evidence", evidence, "--identifier", "proj-s2", "--pr-number", "12",
                 "--correlation-id", "proj-s2:dev",
             ], cwd=root)
@@ -2258,7 +2301,7 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
             r["error"] = {"code": "JEV.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
     failing = [a for a, v in verdicts.items() if v in jj.FAILING]
     run = {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-{created_at}-{item}", "gate": gate, "created_at": created_at,
-           "anchors_path": "anchors.json", "plan": "phase-current",
+           "anchors_path": "anchors.json", "plan": "phase-a",
            "item": {"id": item, "title": title, "source": "f", "chars": 10, "truncated": False},
            "model_requested": "jev-latest", "model_answered": "jev-1.13.0", "threshold": 0.6, "dry_run": False, "fixture": False,
            "results": results, "summary": {"counts": {}, "failing": failing, "errors": [a for a, v in verdicts.items() if v == "error"],

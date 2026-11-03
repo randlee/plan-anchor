@@ -315,10 +315,10 @@ apply, so `yes` is read as `true`. "Committed" is checked only as "not
 git-ignored" (`set` reports `settings_ignored_by_git`).
 
 Consequences: A typo never falls back to a default. The keys are
-`schema_version`, `anchor_tracker` and `allow_remote_judge` (ADR-016); the
+`schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
+`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-082); the
 nearest file at or above the repository wins whole (ADR-015).
-`TYPESAFE_API_KEY` stays an environment variable because it is a secret, and
-since 0.7.3 it is the only one the plugin reads for configuration: the
+`TYPESAFE_API_KEY` is checked first because it is a runtime secret; when it is absent, the live judge checks the documented platform credential store (macOS Keychain, Windows Credential Manager, or Linux Secret Service) without printing its value. It is the only environment variable the plugin reads for runtime credentials, and since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
 CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
@@ -326,8 +326,8 @@ CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
 endpoint has no override), `USER` is read only as the default for
 `add --stated-by`, and the home directory (`HOME`, `USERPROFILE`) only ends
 the install and settings walks and names the global locations. `install.py` writes `anchor_tracker` and
-`allow_remote_judge` and keeps `install-lock.json` beside the settings.
-REQ-018, REQ-019.
+`allow_remote_judge`, keeps `plan_dir`, and keeps `install-lock.json` beside
+the settings. REQ-018, REQ-019, REQ-082.
 
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 

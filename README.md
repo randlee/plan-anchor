@@ -2,7 +2,7 @@
 
 A Claude Code and Codex skill that keeps plans, and the code built from them, anchored to what you actually said while planning. Facts you state are captured verbatim as numbered **anchors**, turned into typed questions for [TypeSafe's Jev](https://typesafe.ai) decision model, and enforced mechanically at two gates: once against the plan, once against the delivered work. When something drifts, the report quotes your own words back.
 
-> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require `TYPESAFE_API_KEY` and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
+> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require a TypeSafe credential (`TYPESAFE_API_KEY` or the documented platform credential store) and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
 
 ## The problem
 
@@ -11,7 +11,7 @@ Over a long planning conversation the specific things you say get compressed out
 ## How it works
 
 1. **Capture.** While you plan, the orchestrator watches for directives about *how* the work must be done. For each one it writes one testable requirement (the anchor `statement`), keeps your exact words as the `quote`, checks the statement against a testability rubric and existing anchors, and proposes both. Nothing is locked until you confirm. A phase needs five to fifteen anchors, not one per sentence.
-2. **Record and tune independently.** Locked anchors are numbered (`ANC-001`...) and stored with provenance in `doc/plan/phase-current/anchors.json`, rendered to `anchors.md`, and given a small bead tree so their questions version alongside the work. Existing requirements (`REQ-*`) and ADRs (`ADR-*`) join the same record under their own IDs. A separate higher-reasoning tuner (Claude: Opus; Codex: Sol) derives a frozen oracle from the approved intent and anchor, then loops over Jev calls while refining question text. It never receives "make this plan pass" as an objective.
+2. **Record and tune independently.** Locked anchors are numbered (`ANC-001`...) and stored with provenance in the current phase folder's `anchors.json` (`docs/plans/phase-<current>/anchors.json`, named by `plan_dir` in `.sc/plan-anchor/settings.yaml`), rendered to `anchors.md`, and given a small bead tree so their questions version alongside the work. Existing requirements (`REQ-*`) and ADRs (`ADR-*`) join the same record under their own IDs. A separate higher-reasoning tuner (Claude: Opus; Codex: Sol) derives a frozen oracle from the approved intent and anchor, then loops over Jev calls while refining question text. It never receives "make this plan pass" as an objective.
 3. **Planning gate.** Each planning bead is judged against every anchor by three orthogonal Jev questions: is the anchor relevant to this bead, does the bead address it, does the bead contradict it. Answers are gated in code into one verdict per anchor, coverage is computed across beads, and you iterate until nothing is forgotten or contradicted.
 4. **Development gate.** When a sprint is delivered, the same anchors are judged against the account of the work (sprint report, PR, diff summary, tests) with a fourth question: is compliance *evidenced*, not just asserted. Each satisfied anchor is paired with a deterministic check, because Jev judges text and only a diff proves the code.
 5. **Report and iterate.** A failing verdict reads: `bd-42 · ANC-012 · not addressed  Anchor: The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules. You said (planning session, Oct 9): "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code" This bead does not carry the directive forward.` Each finding is triaged (plan defect, anchor defect, question defect, or Jev error), fixed where the defect is, and re-run. An oversized bead is treated as a symptom: unapproved work is removed first, then prose and ceremony, and only remaining approved work is split.
@@ -63,7 +63,7 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
-| `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Set it in the environment for local sessions and for cloud or remote agents (platform secrets); never commit it |
+| `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |
 | `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
@@ -79,17 +79,17 @@ That model applies to **any cloud or remote agent** that checks out the reposito
 - `.sc/plan-anchor/settings.yaml` — `anchor_tracker` (`br` or `bd`) and `allow_remote_judge` (policy, not a secret).
 - `.sc/plan-anchor/install-lock.json` — installed version and owned file list.
 - The harness tree you installed: `.claude/`, `.codex/`, and/or `.cursor/` (`skills/plan-anchoring/`, `agents/anchor-*.md`).
-- Anchors, plans, and run history under your repo (for example `doc/plan/.../anchors.json`).
+- Anchors, plans, and run history under your repo (for example `docs/plans/phase-b/anchors.json`).
 
 **What does not go in git.**
 
-- `TYPESAFE_API_KEY` — the only secret or credential the scripts read; never commit it. Configure it in the **remote environment** (platform secrets, worker env, or your host's secret injection). It must be present when `jev_judge.py` makes a live call.
+- `TYPESAFE_API_KEY` or a platform credential — never commit either. Configure cloud and remote agents with platform secrets or their environment; local interactive hosts may use the documented platform credential store when the environment key is absent.
 
 **Live Jev in cloud (same gate as local).**
 
 Both must be true before any live rubric, tuning, fixture check, or gate run sends text to TypeSafe:
 
-1. `TYPESAFE_API_KEY` is set in the agent's environment.
+1. `TYPESAFE_API_KEY` is set in the agent's environment, or the host has the documented platform credential entry.
 2. The repository's committed settings file sets `allow_remote_judge: true`.
 
 If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED`) and send nothing. Consent is **repository policy** (committed once per repo); the key is **runtime credentials** (injected per environment). Offline commands (`--dry-run`, `--answers-file`, lint, render) still work without the key.
@@ -112,7 +112,8 @@ For PATH, GUI-launched hosts, and Codex shell policy around `TYPESAFE_API_KEY`, 
 
 ```bash
 S=.claude/skills/plan-anchoring/scripts/jev_judge.py   # in the install folder (or .codex/, .cursor/)
-A=doc/plan/phase-current/anchors.json
+P=docs/plans/phase-b   # the current phase folder, docs/plans/phase-<current>; the skill reads it from plan_dir in .sc/plan-anchor/settings.yaml
+A=$P/anchors.json
 
 # lock the first anchor (creates anchors.json) after the live Jev rubric, then render the human view
 python3 $S add --rubric --anchors $A --quote "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code" \
@@ -126,10 +127,10 @@ python3 $S judge --anchors $A --gate plan --all --item-id bd-42 --item-file /tmp
 
 # run the planning gate for a bead (needs the key and `allow_remote_judge: true`), then read the report
 python3 $S judge --anchors $A --gate plan --all --item-id bd-42 --item-file /tmp/bd-42.txt
-python3 $S report --run doc/plan/phase-current/anchor-runs/<run>.json --format md
+python3 $S report --run $P/anchor-runs/<run>.json --format md
 
 # coverage across all judged beads
-python3 $S coverage --runs doc/plan/phase-current/anchor-runs --gate plan --format md
+python3 $S coverage --runs $P/anchor-runs --gate plan --format md
 ```
 
 In a Claude Code, Codex, or Cursor session the installed skill does this for you: say "anchor this" or "lock this" while planning, then "run the planning gate on the sprint 2 beads" or "review sprint 2 against the anchors". Claude Code invokes Sonnet gate agents and an Opus tuner from the install folder's `.claude/agents/`; Codex invokes Luna gate agents and a Sol tuner from `.codex/agents/`. Claude uses the Agent tool, never the Task tool. Cursor invokes Composer gate agents and a Grok-high tuner from `.cursor/agents/` through the Task tool, with no model override.

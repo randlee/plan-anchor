@@ -247,6 +247,9 @@ class RenderingTests(unittest.TestCase):
                         "out = {}\n"
                         "for remote in (None, True, False):\n"
                         f"    out[str(remote)] = s.render_settings(s.Settings(1, {tracker!r}, remote))\n"
+                        f"out['plan_dir'] = s.render_settings(s.Settings(1, {tracker!r}, True, 'docs/plans/phase-b'))\n"
+                        "out['bad'] = sorted(v for v in ('docs/plans/phase-<current>', '../x', '/x', 'x/', 'a\\\\b', 'yes')\n"
+                        "                    if s.plan_dir_problem(v))\n"
                         "print(json.dumps(out))\n")
                 proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -257,6 +260,12 @@ class RenderingTests(unittest.TestCase):
                     self.assertEqual(installed[str(remote)], text)
                     parsed = inst.parse_settings(text, yaml)
                     self.assertEqual((parsed.value.anchor_tracker, parsed.value.allow_remote_judge), (tracker, remote))
+            with self.subTest(tracker=tracker, plan_dir="docs/plans/phase-b"):
+                text = inst.render_settings(inst.Settings(1, tracker, True, "docs/plans/phase-b"))
+                self.assertEqual(installed["plan_dir"], text)
+                self.assertTrue(text.endswith('plan_dir: "docs/plans/phase-b"\n'))
+                self.assertEqual(inst.parse_settings(text, yaml).value.plan_dir, "docs/plans/phase-b")
+                self.assertEqual(installed["bad"], sorted(("docs/plans/phase-<current>", "../x", "/x", "x/", "a\\b")))
 
     def test_runtime_templates_are_copied_verbatim(self):
         """The skill's own templates/*.md.j2 are sc-compose inputs at run time, not install templates."""
@@ -665,6 +674,27 @@ class InstallTests(unittest.TestCase):
         self.assertTrue(data["switched"])
         self.assertEqual((self.tracker_setting(repo), self.remote_setting(repo)),
                          ("anchor_tracker: bd", ["allow_remote_judge: true"]))
+
+    def test_rerun_and_switch_keep_the_plan_dir(self):
+        """plan_dir names the current phase folder (docs/plans/phase-<current>); the installer never drops or rewrites it."""
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo, allow_remote_judge=True))
+        settings = repo.path(".sc/plan-anchor/settings.yaml")
+        settings.write_text(settings.read_text(encoding="utf-8") + "plan_dir: docs/plans/phase-b\n", encoding="utf-8")
+        data = self.ok(run_install(repo, allow_remote_judge=False))
+        self.assertEqual(data["plan"]["allow_remote_judge"]["to"], False)
+        repo.beads("dolt")
+        self.ok(run_install(repo, tracker="bd"))
+        text = settings.read_text(encoding="utf-8")
+        self.assertIn('\nplan_dir: "docs/plans/phase-b"\n', text)
+        self.assertEqual((self.tracker_setting(repo), self.remote_setting(repo)), ("anchor_tracker: bd", ["allow_remote_judge: false"]))
+
+    def test_a_placeholder_plan_dir_is_refused(self):
+        repo = TempRepo(self, beads="sqlite")
+        settings = repo.path(".sc/plan-anchor/settings.yaml")
+        settings.parent.mkdir(parents=True)
+        settings.write_text("schema_version: 1\nplan_dir: docs/plans/phase-<current>\n", encoding="utf-8")
+        self.refused(run_install(repo, tracker="br"), "SETTINGS.INVALID_PLAN_DIR")
 
     def test_a_hand_written_yaml_yes_reads_as_true_and_writes_back_as_bools(self):
         """Operator decision 2026-10-19: ``yes`` counts as true; the installer only ever writes true or false."""

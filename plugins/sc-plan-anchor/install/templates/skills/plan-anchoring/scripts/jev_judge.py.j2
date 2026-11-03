@@ -112,6 +112,7 @@ import math
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -123,6 +124,10 @@ from result import Err, Ok, Result, utf8_stdio  # noqa: E402
 
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"  # tests redirect by patching this constant in-process
+TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY"
+CREDENTIAL_SERVICE = "plan-anchor"
+CREDENTIAL_ACCOUNT = "typesafe-api-key"
+WINDOWS_CREDENTIAL_TARGET = f"{CREDENTIAL_SERVICE}:{CREDENTIAL_ACCOUNT}"
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_ITEM_CHARS = 24000
@@ -640,7 +645,9 @@ def cmd_add(args) -> Result[dict, JudgeError]:
             return loaded
         rec = loaded.value
     else:
-        rec = empty_record(args.plan, args.intent_ref)
+        # Defaults follow --anchors: docs/plans/phase-b/anchors.json is plan "phase-b", intent docs/plans/phase-b/intent.md.
+        rec = empty_record(args.plan or p.resolve().parent.name,
+                           args.intent_ref or (pathlib.PurePath(args.anchors).parent / "intent.md").as_posix())
     listed = anchor_list(rec)
     if isinstance(listed, Err):
         return listed
@@ -1966,12 +1973,77 @@ def read_item(args) -> Result[dict, JudgeError]:
     return Ok(item)
 
 
+def _command_credential(argv: list[str]) -> str:
+    """Read a credential from a platform command without exposing its output on failure."""
+    try:
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, encoding="utf-8", timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _windows_credential() -> str:
+    """Read the documented generic credential target from Windows Credential Manager."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Credential(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD), ("Type", wintypes.DWORD), ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR), ("LastWritten", wintypes.FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD), ("CredentialBlob", ctypes.c_void_p),
+                ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR),
+            ]
+
+        credential = ctypes.POINTER(Credential)()
+        advapi = ctypes.windll.advapi32
+        advapi.CredReadW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                     ctypes.POINTER(ctypes.POINTER(Credential)))
+        advapi.CredReadW.restype = wintypes.BOOL
+        advapi.CredFree.argtypes = (ctypes.c_void_p,)
+        if not advapi.CredReadW(WINDOWS_CREDENTIAL_TARGET, 1, 0, ctypes.byref(credential)):
+            return ""
+        try:
+            size = int(credential.contents.CredentialBlobSize)
+            if not size or not credential.contents.CredentialBlob:
+                return ""
+            return ctypes.string_at(credential.contents.CredentialBlob, size).decode("utf-16-le").strip()
+        finally:
+            advapi.CredFree(credential)
+    except (AttributeError, OSError, UnicodeDecodeError):
+        return ""
+
+
+def credential_store_api_key() -> str:
+    """Read the documented OS credential only when the environment has no key."""
+    if sys.platform == "darwin":
+        return _command_credential(["security", "find-generic-password", "-s", CREDENTIAL_SERVICE,
+                                    "-a", CREDENTIAL_ACCOUNT, "-w"])
+    if sys.platform == "win32":
+        return _windows_credential()
+    if sys.platform.startswith("linux"):
+        return _command_credential(["secret-tool", "lookup", "service", CREDENTIAL_SERVICE,
+                                    "account", CREDENTIAL_ACCOUNT])
+    return ""
+
+
+def resolved_api_key() -> str:
+    """Resolve the TypeSafe key from the environment first, then the platform credential store."""
+    environment_key = os.environ.get(TYPESAFE_KEY_ENV)
+    if environment_key is not None:
+        return environment_key.strip()
+    return credential_store_api_key()
+
+
 def check_api_key(api_key: str) -> Result[None, JudgeError]:
     if not api_key:
-        return fail("AUTH.CREDENTIALS", "TYPESAFE_API_KEY is not set", action="Export TYPESAFE_API_KEY, or use --dry-run / --answers-file.")
+        return fail("AUTH.CREDENTIALS", "no TypeSafe API key was found", action="Export TYPESAFE_API_KEY or add the documented platform credential, or use --dry-run / --answers-file.")
     if not api_key.isascii() or any(ord(c) <= 32 or ord(c) == 127 for c in api_key):
-        return fail("AUTH.CREDENTIALS", "TYPESAFE_API_KEY has invalid formatting (whitespace, control or non-ASCII characters)",
-                    action="Re-export TYPESAFE_API_KEY with the key exactly as issued.")
+        return fail("AUTH.CREDENTIALS", "the TypeSafe API key has invalid formatting (whitespace, control or non-ASCII characters)",
+                    action="Replace TYPESAFE_API_KEY or the platform credential with the key exactly as issued.")
     return Ok(None)
 
 
@@ -2022,7 +2094,7 @@ def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeErr
             return cleared
         ctx["api_key"] = cleared.value
     else:
-        ctx["api_key"] = os.environ.get("TYPESAFE_API_KEY", "").strip()
+        ctx["api_key"] = os.environ.get(TYPESAFE_KEY_ENV, "").strip()
     return Ok(ctx)
 
 
@@ -2077,7 +2149,7 @@ def _from_tool_error(error) -> JudgeError:
 
 def remote_preflight(args, what: str) -> Result[str, JudgeError]:
     """Key and consent checks shared by every live Jev call; returns the API key. Nothing leaves the machine before this passes."""
-    api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    api_key = resolved_api_key()
     checked = check_api_key(api_key)
     if isinstance(checked, Err):
         return checked
@@ -3221,8 +3293,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--source-type", choices=SOURCE_TYPES, default="ANC")
     a.add_argument("--source-ref", default="", help="REQ-014 / ADR-0007 when source type is REQ/ADR")
     a.add_argument("--status", choices=STATUSES, default="proposed", help="proposed or locked; retired is refused")
-    a.add_argument("--plan", default="phase-current", help="used only when creating a new anchors.json")
-    a.add_argument("--intent-ref", default="doc/plan/phase-current/intent.md")
+    a.add_argument("--plan", default="", help="used only when creating a new anchors.json; default: the name of the folder holding --anchors (phase-b)")
+    a.add_argument("--intent-ref", default="", help="used only when creating a new anchors.json; default: intent.md beside --anchors")
     a.set_defaults(func=cmd_add)
 
     u = sub.add_parser("update", help="edit statement, scope, summary, deterministic check or fixtures (never the quote)")

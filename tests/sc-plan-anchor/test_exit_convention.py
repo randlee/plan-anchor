@@ -185,7 +185,7 @@ class JevJudgeErrors(ConventionCase):
         path = self.put("anchors.json", record(anchor()))
         argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
         error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
-        self.assertEqual(error["message"], "TYPESAFE_API_KEY is not set")
+        self.assertEqual(error["message"], "no TypeSafe API key was found")
         try:
             import yaml  # noqa: F401
         except ImportError:

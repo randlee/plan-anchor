@@ -64,7 +64,8 @@ lock records):
 and once per destination:
   <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
                                                ``allow_remote_judge`` when a flag gives it;
-                                               written when either value changes
+                                               written when either value changes; a
+                                               ``plan_dir`` it holds is kept
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
   <dest>/.backup/<UTC>/<path>                  files ``--overwrite`` moved aside, and
   <dest>/.backup/.gitignore                    ``*``, so the backups are not committed
@@ -432,7 +433,8 @@ def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, s
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
-SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge")
+SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir")
+PLAN_DIR_CONVENTION = "docs/plans/phase-<current>"
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
 SETTINGS_HEADER = """\
@@ -444,6 +446,10 @@ TRACKER_LINE = "anchor_tracker: {anchor_tracker}\n"
 REMOTE_JUDGE_LINES = """\
 # allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.
 allow_remote_judge: {value}
+"""
+PLAN_DIR_LINES = """\
+# plan_dir: the current phase's plan folder (anchors.json, intent.md, anchor-runs/). Set it again when the phase changes.
+plan_dir: {value}
 """
 DOLT_OUT_OF_SCOPE = (
     "bd is supported only where a Dolt-backed .beads/ already exists; "
@@ -460,6 +466,22 @@ class Settings:
     schema_version: int
     anchor_tracker: Optional[str]
     allow_remote_judge: Optional[bool] = None
+    plan_dir: Optional[str] = None
+
+
+def plan_dir_problem(value: Any) -> Optional[str]:
+    """Why ``value`` is not a usable ``plan_dir``, or None (the installed plan_anchor_settings.py rule)."""
+    if not isinstance(value, str):
+        return f"must be a string such as 'docs/plans/phase-b', got {type(value).__name__}"
+    if not value or value != value.strip():
+        return "must be a non-empty path with no surrounding spaces"
+    if "\\" in value or value.startswith("/") or (len(value) > 1 and value[1] == ":"):
+        return "must be a relative path with forward slashes"
+    if "<" in value or ">" in value:
+        return "still holds a placeholder such as <current>; write the phase id, e.g. docs/plans/phase-b"
+    if any(part in ("", ".", "..") for part in value.split("/")):
+        return "must not hold empty, '.' or '..' parts or end in '/'"
+    return None
 
 
 def _load_yaml() -> Result[Any, ToolError]:
@@ -491,7 +513,8 @@ def _strict_loader(yaml: Any) -> type:
 def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
     path = SETTINGS_RELPATH
     fix = (f"Edit {path}: it must hold 'schema_version: {SCHEMA_VERSION}' and optionally "
-           "'anchor_tracker: br' or 'anchor_tracker: bd' and 'allow_remote_judge: true' or 'allow_remote_judge: false'.")
+           "'anchor_tracker: br' or 'anchor_tracker: bd', 'allow_remote_judge: true' or 'allow_remote_judge: false', "
+           f"and 'plan_dir: {PLAN_DIR_CONVENTION}' with the phase id.")
     try:
         data: Any = yaml.load(text, Loader=_strict_loader(yaml))  # a SafeLoader subclass
     except yaml.YAMLError as exc:
@@ -513,7 +536,11 @@ def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
     remote = data.get("allow_remote_judge")
     if "allow_remote_judge" in data and type(remote) is not bool:
         return err("SETTINGS.INVALID_REMOTE_JUDGE", f"{path} allow_remote_judge is {remote!r}; expected true or false", fix)
-    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote))
+    plan_dir = data.get("plan_dir")
+    problem = plan_dir_problem(plan_dir) if "plan_dir" in data else None
+    if problem:
+        return err("SETTINGS.INVALID_PLAN_DIR", f"{path} plan_dir is {plan_dir!r}: it {problem}", fix)
+    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir))
 
 
 def settings_path(root: Path) -> Path:
@@ -542,11 +569,15 @@ def render_settings(settings: Settings) -> str:
         raise ValueError(f"render_settings got tracker {settings.anchor_tracker!r}")  # caller bug
     if settings.allow_remote_judge is not None and type(settings.allow_remote_judge) is not bool:
         raise ValueError(f"render_settings got allow_remote_judge {settings.allow_remote_judge!r}")  # caller bug
+    if settings.plan_dir is not None and plan_dir_problem(settings.plan_dir):
+        raise ValueError(f"render_settings got plan_dir {settings.plan_dir!r}")  # caller bug
     text = SETTINGS_HEADER.format(schema_version=settings.schema_version)
     if settings.anchor_tracker is not None:
         text += TRACKER_LINE.format(anchor_tracker=settings.anchor_tracker)
     if settings.allow_remote_judge is not None:
         text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
+    if settings.plan_dir is not None:
+        text += PLAN_DIR_LINES.format(value=json.dumps(settings.plan_dir, ensure_ascii=False))  # quoted: always a string
     return text
 
 
@@ -783,6 +814,7 @@ class Plan:
     settings_change: Optional[dict] = None
     remote_judge_change: Optional[dict] = None
     allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
+    plan_dir: Optional[str] = None  # kept from the destination's own settings file
     br_init: bool = False
 
 
@@ -978,6 +1010,7 @@ def build_plan(root: Path, package: Package, renderer: Renderer, choice: Tracker
     if configured != choice.tracker:
         plan.settings_change = {"path": SETTINGS_RELPATH, "from": configured, "to": choice.tracker}
     plan.allow_remote_judge = choice.settings.allow_remote_judge if choice.settings is not None else None
+    plan.plan_dir = choice.settings.plan_dir if choice.settings is not None else None
     plan.backup = sorted(set(plan.backup))
     plan.remove = sorted(set(plan.remove))
     return Ok(plan)
@@ -1044,7 +1077,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
                    "Fix the reported path (permissions, disk space), then rerun; the lock file is written last.")
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker,
-                                              allow_remote_judge=plan.allow_remote_judge))
+                                              allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir))
         if isinstance(saved, Err):
             return saved
     changed = plan.create + plan.replace + plan.remove
