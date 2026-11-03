@@ -129,11 +129,11 @@ ADD = ["add", "--anchors", "anchors.json", "--stated-at", "2026-10-09"]
 # name: (argv, files, env, stdin, exit code, expected error object or None, expected data)
 JEV_CASES = {
     "auth_missing_key": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {}, None, 2,
-                         {"code": "AUTH.CREDENTIALS", "message": "TYPESAFE_API_KEY is not set", "recoverable": False,
-                          "suggested_action": "Export TYPESAFE_API_KEY, or use --dry-run / --answers-file."}, None),
+                         {"code": "AUTH.CREDENTIALS", "message": "no TypeSafe API key was found", "recoverable": False,
+                          "suggested_action": "Export TYPESAFE_API_KEY or add the documented platform credential, or use --dry-run / --answers-file."}, None),
     "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
-                        {"code": "AUTH.CREDENTIALS", "message": "TYPESAFE_API_KEY has invalid formatting (whitespace, control or non-ASCII characters)",
-                         "recoverable": False, "suggested_action": "Re-export TYPESAFE_API_KEY with the key exactly as issued."}, None),
+                        {"code": "AUTH.CREDENTIALS", "message": "the TypeSafe API key has invalid formatting (whitespace, control or non-ASCII characters)",
+                         "recoverable": False, "suggested_action": "Replace TYPESAFE_API_KEY or the platform credential with the key exactly as issued."}, None),
     # A repository (".git") whose settings file does not record allow_remote_judge. The workspace is cwd. The key must
     # not be a substring of the message: output redacts it.
     "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,

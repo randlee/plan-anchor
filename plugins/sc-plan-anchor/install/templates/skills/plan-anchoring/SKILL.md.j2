@@ -33,7 +33,7 @@ python3 "$T" resolve > /tmp/anchor-tracker.json; jq '{success, error: .error.cod
 ANCHOR_TRACKER="$(jq -r '.data.tracker // empty' /tmp/anchor-tracker.json)"
 which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
 which sc-compose && sc-compose --version    # 1.7.0 or newer
-test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set" || echo "TYPESAFE_API_KEY missing"
+test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set (preferred)" || echo "TYPESAFE_API_KEY absent; live Jev may use the documented platform credential store"
 python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq '.data.allow_remote_judge'   # true, false, or null (never asked)
 ```
 

@@ -149,6 +149,49 @@ class Transport:
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
 
 
+class CredentialLookupTests(unittest.TestCase):
+    def test_environment_key_wins_without_consulting_the_platform_store(self):
+        with env(TYPESAFE_API_KEY="env-key"), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
+            self.assertEqual(jj.resolved_api_key(), "env-key")
+        store.assert_not_called()
+
+    def test_present_but_invalid_environment_key_fails_closed_without_consulting_store(self):
+        with env(TYPESAFE_API_KEY="  "), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
+            self.assertEqual(jj.resolved_api_key(), "")
+        store.assert_not_called()
+
+    def test_macos_uses_the_documented_keychain_item(self):
+        completed = mock.Mock(returncode=0, stdout="mac-key\n")
+        with mock.patch.object(jj.sys, "platform", "darwin"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(jj.credential_store_api_key(), "mac-key")
+        run.assert_called_once_with(
+            ["security", "find-generic-password", "-s", "plan-anchor", "-a", "typesafe-api-key", "-w"],
+            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
+            text=True, encoding="utf-8", timeout=5, check=False,
+        )
+
+    def test_linux_uses_the_documented_secret_service_item(self):
+        completed = mock.Mock(returncode=0, stdout="linux-key\n")
+        with mock.patch.object(jj.sys, "platform", "linux"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(jj.credential_store_api_key(), "linux-key")
+        run.assert_called_once_with(
+            ["secret-tool", "lookup", "service", "plan-anchor", "account", "typesafe-api-key"],
+            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
+            text=True, encoding="utf-8", timeout=5, check=False,
+        )
+
+    def test_windows_uses_credential_manager(self):
+        with mock.patch.object(jj.sys, "platform", "win32"), mock.patch.object(jj, "_windows_credential", return_value="windows-key") as credential:
+            self.assertEqual(jj.credential_store_api_key(), "windows-key")
+        credential.assert_called_once_with()
+
+    def test_missing_or_invalid_store_key_fails_closed_without_contacting_jev(self):
+        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="bad key"), consented():
+            error = failure(jj.remote_preflight(mock.Mock(), "anchor text"))
+        self.assertEqual(error.code, "AUTH.CREDENTIALS")
+        self.assertNotIn("bad key", error.message)
+
+
 def http(status, text="", retry_after=None):
     return jj.http_error(status, text, retry_after)
 

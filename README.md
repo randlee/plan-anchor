@@ -2,7 +2,7 @@
 
 A Claude Code and Codex skill that keeps plans, and the code built from them, anchored to what you actually said while planning. Facts you state are captured verbatim as numbered **anchors**, turned into typed questions for [TypeSafe's Jev](https://typesafe.ai) decision model, and enforced mechanically at two gates: once against the plan, once against the delivered work. When something drifts, the report quotes your own words back.
 
-> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require `TYPESAFE_API_KEY` and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
+> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require a TypeSafe credential (`TYPESAFE_API_KEY` or the documented platform credential store) and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
 
 ## The problem
 
@@ -63,7 +63,7 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
-| `TYPESAFE_API_KEY` | the Jev-backed workflow | Get a key at typesafe.ai. Set it in the environment for local sessions and for cloud or remote agents (platform secrets); never commit it |
+| `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |
 | `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
@@ -83,13 +83,13 @@ That model applies to **any cloud or remote agent** that checks out the reposito
 
 **What does not go in git.**
 
-- `TYPESAFE_API_KEY` — the only secret or credential the scripts read; never commit it. Configure it in the **remote environment** (platform secrets, worker env, or your host's secret injection). It must be present when `jev_judge.py` makes a live call.
+- `TYPESAFE_API_KEY` or a platform credential — never commit either. Configure cloud and remote agents with platform secrets or their environment; local interactive hosts may use the documented platform credential store when the environment key is absent.
 
 **Live Jev in cloud (same gate as local).**
 
 Both must be true before any live rubric, tuning, fixture check, or gate run sends text to TypeSafe:
 
-1. `TYPESAFE_API_KEY` is set in the agent's environment.
+1. `TYPESAFE_API_KEY` is set in the agent's environment, or the host has the documented platform credential entry.
 2. The repository's committed settings file sets `allow_remote_judge: true`.
 
 If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED`) and send nothing. Consent is **repository policy** (committed once per repo); the key is **runtime credentials** (injected per environment). Offline commands (`--dry-run`, `--answers-file`, lint, render) still work without the key.
