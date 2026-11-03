@@ -26,6 +26,41 @@ python3 "$S" rubric --anchors "$A" --id ANC-012            # a locked anchor
 python3 "$S" rubric --statement "<candidate>" --quote "<words>" --scope "<scope>"   # before add
 ```
 
+When an approved clarification is needed, explicitly select it with
+`rubric --approved-intent-file <JSON>`. The file contains exactly
+`{id, version, sha256, content}`; `sha256` hashes the UTF-8 content. The
+integer or nonblank string version identifies the recorded approval packet.
+The request includes this object as `state.intent`, alongside the unchanged
+`state.anchor` quote, statement, and scope. The question must explicitly use
+that context; supplying it cannot fix a question that restricts evidence to
+the quote. Only already approved provenance belongs here. A valid hash proves
+integrity, not human approval; never infer approval from a supplied file.
+
+`rubric --questions <JSON>` selects an independently accepted calibration's
+sealed `{questions, digest}` object. The digest hashes canonical JSON
+`{questions}` (sorted keys, compact separators, UTF-8, no ASCII escaping).
+It must contain exactly the five rubric role IDs, each a choice question with
+instructions and yes/no/unclear criteria. The seal proves integrity, not
+calibration acceptance: retain the independently accepted tournament result
+and frozen oracle before selecting its seal. Neither option edits installed
+assets; absent options retain the existing request and defaults. These flags
+apply only to `rubric`; `add --rubric` retains its default instrument.
+
+Both optional inputs must be regular UTF-8 JSON files under the actual git
+repository containing `--repository-root`; relative paths start at that root.
+Symlink escapes, duplicate JSON keys, malformed descriptors and mismatched
+digests are refused before credential lookup or transport. Dry-run and fixture
+modes remain offline. Live use still requires the repository's recorded
+`allow_remote_judge: true`; context does not grant consent. Oversized requests
+with explicit inputs fail before sending or emitting a partial request; intent
+is never truncated.
+
+Each context/custom-rubric entry records `inputs.question_seal`,
+`inputs.request_sha256` (canonical JSON of the complete request), and optional
+`inputs.intent` ID/version/content hash. Archive a paired dry-run's complete
+requests and frozen inputs for review; its request hash must match the live
+entry. Live output retains hashes rather than repeating the full intent.
+
 It first runs deterministic requirement-form linting, then asks Jev five
 semantic questions about the statement: one constraint, observable outcome,
 faithful to the quote (no added or dropped requirement), scoped, and
@@ -80,6 +115,11 @@ fixture arrays. The authority's record digest hashes canonical JSON records;
 the intent digest hashes its UTF-8 `content`. Both result digest fields retain
 the actual rubric seal: triage diagnoses, and a separate tournament changes
 questions. Planning/development payloads retain their existing contracts.
+
+When the actual request includes `state.intent`, triage requires its exact
+descriptor to match `authority.intent`, including ID, version, content and
+digest. Legacy requests without context remain accepted; the source-anchor
+digest still hashes only `state.anchor`.
 
 ## Who tunes
 

@@ -49,6 +49,8 @@ Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --
 ```
 
 - `state` may be a string, object, or array; questions reference fields with backticked paths such as `item.text`.
+- Rubric requests contain `state.anchor {statement, quote, scope}`. Optional `rubric --approved-intent-file` adds `state.intent {id, version, sha256, content}`; `sha256` hashes the exact UTF-8 content. Optional `rubric --questions` selects a sealed `{questions,digest}` file. Both are confined to the repository, integrity-checked before transport, and never imply approval or calibration acceptance. See `question-tuning.md` for selection and consent rules.
+- With either optional input, rubric entries record `inputs {question_seal, request_sha256, intent?}`. Both request and question seals hash sorted-key compact UTF-8 JSON without ASCII escaping; the question seal hashes `{questions}`, and the request hash covers the entire body above. Preserve matching dry-run requests and frozen files for subsequent triage; live results do not repeat intent content.
 - `questions` is keyed by your own IDs; the `instructions` are sent, the ID is not.
 - Types: `choice` (criteria map option to description; up to 255 options), `score` (2 to 10 ordered level descriptions), `noul` (probability of yes, no confidence). This skill uses `choice` so every answer carries a confidence.
 
