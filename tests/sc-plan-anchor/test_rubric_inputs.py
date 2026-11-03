@@ -68,6 +68,32 @@ class RubricInputTests(unittest.TestCase):
             self.assertEqual((code, out['data']['pass'], out['data']['anchors'][0]['verdict']), (0, False, 'inconclusive'))
             transport.assert_not_called()
 
+    def test_request_hash_precedes_presentation_redaction(self):
+        with tempfile.TemporaryDirectory() as root:
+            intent, sealed = self.inputs(root)
+            intent['content'] = 'The fixture omits Authorization: Bearer canary-123. and the bearer header from output.'
+            intent['sha256'] = hashlib.sha256(intent['content'].encode()).hexdigest()
+            write(root, 'intent.json', intent)
+            response = {'answers': rubric_answers()}
+            transport = Transport(response, response)
+            with live(), mock.patch.object(jj, 'call_jev', transport):
+                dry_code, dry = run_cli(self.args(root) + ['--dry-run'])
+                transport_calls_after_dry_run = len(transport.bodies)
+                code, out = run_cli(self.args(root))
+                original = {'model': jj.DEFAULT_MODEL, 'questions': sealed['questions'],
+                            'state': {'anchor': {'statement': STATEMENT, 'quote': QUOTE, 'scope': ''}, 'intent': intent}}
+                displayed = jj.redact_sensitive(original)
+            self.assertEqual((dry_code, code, transport_calls_after_dry_run), (0, 0, 0))
+            self.assertEqual(transport.bodies, [original, original])
+            self.assertNotEqual(displayed, original)
+            self.assertEqual(dry['data']['requests'], [displayed, displayed])
+            original_digest = jj.questions_digest(original)
+            self.assertEqual(out['data']['anchors'][0]['inputs']['request_sha256'], original_digest)
+            self.assertEqual(dry['data']['anchors'][0]['inputs']['request_sha256'], original_digest)
+            self.assertNotEqual(jj.questions_digest(displayed), original_digest)
+            self.assertNotIn('canary-123', json.dumps(dry))
+            self.assertIn('bearer <redacted>', displayed['state']['intent']['content'])
+
     def test_inputs_are_independent_and_defaults_unchanged(self):
         with tempfile.TemporaryDirectory() as root:
             intent, sealed = self.inputs(root)

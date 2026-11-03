@@ -56,10 +56,16 @@ with explicit inputs fail before sending or emitting a partial request; intent
 is never truncated.
 
 Each context/custom-rubric entry records `inputs.question_seal`,
-`inputs.request_sha256` (canonical JSON of the complete request), and optional
-`inputs.intent` ID/version/content hash. Archive a paired dry-run's complete
-requests and frozen inputs for review; its request hash must match the live
-entry. Live output retains hashes rather than repeating the full intent.
+`inputs.request_sha256` (canonical JSON of the complete request before output
+redaction), and optional `inputs.intent` ID/version/content hash. Dry-run output
+uses the same presentation redaction as every emitted value: credentials and
+bearer-shaped text, including synthetic examples, may become `<redacted>`.
+Its displayed body can therefore differ from the canonical request. Preserve
+the frozen validated inputs; when output is redacted, reconstruct the body from
+those inputs, the selected anchor and model, then verify its canonical hash
+against the live entry before triage. Do not treat the redacted display as the
+original request or disable redaction. Live output retains hashes rather than
+repeating the full intent.
 
 It first runs deterministic requirement-form linting, then asks Jev five
 semantic questions about the statement: one constraint, observable outcome,
