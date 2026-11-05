@@ -2,6 +2,59 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.9.0 — 2026-11-04
+
+- The planning gate ships default triage questions (`owns`, `specific`,
+  `stated`, `paraphrase`, `partial`) with routing rules (`rules.json`) and a
+  README of the measurements behind them, under `assets/triage/`. `judge --gate
+  plan` asks them automatically for each cell that fails, in a second request
+  after the verdict is decided (the gate request, and so every verdict, is the
+  same with or without them; measured: adding them to the gate request moved
+  near-threshold verdicts); `--no-triage-questions` skips them. The installer
+  seeds them once into `.sc/plan-anchor/triage/`, which the repository owns:
+  later installs never overwrite or record it, and `judge` prefers that copy
+  over the shipped one. `judge --help` and `triage/README.md` describe what the
+  questions are for and how to edit, add or drop one. Questions passed with
+  `--extra-questions` stay in the gate request, as in 0.8.8.
+- Extra-question answers are optional: a response or fixture that omits one is
+  accepted (a missing gate answer or an unknown id is still refused). Over
+  `--max-request-bytes`, extras are dropped and listed in
+  `extra_questions_dropped` instead of the item being refused (a triage request
+  that is too large is dropped the same way).
+- `questions_sha256` covers the gate questions only; extras get their own
+  `extra_questions_sha256`, so digests of existing runs are unchanged.
+
+## 0.8.8 — 2026-11-04
+
+- `exclude --from <file.jsonl>` records many exclusions in one call: one
+  `{id, item, reason}` or `{id, item, remove: true}` per line, applied all or
+  nothing. A bad line, a duplicate pair or an unknown anchor saves nothing,
+  and the error names `file:line`. Each line behaves as the single-cell form:
+  no version bump, a history event, `remove` of nothing is a no-op. `--id` and
+  `--item` are no longer argparse-required; omitting them without `--from`
+  returns `VALIDATION.INPUT`.
+- Fix: the planning and development gate agents give each question-bead
+  `show` 3 attempts (1 s, then 2 s apart) before stopping with
+  `TRACKER.SHOW_FAILED`. A transient tracker failure, such as a database
+  timeout, no longer aborts the gate. The error now says it failed after 3
+  attempts and keeps the last error text.
+- Fix: `coverage` takes the latest result per anchor and item, not the latest
+  run per item, so re-running some anchors no longer drops the others'
+  results. Cells taken from an earlier run are listed in
+  `carried_from_earlier_run`.
+- Fix: `coverage --anchors <anchors.json>` applies the record's current
+  exclusions. An exclusion recorded after a run shows as `excluded` with its
+  reason; one removed since is listed in `exclusion_removed_rejudge` and does
+  not count as covered. Without `--anchors`, runs are read as written.
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the

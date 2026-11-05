@@ -67,6 +67,9 @@ and once per destination:
                                                written when either value changes; a
                                                ``plan_dir`` it holds is kept
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
+  <dest>/.sc/plan-anchor/triage/              triage defaults (plan-questions.jsonl, rules.json,
+                                               README.md), written only when the folder is
+                                               absent; the repository owns it, never overwritten
   <dest>/.backup/<UTC>/<path>                  files ``--overwrite`` moved aside, and
   <dest>/.backup/.gitignore                    ``*``, so the backups are not committed
   <repository>/.beads/                         created by ``br init`` (``--init-br``)
@@ -816,6 +819,7 @@ class Plan:
     allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
     plan_dir: Optional[str] = None  # kept from the destination's own settings file
     br_init: bool = False
+    triage_seed: Dict[str, bytes] = field(default_factory=dict)  # key -> bytes; written only when the folder is absent
 
 
 def _skill_prefix(target: str) -> str:
@@ -1036,6 +1040,26 @@ def _prune(root: Path, start: Path, stop: Path) -> None:
         current = current.parent
 
 
+TRIAGE_RELDIR = ".sc/plan-anchor/triage"
+TRIAGE_FILES = ("plan-questions.jsonl", "rules.json", "README.md")
+
+
+def triage_seed(root: Path, renderer: "Renderer", tracker: str, target: str) -> Result[Dict[str, bytes], ToolError]:
+    """The repository's triage defaults, from the shipped assets: only when .sc/plan-anchor/triage/ is absent.
+
+    The folder then belongs to the repository: it is not in the lock, and no rerun or upgrade overwrites it.
+    """
+    if (root / TRIAGE_RELDIR).exists() or (root / TRIAGE_RELDIR).is_symlink():
+        return Ok({})
+    seed = {}
+    for name in TRIAGE_FILES:
+        data = renderer.skill_file(f"assets/triage/{name}", tracker, target)
+        if isinstance(data, Err):
+            return data
+        seed[f"{TRIAGE_RELDIR}/{name}"] = data.value
+    return Ok(seed)
+
+
 def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[str], ToolError]:
     """Write the plan. Returns the paths to commit."""
     root = plan.root
@@ -1067,6 +1091,11 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
                 path.unlink()
             target_root = root / key.split("/", 1)[0]
             _prune(root, path.parent, target_root)
+        if plan.triage_seed and not (root / TRIAGE_RELDIR).exists():
+            for key, data in sorted(plan.triage_seed.items()):
+                path = root / key
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
         lock_path = root.joinpath(*LOCK_RELPATH.split("/"))
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = lock_path.with_name(lock_path.name + ".tmp")
@@ -1086,6 +1115,8 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
         commit.append(LOCK_RELPATH)
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         commit.append(SETTINGS_RELPATH)
+    if plan.triage_seed:
+        commit.append(TRIAGE_RELDIR + "/")
     if plan.br_init:
         commit.append(".beads/" if beads_root == root else Path(os.path.relpath(beads_root / ".beads", root)).as_posix() + "/")
     return Ok(commit)
@@ -1196,6 +1227,10 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
     if isinstance(planned, Err):
         return planned
     plan = planned.value
+    seeded = triage_seed(root.value, renderer, choice.value.tracker, plan.targets[0])
+    if isinstance(seeded, Err):
+        return seeded
+    plan.triage_seed = seeded.value
     if opts.allow_remote_judge is not None and opts.allow_remote_judge != plan.allow_remote_judge:
         plan.remote_judge_change = {"path": SETTINGS_RELPATH, "from": plan.allow_remote_judge, "to": opts.allow_remote_judge}
         plan.allow_remote_judge = opts.allow_remote_judge
@@ -1249,6 +1284,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
             "settings": plan.settings_change,
             "allow_remote_judge": plan.remote_judge_change,
             "br_init": plan.br_init,
+            "triage_seed": sorted(plan.triage_seed),
             "lock": LOCK_RELPATH,
         },
         "warnings": plan.warnings,
