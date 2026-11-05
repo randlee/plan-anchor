@@ -11,6 +11,27 @@
   no version bump, a history event, `remove` of nothing is a no-op. `--id` and
   `--item` are no longer argparse-required; omitting them without `--from`
   returns `VALIDATION.INPUT`.
+- Fix: the planning and development gate agents give each question-bead
+  `show` 3 attempts (1 s, then 2 s apart) before stopping with
+  `TRACKER.SHOW_FAILED`. A transient tracker failure, such as a database
+  timeout, no longer aborts the gate. The error now says it failed after 3
+  attempts and keeps the last error text.
+- Fix: `coverage` takes the latest result per anchor and item, not the latest
+  run per item, so re-running some anchors no longer drops the others'
+  results. Cells taken from an earlier run are listed in
+  `carried_from_earlier_run`.
+- Fix: `coverage --anchors <anchors.json>` applies the record's current
+  exclusions. An exclusion recorded after a run shows as `excluded` with its
+  reason; one removed since is listed in `exclusion_removed_rejudge` and does
+  not count as covered. Without `--anchors`, runs are read as written.
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
 
 ## 0.8.7 — 2026-11-02
 

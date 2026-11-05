@@ -1656,6 +1656,58 @@ def load_question_set(gate: str, override_path: str = "") -> Result[dict, JudgeE
     return Ok(qs)
 
 
+def load_extra_questions(paths: list, base: dict) -> Result[tuple, JudgeError]:
+    """Add consumer questions from JSONL files to the base set. Ok((merged_set, sources)).
+
+    Each non-blank line is one question object with an `id` plus the shape of a question in the base set.
+    Extra questions are asked and recorded with every cell but never gate: no role may map to one.
+    """
+    merged = json.loads(json.dumps(base))
+    sources = []
+    for path in paths or []:
+        p = pathlib.Path(path)
+        if not p.is_file():
+            return fail("INPUT.MISSING", f"extra questions not found: {path!r}", action="Pass an existing JSONL file to --extra-questions.")
+        try:
+            raw = p.read_bytes()
+            text = raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return fail("INPUT.MALFORMED", f"extra questions could not be read: {exc}", action=f"Check {path} is a readable UTF-8 file.")
+        ids = []
+        for n, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            where = f"{path}:{n}"
+            try:
+                q = json.loads(line)
+            except json.JSONDecodeError as e:
+                return fail("INPUT.MALFORMED", f"{where}: not a JSON object ({e.msg})", action="Write one question object per line.")
+            if not isinstance(q, dict):
+                return fail("INPUT.MALFORMED", f"{where}: not a JSON object", action="Write one question object per line.")
+            qid = q.pop("id", None)
+            if not isinstance(qid, str) or not qid.strip():
+                return fail("INPUT.MALFORMED", f"{where}: missing a non-empty string 'id'", action="Give every extra question a unique id.")
+            if qid in merged["questions"]:
+                return fail("INPUT.MALFORMED", f"{where}: question id '{qid}' is already in the question set",
+                            action="Extra questions add to the set; to replace a question use an override instead.")
+            if not isinstance(q.get("instructions"), str) or not q.get("type"):
+                return fail("INPUT.MALFORMED", f"{where}: '{qid}' needs 'type' and string 'instructions'",
+                            action="Copy the shape of a question in assets/questions/<gate>.json.")
+            merged["questions"][qid] = q
+            ids.append(qid)
+        sources.append({"path": str(path), "sha256": hashlib.sha256(raw).hexdigest(), "ids": ids})
+    return Ok((merged, sources))
+
+
+def check_extra_not_gating(qs: dict, extra_ids: set, where: str) -> Result[None, JudgeError]:
+    """An extra question never gates: refuse a role that maps to one (for example through an override)."""
+    for role, qid in (qs.get("roles") or {}).items():
+        if qid in extra_ids:
+            return fail("QUESTIONS.ROLES", f"{where} maps role '{role}' to extra question '{qid}'; extra questions never gate",
+                        action="Map the role to a question in the gate's set, or replace that question with an override.")
+    return Ok(None)
+
+
 def merge_overrides(base: dict, override: dict) -> Result[dict, JudgeError]:
     """Per-anchor overrides replace question text by id; roles stay as in base unless overridden."""
     merged = json.loads(json.dumps(base))
@@ -2152,7 +2204,10 @@ def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeErr
     loaded = load_question_set(args.gate, getattr(args, "questions", ""))
     if isinstance(loaded, Err):
         return loaded
-    ctx["base_qs"] = loaded.value
+    extra = load_extra_questions(getattr(args, "extra_questions", None) or [], loaded.value)
+    if isinstance(extra, Err):
+        return extra
+    ctx["base_qs"], ctx["extra_questions"] = extra.value
     loaded = load_answers_fixture(getattr(args, "answers_file", ""), "anchor id")
     if isinstance(loaded, Err):
         return loaded
@@ -2300,6 +2355,10 @@ def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
             return merged
         qs = merged.value
         checked = check_roles(qs, f"question set for {a['id']} after overrides")
+        if isinstance(checked, Err):
+            return checked
+        extra_ids = {i for s in ctx.get("extra_questions") or [] for i in s["ids"]}
+        checked = check_extra_not_gating(qs, extra_ids, f"question set for {a['id']} after overrides")
         if isinstance(checked, Err):
             return checked
         overridden = any(o.get(k) for o in (record_override, bead_override) for k in ("questions", "roles"))
@@ -2461,6 +2520,7 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
         "min_item_chars": ctx["min_item_chars"],
         "dry_run": ctx["dry_run"],
         "fixture": ctx["answers_fixture"] is not None,
+        "extra_questions": ctx.get("extra_questions") or [],
         "results": results,
         "summary": {
             "counts": {k: v for k, v in counts.items() if v},
@@ -3174,26 +3234,54 @@ def cmd_coverage(args) -> Result[Any, JudgeError]:
         runs = [r for r in runs if r.get("gate") == args.gate]
     if not runs:
         return fail("RUNS.NONE", "no run files found", action="Run `judge` first, or check the --runs path.")
-    # latest run per (gate, item) wins
+    record = None
+    if getattr(args, "anchors", ""):
+        loaded = _valid_record(args.anchors)
+        if isinstance(loaded, Err):
+            return loaded
+        record = {a["id"]: a for a in loaded.value["anchors"]}
+    ordered = sorted(runs, key=lambda r: str(r.get("created_at", "")))
+    # latest run per (gate, item), for runs_considered and to mark cells carried from an earlier run
     latest = {}
-    for r in sorted(runs, key=lambda r: str(r.get("created_at", ""))):
+    for r in ordered:
         latest[(r["gate"], r["item"]["id"])] = r
 
     # without a --gate filter, columns are qualified so plan and dev verdicts for one item never overwrite each other
     def column(gate, item_id):
         return item_id if args.gate else f"{gate}:{item_id}"
-    matrix, excluded = {}, {}
-    items = sorted({column(g, i) for g, i in latest})
-    for (gate, item_id), r in latest.items():
+    # latest result per (gate, item, anchor): a re-run of some anchors never drops the others' results
+    cells = {}
+    for r in ordered:
         for res in r["results"]:
-            matrix.setdefault(res["anchor_id"], {})[column(gate, item_id)] = res["verdict"]
-            if res["verdict"] == "excluded":
-                excluded.setdefault(res["anchor_id"], {})[column(gate, item_id)] = (res.get("exclusion") or {}).get("reason", "")
+            cells[(r["gate"], r["item"]["id"], res["anchor_id"])] = (res, r)
+    matrix, excluded, carried, rejudge = {}, {}, {}, {}
+    items = sorted({column(g, i) for g, i in latest})
+    for (gate, item_id, anchor_id), (res, r) in cells.items():
+        col = column(gate, item_id)
+        verdict = res["verdict"]
+        reason = (res.get("exclusion") or {}).get("reason", "")
+        if record is not None and anchor_id in record:
+            # the record is authoritative for exclusions: one recorded after the run applies, one removed since needs a re-run
+            current = exclusion_for(record[anchor_id], item_id)
+            if current is not None:
+                verdict, reason = "excluded", current.get("reason", "")
+            elif verdict == "excluded":
+                rejudge.setdefault(anchor_id, []).append(col)
+                verdict = None
+        if verdict is None:
+            matrix.setdefault(anchor_id, {})  # still listed, and uncovered unless another item satisfies it
+            continue
+        matrix.setdefault(anchor_id, {})[col] = verdict
+        if verdict == "excluded":
+            excluded.setdefault(anchor_id, {})[col] = reason
+        if r is not latest[(gate, item_id)]:
+            carried.setdefault(anchor_id, {})[col] = r.get("run_id")
     anchors_sorted = sorted(matrix)
     uncovered = [a for a in anchors_sorted if not any(v == "satisfied" for v in matrix[a].values())]
     contradicted = {a: [i for i, v in matrix[a].items() if v == "contradicted"] for a in anchors_sorted if any(v == "contradicted" for v in matrix[a].values())}
     data = {"gate": args.gate or "all", "items": items, "anchors": anchors_sorted, "matrix": matrix,
-            "uncovered_anchors": uncovered, "contradicted": contradicted, "excluded": excluded, "runs_considered": len(latest)}
+            "uncovered_anchors": uncovered, "contradicted": contradicted, "excluded": excluded, "runs_considered": len(latest),
+            "carried_from_earlier_run": carried, "exclusion_removed_rejudge": rejudge}
     if args.format == "md":
         lines = [f"## Anchor coverage ({data['gate']})", "", "| Anchor | " + " | ".join(items) + " | Covered |", "| --- | " + " | ".join("---" for _ in items) + " | --- |"]
         for a in anchors_sorted:
@@ -3208,6 +3296,15 @@ def cmd_coverage(args) -> Result[Any, JudgeError]:
             for a in sorted(excluded):
                 for i, reason in sorted(excluded[a].items()):
                     lines.append(f"- {a} x {i}: {reason}")
+        if carried:
+            lines.append("")
+            lines.append("Cells from an earlier run than the item's latest (that run did not judge them):")
+            for a in sorted(carried):
+                for i, run_id in sorted(carried[a].items()):
+                    lines.append(f"- {a} x {i}: {run_id}")
+        if rejudge:
+            lines.append("")
+            lines.append("Exclusion removed since the run; re-judge: " + ", ".join(f"{a} x {i}" for a in sorted(rejudge) for i in sorted(rejudge[a])))
         return Ok("\n".join(lines) + "\n")
     return Ok({"success": True, "data": data, "error": None})
 
@@ -3313,6 +3410,9 @@ def add_judge_options(parser, with_item: bool) -> None:
         parser.add_argument("--id", default="", help="one anchor id")
         parser.add_argument("--all", action="store_true", help="every non-retired anchor that has fixtures")
     parser.add_argument("--questions", default="", help="question-set JSON; default assets/questions/<gate>.json")
+    parser.add_argument("--extra-questions", action="append", default=[], metavar="FILE.jsonl",
+                        help="repeatable: JSONL, one question per line ({id, type, instructions, criteria}); added to the set, "
+                             "asked and recorded with every cell, never gating")
     parser.add_argument("--overrides-file", default="", help="JSON {anchor_id: {questions: {...}, roles: {...}}} read from the question beads; merged after anchors.json overrides")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
@@ -3513,6 +3613,7 @@ def build_parser() -> argparse.ArgumentParser:
     cv.add_argument("--runs", nargs="+", required=True, help="run files or directories")
     cv.add_argument("--gate", choices=("plan", "dev"), default="")
     cv.add_argument("--format", choices=("json", "md"), default="json")
+    cv.add_argument("--anchors", default="", help="anchors.json: apply its current exclusions to the runs (one recorded after a run applies; one removed since is listed to re-judge)")
     cv.set_defaults(func=cmd_coverage)
 
     d = sub.add_parser("diff", help="compare two runs")
