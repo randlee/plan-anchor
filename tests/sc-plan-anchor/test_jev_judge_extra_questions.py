@@ -30,7 +30,7 @@ def with_extra(answers, **extra):
 
 
 def judged_with(d, transport, *paths, anchors=None):
-    args = []
+    args = ["--no-triage-questions"]  # the mechanism alone; the triage defaults are tested in test_triage_defaults
     for p in paths:
         args += ["--extra-questions", p]
     return Judged(d, transport, anchors=anchors, extra_args=args)
@@ -56,7 +56,7 @@ class ExtraQuestionTests(unittest.TestCase):
     def test_without_the_flag_the_run_is_unchanged(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport()
-            j = Judged(d, t)
+            j = Judged(d, t, extra_args=["--no-triage-questions"])
             self.assertEqual(j.run["extra_questions"], [])
             self.assertEqual(sorted(t.bodies[0]["questions"]), ["addressed", "contradicted", "relevant"])
 
@@ -69,7 +69,7 @@ class ExtraQuestionTests(unittest.TestCase):
                     path = jsonl(d, "extra.jsonl", question("owns"))
                     j = judged_with(d, Transport(with_extra(base, owns=(choice, 0.99))), path)
                     self.assertEqual(j.result["verdict"], expected, j.out)
-                    plain = Judged(d, Transport({"model": "jev-1.13.0", "answers": base}))
+                    plain = Judged(d, Transport({"model": "jev-1.13.0", "answers": base}), extra_args=["--no-triage-questions"])
                     self.assertEqual(plain.result["verdict"], expected)
 
     def test_files_are_repeatable_in_order(self):
@@ -87,20 +87,29 @@ class ExtraQuestionTests(unittest.TestCase):
             anchors_path = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy crates.")
             code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", item,
-                                 "--extra-questions", path, "--dry-run", "--out", str(Path(d) / "r.json")])
+                                 "--extra-questions", path, "--no-triage-questions", "--dry-run", "--out", str(Path(d) / "r.json")])
             self.assertEqual(code, 0, out)
             self.assertIn("owns", out["data"]["requests"][0]["questions"])
 
-    def test_answers_fixture_must_answer_extra_questions(self):
+    def test_answers_fixture_may_omit_extra_questions(self):
+        """Extra questions never gate, so a fixture written for the gate questions alone still works (0.9.0)."""
         with tempfile.TemporaryDirectory() as d:
             path = jsonl(d, "extra.jsonl", question("owns"))
             anchors_path = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy crates.")
             common = ["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", item,
-                      "--extra-questions", path, "--out", str(Path(d) / "r.json")]
+                      "--extra-questions", path, "--no-triage-questions", "--out", str(Path(d) / "r.json")]
             code, out = run_cli(common + ["--answers-file", write(d, "a1.json", {"*": plan_answers()})])
-            self.assertNotEqual(code, 0)
-            self.assertEqual(out["error"]["code"], "JEV.RESPONSE_INVALID")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(out["data"]["results"][0]["verdict"], "satisfied")
+            self.assertNotIn("owns", out["data"]["results"][0]["answers"])
+            # a gate question is still required, and an unknown answer id is still refused
+            partial = dict(plan_answers())
+            del partial["addressed"]
+            code, out = run_cli(common + ["--answers-file", write(d, "a3.json", {"*": partial})])
+            self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))
+            code, out = run_cli(common + ["--answers-file", write(d, "a4.json", {"*": dict(plan_answers(), ownz=answer("no"))})])
+            self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))
             code, out = run_cli(common + ["--answers-file", write(d, "a2.json", {"*": dict(plan_answers(), owns=answer("no"))})])
             self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["results"][0]["verdict"], "satisfied")
@@ -145,7 +154,7 @@ class ExtraQuestionRefusalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             overrides = write(d, "overrides.json", {"ANC-001": {"roles": {"compliance": "owns"}}})
             t = Transport()
-            j = Judged(d, t, extra_args=["--extra-questions", jsonl(d, "x.jsonl", question("owns")), "--overrides-file", overrides])
+            j = Judged(d, t, extra_args=["--extra-questions", jsonl(d, "x.jsonl", question("owns")), "--overrides-file", overrides, "--no-triage-questions"])
             self.assertNotEqual(j.code, 0, j.out)
             self.assertEqual(t.bodies, [])
             err = j.out["error"]

@@ -145,6 +145,8 @@ PROBABILITY_ROUNDING = 0.01        # Jev rounds each probability; the sum may be
 TRUNCATION_MARKER = "\n[... truncated by jev_judge; keep the state small ...]"
 HERE = pathlib.Path(__file__).resolve().parent
 QUESTIONS_DIR = HERE.parent / "assets" / "questions"
+TRIAGE_ASSETS = HERE.parent / "assets" / "triage"
+TRIAGE_RELDIR = ".sc/plan-anchor/triage"
 
 SOURCE_TYPES = ("ANC", "REQ", "ADR")
 REGISTER_NAMES = {"REQ": "requirements register", "ADR": "ADR register"}
@@ -1620,6 +1622,21 @@ def load_extra_questions(paths: list, base: dict) -> Result[tuple, JudgeError]:
     return Ok((merged, sources))
 
 
+def triage_questions_path(args, gate: str) -> str:
+    """The triage questions judge adds by default: the repository's .sc/plan-anchor/triage/<gate>-questions.jsonl
+    (nearest at or above --repository-root, stopping before home), else the shipped default; "" when there are none."""
+    import plan_anchor_paths  # stdlib-only sibling
+    name = f"{gate}-questions.jsonl"
+    start = pathlib.Path(getattr(args, "repository_root", "") or ".").resolve()
+    settings = plan_anchor_paths.find_settings(start)
+    if settings is not None:
+        local = settings.parent / "triage" / name
+        if local.is_file():
+            return str(local)
+    shipped = TRIAGE_ASSETS / name
+    return str(shipped) if shipped.is_file() else ""
+
+
 def check_extra_not_gating(qs: dict, extra_ids: set, where: str) -> Result[None, JudgeError]:
     """An extra question never gates: refuse a role that maps to one (for example through an override)."""
     for role, qid in (qs.get("roles") or {}).items():
@@ -1776,7 +1793,7 @@ def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: d
 
 
 def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
-                      shorten: bool = True) -> Result[tuple, JudgeError]:
+                      shorten: bool = True, optional=frozenset()) -> Result[tuple, JudgeError]:
     """call_jev with the attempt policy and context handling. Returns Ok((validated response, meta)) or Err(JudgeError carrying .meta).
 
     - Transport-level failures (429, 529, 5xx, network, invalid response): up to MAX_ATTEMPTS attempts; the first
@@ -1797,7 +1814,7 @@ def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_byte
         meta["item_chars_sent"] = len(item["text"]) if item else 0
         answered = call_jev(body, api_key, timeout)
         if isinstance(answered, Ok):
-            answered = validate_response(answered.value, questions)
+            answered = validate_response(answered.value, questions, optional)
             if isinstance(answered, Ok):
                 return Ok((answered.value, meta))
         exc = answered.error
@@ -1870,16 +1887,20 @@ def answer_problem(ans, question) -> str:
     return None
 
 
-def validate_response(resp: dict, questions: dict) -> Result[dict, JudgeError]:
+def validate_response(resp: dict, questions: dict, optional=frozenset()) -> Result[dict, JudgeError]:
+    """Every question must be answered except the ``optional`` (extra, never-gating) ones; no unknown ids."""
     if not isinstance(resp, dict) or not isinstance(resp.get("answers"), dict):
         return fail("JEV.RESPONSE_INVALID", "Jev response has no 'answers' object", recoverable=True,
                     action="Retry; if it repeats, check the --model name.")
     answers = resp["answers"]
-    if set(answers) != set(questions):
-        missing, extra = sorted(set(questions) - set(answers)), sorted(set(answers) - set(questions))
+    required = set(questions) - set(optional)
+    if not required <= set(answers) or not set(answers) <= set(questions):
+        missing, extra = sorted(required - set(answers)), sorted(set(answers) - set(questions))
         return fail("JEV.RESPONSE_INVALID", f"Jev answer ids differ from the questions (missing {missing}, unexpected {extra})", recoverable=True,
                     action="Retry; if it repeats, check the question ids in the overrides.")
     for qid, q in questions.items():
+        if qid not in answers:
+            continue  # an optional question left unanswered
         problem = answer_problem(answers[qid], q)
         if problem:
             return fail("JEV.RESPONSE_INVALID", f"invalid answer for {qid}: {problem}", recoverable=True,
@@ -2099,7 +2120,7 @@ def check_api_key(api_key: str) -> Result[None, JudgeError]:
     return Ok(None)
 
 
-def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeError]:
+def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) -> Result[dict, JudgeError]:
     """Shared pre-flight for judge and check-fixtures: options, question set, overrides, fixture answers, key and consent.
 
     remote=False (every selected anchor is excluded from the item) skips the key and consent check: nothing is sent.
@@ -2125,7 +2146,12 @@ def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeErr
     loaded = load_question_set(args.gate, getattr(args, "questions", ""))
     if isinstance(loaded, Err):
         return loaded
-    extra = load_extra_questions(getattr(args, "extra_questions", None) or [], loaded.value)
+    extra_paths = list(getattr(args, "extra_questions", None) or [])
+    if triage and not getattr(args, "no_triage_questions", False):
+        default = triage_questions_path(args, args.gate)
+        if default:
+            extra_paths.append(default)
+    extra = load_extra_questions(extra_paths, loaded.value)
     if isinstance(extra, Err):
         return extra
     ctx["base_qs"], ctx["extra_questions"] = extra.value
@@ -2283,6 +2309,7 @@ def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
         if isinstance(checked, Err):
             return checked
         overridden = any(o.get(k) for o in (record_override, bead_override) for k in ("questions", "roles"))
+        qs["optional"] = sorted(extra_ids & set(qs["questions"]))
         prepared.append((a, qs, bool(overridden)))
     return Ok(prepared)
 
@@ -2295,12 +2322,15 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
             return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_key(a)} (or '*')",
                         action=f"Add an entry for {fixture_key(a)} (or '*') to the answers file.")
         meta["attempts"] = 1
-        checked = validate_response({"model": "fixture", "answers": fx}, qs["questions"])
+        sent = body["questions"]
+        left_out = set(qs["questions"]) - set(sent)  # extra questions dropped from this request for size
+        checked = validate_response({"model": "fixture", "answers": {k: v for k, v in fx.items() if k not in left_out}}, sent,
+                                    qs.get("optional") or ())
         if isinstance(checked, Err):
             return checked
         return Ok((checked.value, meta))
-    return judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], qs["questions"],
-                             shorten=ctx["gate"] != "plan")
+    return judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+                             shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
 
 
 def entry_base(a: dict) -> dict:
@@ -2335,13 +2365,23 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
     results, requests_out, model_answered = [], [], None
     for a, qs, overridden in prepared:
         body = {"model": ctx["model"], "state": build_state(a, item), "questions": qs["questions"]}
+        dropped = []
+        if qs.get("optional") and len(encode_body(body)) > ctx["max_request_bytes"]:
+            # extra questions never cost a verdict: over the size cap they are left out of this request, not the item
+            dropped = list(qs["optional"])
+            body["questions"] = {k: v for k, v in qs["questions"].items() if k not in dropped}
         entry = entry_base(a)
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
-            "questions_sha256": questions_digest(qs["questions"]),
+            # the gate questions' digest: extra questions never change it (they get their own)
+            "questions_sha256": questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
         })
+        if qs.get("optional"):
+            entry["extra_questions_sha256"] = questions_digest({k: qs["questions"][k] for k in qs["optional"]})
         if overridden:
             entry["questions"] = qs["questions"]
+        if dropped:
+            entry["extra_questions_dropped"] = dropped
         meta = {"attempts": 0, "item_chars_sent": len(item["text"]), "item_shortened": False}
         if entry["kind"] == "structural" and ctx["gate"] == "plan":
             # Jev is not asked: the default compliance question answered no on 9/10 beads for a structural anchor.
@@ -2370,8 +2410,8 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             if ctx["answers_fixture"] is None and ctx.get("confirm", False) and near_threshold(resp["answers"], qs["roles"], ctx["threshold"], entry["kind"]):
                 # Near the threshold a single answer is noise (8/50 identical re-runs flipped): ask once more, require agreement.
                 entry["near_threshold"] = True
-                second = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], qs["questions"],
-                                           shorten=ctx["gate"] != "plan")
+                second = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+                                           shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
                     meta["attempts"] += meta2.get("attempts", 0)
@@ -2516,7 +2556,7 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
     # An anchor whose `exclude` names this item is never asked: no question set, no size check, no request.
     exclusions = {a["id"]: exclusion_for(a, args.item_id) for a in anchors}
     judged_anchors = [a for a in anchors if exclusions[a["id"]] is None]
-    built = judge_context(args, rec, remote=bool(judged_anchors))
+    built = judge_context(args, rec, remote=bool(judged_anchors), triage=True)
     if isinstance(built, Err):
         return built
     ctx = built.value
@@ -2535,7 +2575,8 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
                 return f"the plan-gate item budget is --max-item-chars {ctx['max_item_chars']}"
             trial = dict(item, text=text)
             for a, qs, _ in prepared:
-                size = len(encode_body({"model": ctx["model"], "state": build_state(a, trial), "questions": qs["questions"]}))
+                gate_questions = {k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}
+                size = len(encode_body({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}))
                 if size > ctx["max_request_bytes"]:
                     return f"with {a['id']} and its questions the request is {size} bytes, over --max-request-bytes {ctx['max_request_bytes']}"
             return None
@@ -3297,6 +3338,8 @@ def add_judge_options(parser, with_item: bool) -> None:
     parser.add_argument("--extra-questions", action="append", default=[], metavar="FILE.jsonl",
                         help="repeatable: JSONL, one question per line ({id, type, instructions, criteria}); added to the set, "
                              "asked and recorded with every cell, never gating")
+    parser.add_argument("--no-triage-questions", action="store_true",
+                        help="judge: do not add the triage questions (.sc/plan-anchor/triage/<gate>-questions.jsonl, else the shipped default)")
     parser.add_argument("--overrides-file", default="", help="JSON {anchor_id: {questions: {...}, roles: {...}}} read from the question beads; merged after anchors.json overrides")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)

@@ -29,6 +29,7 @@ QUOTE = "copy the libraries from the legacy repo as the starting point and remov
 REQ_STATEMENT = "All public CLI commands must support --json output with a stable schema."
 LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001"}
 ASSETS = SKILL / "assets"
+TRIAGE_IDS = {"owns", "specific", "stated", "paraphrase", "partial"}
 
 
 def answer(choice, p=0.9, options=OPTIONS):
@@ -1396,7 +1397,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertFalse(run["summary"]["pass"])
         self.assertEqual(len(run["requests"]), 2)
         self.assertEqual(run["requests"][0]["state"]["item"]["id"], "ex-42")
-        self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})
+        self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"} | TRIAGE_IDS)  # 0.9.0: triage questions by default
         self.assertEqual(run["totals"]["requests"], 2)
         self.assertEqual(run["totals"]["bytes"], sum(len(jj.encode_body(b)) for b in run["requests"]))
         self.assertEqual(run["totals"]["max_request_bytes"], 24000)

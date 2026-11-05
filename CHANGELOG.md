@@ -2,6 +2,22 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.9.0 — 2026-11-04
+
+- The planning gate ships default triage questions (`owns`, `specific`,
+  `stated`, `paraphrase`, `partial`) with routing rules (`rules.json`) and a
+  README of the measurements behind them, under `assets/triage/`. `judge --gate
+  plan` adds them automatically; `--no-triage-questions` skips them. The
+  installer seeds them once into `.sc/plan-anchor/triage/`, which the
+  repository owns: later installs never overwrite or record it, and `judge`
+  prefers that copy over the shipped one.
+- Extra-question answers are optional: a response or fixture that omits one is
+  accepted (a missing gate answer or an unknown id is still refused). Over
+  `--max-request-bytes`, extras are dropped and listed in
+  `extra_questions_dropped` instead of the item being refused.
+- `questions_sha256` covers the gate questions only; extras get their own
+  `extra_questions_sha256`, so digests of existing runs are unchanged.
+
 ## 0.8.8 — 2026-11-04
 
 - `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
