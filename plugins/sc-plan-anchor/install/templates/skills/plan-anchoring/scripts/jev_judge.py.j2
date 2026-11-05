@@ -825,28 +825,17 @@ def cmd_retire(args) -> Result[dict, JudgeError]:
                                          "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None})
 
 
-def cmd_exclude(args) -> Result[dict, JudgeError]:
-    """Add, replace or remove one exclusion. Not a requirement change: no version bump, earlier runs stay valid, any status."""
-    item = (args.item or "").strip()
-    if not item:
-        return fail("VALIDATION.INPUT", "--item cannot be empty; pass the plan item id exactly as judge --item-id gets it")
-    reason = (args.reason or "").strip()
-    if not args.remove and not reason:
-        return fail("VALIDATION.INPUT", "--reason cannot be empty",
-                    action="Say in one sentence why the anchor does not apply to this item.")
-    loaded = _record_and_anchor(args.anchors, args.id)
-    if isinstance(loaded, Err):
-        return loaded
-    rec, a = loaded.value
+def apply_exclusion(a: dict, item: str, reason: str, remove: bool) -> Result[dict, JudgeError]:
+    """Add, replace or remove one exclusion on an anchor in memory. Ok(data); data.changed says whether the anchor changed."""
     exclude = a.get("exclude")
     if exclude is not None and not isinstance(exclude, list):
-        return fail("VALIDATION.ANCHORS", f"{args.id}: exclude must be a list", action="Fix the record by hand, then run validate.")
+        return fail("VALIDATION.ANCHORS", f"{a['id']}: exclude must be a list", action="Fix the record by hand, then run validate.")
     kept = [x for x in (exclude or []) if not (isinstance(x, dict) and x.get("item") == item)]
     removed = len(kept) != len(exclude or [])
-    if args.remove:
-        if not removed:  # nothing to remove: a no-op, not a failure; nothing is saved
-            return Ok({"success": True, "data": {"id": a["id"], "item": item, "removed": True, "changed": False,
-                                                 "exclude": a.get("exclude", []), "version": a.get("version", 1)}, "error": None})
+    if remove:
+        if not removed:  # nothing to remove: a no-op, not a failure
+            return Ok({"id": a["id"], "item": item, "removed": True, "changed": False,
+                       "exclude": a.get("exclude", []), "version": a.get("version", 1)})
         a["exclude"] = kept
         if not kept:
             del a["exclude"]
@@ -855,9 +844,99 @@ def cmd_exclude(args) -> Result[dict, JudgeError]:
         a["exclude"] = kept + [{"item": item, "reason": reason}]
         event = history_event("excluded", item=item, reason=reason, replaced=removed)
     a.setdefault("history", []).append(event)
-    save_json(args.anchors, rec)
-    return Ok({"success": True, "data": {"id": a["id"], "item": item, "removed": bool(args.remove), "changed": True,
-                                         "exclude": a.get("exclude", []), "version": a.get("version", 1)}, "error": None})
+    return Ok({"id": a["id"], "item": item, "removed": bool(remove), "changed": True,
+               "exclude": a.get("exclude", []), "version": a.get("version", 1)})
+
+
+def read_exclusion_lines(path: str) -> Result[list, JudgeError]:
+    """Parse an `exclude --from` JSONL file: one {id, item, reason} or {id, item, remove: true} per non-blank line."""
+    p = pathlib.Path(path)
+    if not path.strip() or not p.is_file():
+        return fail("INPUT.MISSING", f"exclusions file not found: {path!r}", action="Pass an existing JSONL file to --from.")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return fail("INPUT.MALFORMED", f"exclusions file could not be read: {exc}", action=f"Check {path} is a readable UTF-8 file.")
+    entries, seen = [], {}
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        where = f"{path}:{n}"
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError as exc:
+            return fail("INPUT.MALFORMED", f"{where}: not a JSON object ({exc.msg})", action="Write one exclusion object per line.")
+        if not isinstance(e, dict):
+            return fail("INPUT.MALFORMED", f"{where}: not a JSON object", action="Write one exclusion object per line.")
+        unknown = sorted(set(e) - {"id", "item", "reason", "remove"})
+        if unknown:
+            return fail("INPUT.MALFORMED", f"{where}: unknown field(s) {unknown}", action="Use only id, item, reason and remove.")
+        aid, item = e.get("id"), e.get("item")
+        reason, remove = e.get("reason", ""), e.get("remove", False)
+        if not isinstance(aid, str) or not aid.strip() or not isinstance(item, str) or not item.strip():
+            return fail("VALIDATION.INPUT", f"{where}: 'id' and 'item' must be non-empty strings",
+                        action="Pass the anchor id and the plan item id exactly as judge --item-id gets it.")
+        if not isinstance(remove, bool) or not isinstance(reason, str):
+            return fail("INPUT.MALFORMED", f"{where}: 'remove' must be true or false and 'reason' a string")
+        if not remove and not reason.strip():
+            return fail("VALIDATION.INPUT", f"{where}: 'reason' cannot be empty",
+                        action="Say in one sentence why the anchor does not apply to this item.")
+        key = (aid, item.strip())
+        if key in seen:
+            return fail("VALIDATION.INPUT", f"{where}: {aid} x {item.strip()} is already on line {seen[key]}",
+                        action="List each (anchor, item) pair once.")
+        seen[key] = n
+        entries.append({"id": aid, "item": item.strip(), "reason": reason.strip(), "remove": remove, "line": n})
+    if not entries:
+        return fail("INPUT.EMPTY", f"exclusions file {path} has no entries", action="Write one exclusion object per line.")
+    return Ok(entries)
+
+
+def cmd_exclude(args) -> Result[dict, JudgeError]:
+    """Add, replace or remove exclusions. Not a requirement change: no version bump, earlier runs stay valid, any status.
+
+    --from applies every line of a JSONL file atomically: any bad line or unknown anchor saves nothing.
+    """
+    if args.from_file:
+        if args.id or args.item or args.reason or args.remove:
+            return fail("VALIDATION.INPUT", "--from cannot be combined with --id, --item, --reason or --remove",
+                        action="Put every exclusion in the file, or use the single-cell flags without --from.")
+        parsed = read_exclusion_lines(args.from_file)
+        if isinstance(parsed, Err):
+            return parsed
+        entries = parsed.value
+    else:
+        if not args.id or args.item is None:
+            return fail("VALIDATION.INPUT", "pass --id and --item, or --from <file.jsonl>")
+        item = (args.item or "").strip()
+        if not item:
+            return fail("VALIDATION.INPUT", "--item cannot be empty; pass the plan item id exactly as judge --item-id gets it")
+        reason = (args.reason or "").strip()
+        if not args.remove and not reason:
+            return fail("VALIDATION.INPUT", "--reason cannot be empty",
+                        action="Say in one sentence why the anchor does not apply to this item.")
+        entries = [{"id": args.id, "item": item, "reason": reason, "remove": bool(args.remove), "line": None}]
+    loaded = load_record(args.anchors)
+    if isinstance(loaded, Err):
+        return loaded
+    rec = loaded.value
+    results = []
+    for e in entries:
+        found = find_anchor(rec, e["id"])
+        if isinstance(found, Err):
+            if e["line"] is not None:
+                return fail(found.error.code, f"{args.from_file}:{e['line']}: {found.error.message}", action=found.error.action)
+            return found
+        applied = apply_exclusion(found.value, e["item"], e["reason"], e["remove"])
+        if isinstance(applied, Err):
+            return applied
+        results.append(applied.value)
+    if any(r["changed"] for r in results):
+        save_json(args.anchors, rec)
+    if not args.from_file:
+        return Ok({"success": True, "data": results[0], "error": None})
+    return Ok({"success": True, "data": {"applied": results, "count": len(results),
+                                         "changed": sum(1 for r in results if r["changed"])}, "error": None})
 
 
 def validate_record(rec: dict) -> list:
@@ -3321,10 +3400,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ex = sub.add_parser("exclude", help="record that an anchor does not apply to one plan item (judge reports it as excluded); no version bump")
     ex.add_argument("--anchors", required=True)
-    ex.add_argument("--id", required=True, help="anchor id")
-    ex.add_argument("--item", required=True, help="plan item id, exactly as judge --item-id gets it")
+    ex.add_argument("--id", default="", help="anchor id")
+    ex.add_argument("--item", default=None, help="plan item id, exactly as judge --item-id gets it")
     ex.add_argument("--reason", default="", help="one sentence: why the anchor does not apply to this item (required unless --remove)")
     ex.add_argument("--remove", action="store_true", help="drop the exclusion for --item")
+    ex.add_argument("--from", dest="from_file", default="", metavar="FILE.jsonl",
+                    help="apply many at once: one {id, item, reason} or {id, item, remove: true} per line; all or nothing")
     ex.set_defaults(func=cmd_exclude)
 
     v = sub.add_parser("validate", help="check anchors.json; data.valid false with data.problems when it has problems")
