@@ -2,6 +2,17 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.8.8 — 2026-11-04
+
+- Fix: `coverage` takes the latest result per anchor and item, not the latest
+  run per item, so re-running some anchors no longer drops the others'
+  results. Cells taken from an earlier run are listed in
+  `carried_from_earlier_run`.
+- Fix: `coverage --anchors <anchors.json>` applies the record's current
+  exclusions. An exclusion recorded after a run shows as `excluded` with its
+  reason; one removed since is listed in `exclusion_removed_rejudge` and does
+  not count as covered. Without `--anchors`, runs are read as written.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the

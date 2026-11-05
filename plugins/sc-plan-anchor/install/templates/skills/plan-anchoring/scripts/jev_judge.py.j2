@@ -3095,26 +3095,54 @@ def cmd_coverage(args) -> Result[Any, JudgeError]:
         runs = [r for r in runs if r.get("gate") == args.gate]
     if not runs:
         return fail("RUNS.NONE", "no run files found", action="Run `judge` first, or check the --runs path.")
-    # latest run per (gate, item) wins
+    record = None
+    if getattr(args, "anchors", ""):
+        loaded = _valid_record(args.anchors)
+        if isinstance(loaded, Err):
+            return loaded
+        record = {a["id"]: a for a in loaded.value["anchors"]}
+    ordered = sorted(runs, key=lambda r: str(r.get("created_at", "")))
+    # latest run per (gate, item), for runs_considered and to mark cells carried from an earlier run
     latest = {}
-    for r in sorted(runs, key=lambda r: str(r.get("created_at", ""))):
+    for r in ordered:
         latest[(r["gate"], r["item"]["id"])] = r
 
     # without a --gate filter, columns are qualified so plan and dev verdicts for one item never overwrite each other
     def column(gate, item_id):
         return item_id if args.gate else f"{gate}:{item_id}"
-    matrix, excluded = {}, {}
-    items = sorted({column(g, i) for g, i in latest})
-    for (gate, item_id), r in latest.items():
+    # latest result per (gate, item, anchor): a re-run of some anchors never drops the others' results
+    cells = {}
+    for r in ordered:
         for res in r["results"]:
-            matrix.setdefault(res["anchor_id"], {})[column(gate, item_id)] = res["verdict"]
-            if res["verdict"] == "excluded":
-                excluded.setdefault(res["anchor_id"], {})[column(gate, item_id)] = (res.get("exclusion") or {}).get("reason", "")
+            cells[(r["gate"], r["item"]["id"], res["anchor_id"])] = (res, r)
+    matrix, excluded, carried, rejudge = {}, {}, {}, {}
+    items = sorted({column(g, i) for g, i in latest})
+    for (gate, item_id, anchor_id), (res, r) in cells.items():
+        col = column(gate, item_id)
+        verdict = res["verdict"]
+        reason = (res.get("exclusion") or {}).get("reason", "")
+        if record is not None and anchor_id in record:
+            # the record is authoritative for exclusions: one recorded after the run applies, one removed since needs a re-run
+            current = exclusion_for(record[anchor_id], item_id)
+            if current is not None:
+                verdict, reason = "excluded", current.get("reason", "")
+            elif verdict == "excluded":
+                rejudge.setdefault(anchor_id, []).append(col)
+                verdict = None
+        if verdict is None:
+            matrix.setdefault(anchor_id, {})  # still listed, and uncovered unless another item satisfies it
+            continue
+        matrix.setdefault(anchor_id, {})[col] = verdict
+        if verdict == "excluded":
+            excluded.setdefault(anchor_id, {})[col] = reason
+        if r is not latest[(gate, item_id)]:
+            carried.setdefault(anchor_id, {})[col] = r.get("run_id")
     anchors_sorted = sorted(matrix)
     uncovered = [a for a in anchors_sorted if not any(v == "satisfied" for v in matrix[a].values())]
     contradicted = {a: [i for i, v in matrix[a].items() if v == "contradicted"] for a in anchors_sorted if any(v == "contradicted" for v in matrix[a].values())}
     data = {"gate": args.gate or "all", "items": items, "anchors": anchors_sorted, "matrix": matrix,
-            "uncovered_anchors": uncovered, "contradicted": contradicted, "excluded": excluded, "runs_considered": len(latest)}
+            "uncovered_anchors": uncovered, "contradicted": contradicted, "excluded": excluded, "runs_considered": len(latest),
+            "carried_from_earlier_run": carried, "exclusion_removed_rejudge": rejudge}
     if args.format == "md":
         lines = [f"## Anchor coverage ({data['gate']})", "", "| Anchor | " + " | ".join(items) + " | Covered |", "| --- | " + " | ".join("---" for _ in items) + " | --- |"]
         for a in anchors_sorted:
@@ -3129,6 +3157,15 @@ def cmd_coverage(args) -> Result[Any, JudgeError]:
             for a in sorted(excluded):
                 for i, reason in sorted(excluded[a].items()):
                     lines.append(f"- {a} x {i}: {reason}")
+        if carried:
+            lines.append("")
+            lines.append("Cells from an earlier run than the item's latest (that run did not judge them):")
+            for a in sorted(carried):
+                for i, run_id in sorted(carried[a].items()):
+                    lines.append(f"- {a} x {i}: {run_id}")
+        if rejudge:
+            lines.append("")
+            lines.append("Exclusion removed since the run; re-judge: " + ", ".join(f"{a} x {i}" for a in sorted(rejudge) for i in sorted(rejudge[a])))
         return Ok("\n".join(lines) + "\n")
     return Ok({"success": True, "data": data, "error": None})
 
@@ -3432,6 +3469,7 @@ def build_parser() -> argparse.ArgumentParser:
     cv.add_argument("--runs", nargs="+", required=True, help="run files or directories")
     cv.add_argument("--gate", choices=("plan", "dev"), default="")
     cv.add_argument("--format", choices=("json", "md"), default="json")
+    cv.add_argument("--anchors", default="", help="anchors.json: apply its current exclusions to the runs (one recorded after a run applies; one removed since is listed to re-judge)")
     cv.set_defaults(func=cmd_coverage)
 
     d = sub.add_parser("diff", help="compare two runs")
