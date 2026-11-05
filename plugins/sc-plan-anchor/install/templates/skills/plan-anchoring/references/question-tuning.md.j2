@@ -119,6 +119,10 @@ An override has the shape of the default set and contains only the questions to 
 {% endif %}- **In the record**: `question_overrides.plan` / `.dev` in `anchors.json`, for a plan with no beads. The bead wins if both exist.
 - **For a whole plan**: a complete alternative set passed with `--questions <file>`. Rare.
 
+## Extra questions
+
+Extra questions add to the set; they never replace or gate. Pass a JSONL file with `--extra-questions <file>` (repeatable): one question per line, `{"id": "...", "type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}}`. Each is asked in the same request as the gate questions and its answer is recorded with the cell, so triage can read why a cell failed (for example: does the item own the requirement, or only consume it?) without a second run. `decide()` ignores them. An `--answers-file` fixture must answer them too. Keep a diagnostic question in the consuming repository until measurements across plans justify a default.
+
 ## How to write an anchor-specific question
 
 Start from the default and make it concrete. `instructions` say what to judge and what not to judge; `criteria` describe situations, not degrees.

@@ -12,6 +12,14 @@
   exclusions. An exclusion recorded after a run shows as `excluded` with its
   reason; one removed since is listed in `exclusion_removed_rejudge` and does
   not count as covered. Without `--anchors`, runs are read as written.
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
 
 ## 0.8.7 — 2026-11-02
 
