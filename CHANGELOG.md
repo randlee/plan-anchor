@@ -2,6 +2,17 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.8.8 — 2026-11-04
+
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the
