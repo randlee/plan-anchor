@@ -6,6 +6,8 @@ The file name sorts after test_anchor_tracker (see test_jev_judge_exclude for wh
 """
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -109,3 +111,64 @@ class TriageDefaultTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def shipped_questions():
+    return [json.loads(line) for line in SHIPPED.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def squeeze(text):
+    """Help text is wrapped by argparse; compare with all whitespace removed."""
+    return "".join(text.split())
+
+
+class TriageDocumentedBehaviourTests(unittest.TestCase):
+    """What `judge --help` and triage/README say you can do is what judge does."""
+
+    def test_help_states_intent_default_and_how_to_change(self):
+        out = subprocess.run([sys.executable, jj.__file__, "judge", "--help"], capture_output=True, text=True, check=True).stdout
+        flat = squeeze(out)
+        for needle in sorted(TRIAGE_IDS) + [
+            "onbydefault", "neverchangeaverdict", ".sc/plan-anchor/triage/<gate>-questions.jsonl", "neveroverwritten",
+            "editthatline", "addaline", "deleteitsline", "rules.json", "--extra-questions", "triage/README.md",
+        ]:
+            self.assertIn(needle, flat, needle)
+
+    def test_readme_documents_each_way_to_change_the_set(self):
+        text = squeeze((jj.TRIAGE_ASSETS / "README.md").read_text(encoding="utf-8"))
+        for needle in ("Changeadefault", "Addaquestion", "Removeaquestion", "--extra-questions", "--no-triage-questions", "rules.json", "nevergates"):
+            self.assertIn(needle, text, needle)
+
+    def test_editing_a_default_line_changes_what_is_sent_and_keeps_the_rest(self):
+        with tempfile.TemporaryDirectory() as d:
+            qs = shipped_questions()
+            qs[0]["instructions"] = "EDITED: " + qs[0]["instructions"]
+            root, _ = repo_with_triage(d, *qs)
+            t = Transport()
+            j = Judged(d, t, extra_args=["--repository-root", str(root)])
+            self.assertEqual(j.code, 0, j.out)
+            sent = t.bodies[0]["questions"]
+            self.assertEqual(set(sent), GATE_IDS | TRIAGE_IDS)
+            self.assertTrue(sent[qs[0]["id"]]["instructions"].startswith("EDITED: "))
+
+    def test_adding_and_removing_a_line_adds_and_removes_that_question(self):
+        extra = {"id": "mine", "type": "choice", "instructions": "Is it mine?", "criteria": {"yes": "y", "no": "n", "unclear": "u"}}
+        for label, qs, expected in (
+            ("add", shipped_questions() + [extra], GATE_IDS | TRIAGE_IDS | {"mine"}),
+            ("remove", shipped_questions()[1:], GATE_IDS | (TRIAGE_IDS - {shipped_questions()[0]["id"]})),
+        ):
+            with self.subTest(label), tempfile.TemporaryDirectory() as d:
+                root, _ = repo_with_triage(d, *qs)
+                t = Transport()
+                j = Judged(d, t, extra_args=["--repository-root", str(root)])
+                self.assertEqual(j.code, 0, j.out)
+                self.assertEqual(set(t.bodies[0]["questions"]), expected)
+
+    def test_extra_questions_still_run_when_the_defaults_are_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            extra = {"id": "mine", "type": "choice", "instructions": "Is it mine?", "criteria": {"yes": "y", "no": "n", "unclear": "u"}}
+            path = write(d, "mine.jsonl", json.dumps(extra) + "\n")
+            t = Transport()
+            j = Judged(d, t, extra_args=["--no-triage-questions", "--extra-questions", path])
+            self.assertEqual(j.code, 0, j.out)
+            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS | {"mine"})
