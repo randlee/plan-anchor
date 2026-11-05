@@ -2,6 +2,14 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.8.8 — 2026-11-04
+
+- Fix: the planning and development gate agents give each question-bead
+  `show` 3 attempts (1 s, then 2 s apart) before stopping with
+  `TRACKER.SHOW_FAILED`. A transient tracker failure, such as a database
+  timeout, no longer aborts the gate. The error now says it failed after 3
+  attempts and keeps the last error text.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the
