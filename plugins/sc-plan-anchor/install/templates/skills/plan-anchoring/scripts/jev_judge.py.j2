@@ -2147,14 +2147,18 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
     if isinstance(loaded, Err):
         return loaded
     extra_paths = list(getattr(args, "extra_questions", None) or [])
+    triage_default = ""
     if triage and not getattr(args, "no_triage_questions", False):
-        default = triage_questions_path(args, args.gate)
-        if default:
-            extra_paths.append(default)
+        triage_default = triage_questions_path(args, args.gate)
+        if triage_default:
+            extra_paths.append(triage_default)
     extra = load_extra_questions(extra_paths, loaded.value)
     if isinstance(extra, Err):
         return extra
     ctx["base_qs"], ctx["extra_questions"] = extra.value
+    # The triage questions are asked in a second request, and only for a cell that failed, so the gate request (and so every
+    # verdict) is exactly what it is without them. Questions from --extra-questions stay in the gate request.
+    ctx["deferred_ids"] = set(ctx["extra_questions"][-1]["ids"]) if triage_default else set()
     loaded = load_answers_fixture(getattr(args, "answers_file", ""), "anchor id")
     if isinstance(loaded, Err):
         return loaded
@@ -2310,6 +2314,7 @@ def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
             return checked
         overridden = any(o.get(k) for o in (record_override, bead_override) for k in ("questions", "roles"))
         qs["optional"] = sorted(extra_ids & set(qs["questions"]))
+        qs["deferred"] = sorted(set(qs["optional"]) & set(ctx.get("deferred_ids") or ()))
         prepared.append((a, qs, bool(overridden)))
     return Ok(prepared)
 
@@ -2356,6 +2361,31 @@ def excluded_entry(a: dict, exclusion: dict, gate: str) -> dict:
     return entry
 
 
+def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_key, entry: dict) -> Result[int, JudgeError]:
+    """Ask the triage questions of one failed cell in their own request and record the answers on the cell; never touches the
+    verdict. Ok(attempts made); Err only for an ABORT_CODES error. A request over the size cap, or a call that gets no answer, is
+    recorded on the cell (extra_questions_dropped, triage_error) and costs nothing else."""
+    asked = {k: v for k, v in qs["questions"].items() if k in deferred}
+    if ctx["answers_fixture"] is not None:
+        fx = ctx["answers_fixture"].get(fixture_key(a)) or ctx["answers_fixture"].get("*") or {}
+        entry["answers"].update({k: v for k, v in fx.items() if k in asked})
+        return Ok(0)
+    body = {"model": ctx["model"], "state": build_state(a, item), "questions": asked}
+    if len(encode_body(body)) > ctx["max_request_bytes"]:
+        entry["extra_questions_dropped"] = sorted(set(entry.get("extra_questions_dropped") or ()) | deferred)
+        return Ok(0)
+    got = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
+                            shorten=False, optional=frozenset(asked))
+    if isinstance(got, Err):
+        if got.error.code in ABORT_CODES:
+            return got
+        entry["triage_error"] = got.error.to_json()["error"]
+        return Ok((got.error.meta or {}).get("attempts", 0))
+    resp, meta = got.value
+    entry["answers"].update(resp["answers"])
+    return Ok(meta.get("attempts", 0))
+
+
 def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[tuple, JudgeError]:
     """One Jev request per anchor. Returns Ok((results, requests_out, model_answered)); Err only for an ABORT_CODES error.
 
@@ -2364,12 +2394,14 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
     """
     results, requests_out, model_answered = [], [], None
     for a, qs, overridden in prepared:
-        body = {"model": ctx["model"], "state": build_state(a, item), "questions": qs["questions"]}
+        deferred = set(qs.get("deferred") or ())
+        body = {"model": ctx["model"], "state": build_state(a, item),
+                "questions": {k: v for k, v in qs["questions"].items() if k not in deferred}}
         dropped = []
-        if qs.get("optional") and len(encode_body(body)) > ctx["max_request_bytes"]:
+        if (set(qs.get("optional") or ()) - deferred) and len(encode_body(body)) > ctx["max_request_bytes"]:
             # extra questions never cost a verdict: over the size cap they are left out of this request, not the item
-            dropped = list(qs["optional"])
-            body["questions"] = {k: v for k, v in qs["questions"].items() if k not in dropped}
+            dropped = sorted(set(qs["optional"]) - deferred)
+            body["questions"] = {k: v for k, v in body["questions"].items() if k not in dropped}
         entry = entry_base(a)
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
@@ -2431,6 +2463,11 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
             if verdict == "underspecified":
                 entry["low_questions"] = low_questions_of(entry, qs["roles"], ctx["threshold"])
+            if deferred and verdict in FAILING:
+                triaged = ask_triage(ctx, a, qs, deferred, item, fixture_key, entry)
+                if isinstance(triaged, Err):
+                    return triaged
+                entry["triage_attempts"] = triaged.value  # kept apart from the gate request's attempts
         else:
             exc = first.error
             if exc.code in ABORT_CODES:
@@ -3341,8 +3378,9 @@ def add_judge_options(parser, with_item: bool) -> None:
                              "question once; to keep one, add its line to .sc/plan-anchor/triage/<gate>-questions.jsonl (see --no-triage-questions)")
     parser.add_argument("--no-triage-questions", action="store_true",
                         help="judge: do not add the triage questions. They are on by default for the planning gate: five extra, never-gating "
-                             "questions (owns, specific, stated, paraphrase, partial) answered in the same request as the gate questions and "
-                             "recorded with each cell. Their intent is triage: when a cell fails, they say whether the item should own the "
+                             "questions (owns, specific, stated, paraphrase, partial), asked in a second request and only for a cell that "
+                             "failed the gate, and recorded on that cell, so the gate request and every verdict are the same with or without "
+                             "them. Their intent is triage: when a cell fails, they say whether the item should own the "
                              "requirement, state it more specifically, or whether the gate question needs tuning, so you fix the right thing. "
                              "They never change a verdict. The set is .sc/plan-anchor/triage/<gate>-questions.jsonl in your repository "
                              "(seeded once from the shipped default, never overwritten by upgrades; the nearest one wins, else the shipped copy). "

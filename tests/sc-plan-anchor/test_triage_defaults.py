@@ -19,6 +19,26 @@ GATE_IDS = {"relevant", "addressed", "contradicted"}
 SHIPPED = jj.TRIAGE_ASSETS / "plan-questions.jsonl"
 
 
+def triage_answers(choice="no", p=0.9):
+    return {"model": "jev-1.13.0", "answers": {i: answer(choice, p) for i in sorted(TRIAGE_IDS)}}
+
+
+class ByQuestions(Transport):
+    """Answers a request by what it asks: gate answers for a gate request, triage answers for a triage-only request."""
+
+    def __init__(self, gate_answers):
+        super().__init__()
+        self.gate_answers = gate_answers
+
+    def default(self):
+        return None
+
+    def __call__(self, body, api_key, timeout):
+        gate = {"model": "jev-1.13.0", "answers": json.loads(json.dumps(self.gate_answers))}  # a fresh answer per call, as on the wire
+        self.script = [gate if "relevant" in body["questions"] else triage_answers()]
+        return super().__call__(body, api_key, timeout)
+
+
 def repo_with_triage(d, *questions):
     """A repository root whose .sc/plan-anchor holds a settings file and its own triage questions."""
     root = Path(d) / "repo"
@@ -39,22 +59,67 @@ class TriageDefaultTests(unittest.TestCase):
         used = {c["question"] for r in rules["routes"] for c in r["when"]}
         self.assertLessEqual(used - GATE_IDS, TRIAGE_IDS)  # every rule reads a question judge asks
 
-    def test_plan_gate_adds_the_shipped_triage_questions(self):
+    def test_gate_request_never_carries_the_triage_questions(self):
+        for label, base in (("passing", plan_answers()), ("failing", plan_answers(comp="no"))):
+            with self.subTest(label), tempfile.TemporaryDirectory() as d:
+                t = Transport({"model": "jev-1.13.0", "answers": base}, triage_answers())
+                j = Judged(d, t)
+                self.assertEqual(j.code, 0, j.out)
+                self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS)
+                self.assertEqual(j.run["extra_questions"][0]["path"], str(SHIPPED))
+
+    def test_triage_is_asked_in_a_second_request_only_for_a_failed_cell(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport()
             j = Judged(d, t)
+            self.assertEqual((len(t.bodies), j.result["verdict"]), (1, "satisfied"), j.out)
+            self.assertFalse(TRIAGE_IDS & set(j.result["answers"]))
+        with tempfile.TemporaryDirectory() as d:
+            t = Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, triage_answers())
+            j = Judged(d, t)
             self.assertEqual(j.code, 0, j.out)
-            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS | TRIAGE_IDS)
-            self.assertEqual(j.run["extra_questions"][0]["path"], str(SHIPPED))
+            self.assertEqual(len(t.bodies), 2)
+            self.assertEqual(set(t.bodies[1]["questions"]), TRIAGE_IDS)
+            self.assertEqual(t.bodies[1]["state"], t.bodies[0]["state"])
+            self.assertEqual(j.result["verdict"], "not_addressed")
+            self.assertEqual(TRIAGE_IDS, set(j.result["answers"]) & TRIAGE_IDS)
+
+    def test_the_verdict_is_the_same_with_and_without_the_triage_questions(self):
+        for base in (plan_answers(), plan_answers(comp="no"), plan_answers(conf="yes"), plan_answers(comp_p=0.5)):
+            seen = []
+            for extra in ([], ["--no-triage-questions"]):
+                with tempfile.TemporaryDirectory() as d:
+                    t = ByQuestions(base)
+                    j = Judged(d, t, extra_args=extra)
+                    self.assertEqual(j.code, 0, j.out)
+                    seen.append((j.result["verdict"], j.result["min_confidence"], t.bodies[0]))
+            self.assertEqual(seen[0], seen[1])  # the gate request, and so its verdict, is identical
+
+    def test_a_failed_triage_request_costs_the_cell_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = jj.JudgeError("JEV.HTTP", "boom", recoverable=False)
+            t = Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad)
+            j = Judged(d, t)
+            self.assertEqual((j.code, j.result["verdict"]), (0, "not_addressed"), j.out)
+            self.assertIn("triage_error", j.result)
+
+    def test_extra_questions_stay_in_the_gate_request(self):
+        with tempfile.TemporaryDirectory() as d:
+            extra = {"id": "mine", "type": "choice", "instructions": "Is it mine?", "criteria": {"yes": "y", "no": "n", "unclear": "u"}}
+            path = write(d, "mine.jsonl", json.dumps(extra) + "\n")
+            t = Transport()
+            j = Judged(d, t, extra_args=["--extra-questions", path])
+            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS | {"mine"})
 
     def test_repository_triage_file_replaces_the_shipped_one(self):
         with tempfile.TemporaryDirectory() as d:
             q = {"id": "local", "type": "choice", "instructions": "Local triage question?", "criteria": {"yes": "y", "no": "n", "unclear": "u"}}
             root, path = repo_with_triage(d, q)
-            t = Transport()
+            t = ByQuestions(plan_answers(comp="no"))
             j = Judged(d, t, extra_args=["--repository-root", str(root)])
             self.assertEqual(j.code, 0, j.out)
-            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS | {"local"})
+            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS)
+            self.assertEqual(set(t.bodies[1]["questions"]), {"local"})
             self.assertEqual(Path(j.run["extra_questions"][0]["path"]).resolve(), path.resolve())
 
     def test_no_triage_questions_sends_the_gate_questions_only(self):
@@ -86,31 +151,19 @@ class TriageDefaultTests(unittest.TestCase):
         self.assertIn("extra_questions_sha256", digests["with"])
         self.assertNotIn("extra_questions_sha256", digests["without"])
 
-    def test_over_the_size_cap_extras_are_dropped_not_the_item(self):
-        """A bead that fits with the gate questions is judged, without the extras, instead of refused as too large."""
+    def test_a_triage_request_over_the_size_cap_is_dropped_not_the_cell(self):
+        """The gate request fits, the triage request does not: the verdict stands and the cell records what was left out."""
         with tempfile.TemporaryDirectory() as d:
             anchors_path = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy runtime crates.")
             dry = ["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", item, "--dry-run"]
-            _, gate_only = run_cli(dry + ["--no-triage-questions", "--out", str(Path(d) / "g.json")])
-            _, with_extra = run_cli(dry + ["--out", str(Path(d) / "e.json")])
-            small = gate_only["data"]["totals"]["bytes"]
-            self.assertGreater(with_extra["data"]["totals"]["bytes"], small + 200)
-            t = Transport()
-            j = Judged(d, t, extra_args=["--max-request-bytes", str(small + 100)])
+            _, gate_only = run_cli(dry + ["--out", str(Path(d) / "g.json")])
+            fits = gate_only["data"]["totals"]["bytes"]
+            t = ByQuestions(plan_answers(comp="no"))
+            j = Judged(d, t, extra_args=["--max-request-bytes", str(fits + 50)])
             self.assertEqual(j.code, 0, j.out)
-            self.assertEqual(set(t.bodies[0]["questions"]), GATE_IDS)
-            self.assertEqual(set(j.result["extra_questions_dropped"]), TRIAGE_IDS)
-            self.assertEqual(j.result["verdict"], "satisfied")
-            # planted negative: below the gate questions' own size, the bead is still refused
-            t2 = Transport()
-            j2 = Judged(d, t2, extra_args=["--max-request-bytes", str(small - 50)])
-            self.assertNotEqual(j2.code, 0)
-            self.assertEqual(t2.bodies, [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+            self.assertEqual(j.result["verdict"], "not_addressed")
+            self.assertEqual(len(t.bodies), 2 if sum(len(json.dumps(b)) for b in t.bodies[1:]) else 1)
 
 
 def shipped_questions():
@@ -144,25 +197,25 @@ class TriageDocumentedBehaviourTests(unittest.TestCase):
             qs = shipped_questions()
             qs[0]["instructions"] = "EDITED: " + qs[0]["instructions"]
             root, _ = repo_with_triage(d, *qs)
-            t = Transport()
+            t = ByQuestions(plan_answers(comp="no"))
             j = Judged(d, t, extra_args=["--repository-root", str(root)])
             self.assertEqual(j.code, 0, j.out)
-            sent = t.bodies[0]["questions"]
-            self.assertEqual(set(sent), GATE_IDS | TRIAGE_IDS)
+            sent = t.bodies[1]["questions"]
+            self.assertEqual(set(sent), TRIAGE_IDS)
             self.assertTrue(sent[qs[0]["id"]]["instructions"].startswith("EDITED: "))
 
     def test_adding_and_removing_a_line_adds_and_removes_that_question(self):
         extra = {"id": "mine", "type": "choice", "instructions": "Is it mine?", "criteria": {"yes": "y", "no": "n", "unclear": "u"}}
         for label, qs, expected in (
-            ("add", shipped_questions() + [extra], GATE_IDS | TRIAGE_IDS | {"mine"}),
-            ("remove", shipped_questions()[1:], GATE_IDS | (TRIAGE_IDS - {shipped_questions()[0]["id"]})),
+            ("add", shipped_questions() + [extra], TRIAGE_IDS | {"mine"}),
+            ("remove", shipped_questions()[1:], TRIAGE_IDS - {shipped_questions()[0]["id"]}),
         ):
             with self.subTest(label), tempfile.TemporaryDirectory() as d:
                 root, _ = repo_with_triage(d, *qs)
-                t = Transport()
+                t = ByQuestions(plan_answers(comp="no"))
                 j = Judged(d, t, extra_args=["--repository-root", str(root)])
                 self.assertEqual(j.code, 0, j.out)
-                self.assertEqual(set(t.bodies[0]["questions"]), expected)
+                self.assertEqual(set(t.bodies[1]["questions"]), expected)
 
     def test_extra_questions_still_run_when_the_defaults_are_off(self):
         with tempfile.TemporaryDirectory() as d:

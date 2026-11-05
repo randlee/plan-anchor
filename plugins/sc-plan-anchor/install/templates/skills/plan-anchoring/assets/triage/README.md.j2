@@ -9,7 +9,7 @@ required_variables:
 ---
 # Triage defaults
 
-`judge` adds the questions in `plan-questions.jsonl` to every planning-gate request (turn this off with `--no-triage-questions`). They are answered in the same request as the gate questions, recorded with each cell, and never gate. `rules.json` reads those answers and routes each failing cell to one of four routes; rules are tried in order and the first that matches wins.
+`judge` asks the questions in `plan-questions.jsonl` for every planning-gate cell that fails (turn this off with `--no-triage-questions`). They are asked in a second request, after the gate verdict is decided, so the gate request and every verdict are the same with or without them; the answers are recorded on the failed cell and never gate. A cell that passes is not asked. `rules.json` reads those answers and routes each failing cell to one of four routes; rules are tried in order and the first that matches wins.
 
 | Route | Rule | Action |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ Measured on 41 planning-gate cells from one plan, each with an expected route fr
 The folder `.sc/plan-anchor/triage/` is yours; `judge` reads `plan-questions.jsonl` from the nearest one, else the shipped default. An upgrade never overwrites it.
 
 - **Change a default:** edit that question's line in `plan-questions.jsonl`. Keep its `id`, because `rules.json` refers to the answers by id. Reword `instructions` or `criteria`; do not change `type`.
-- **Add a question:** append one line, `{"id": "...", "type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}}`. It is asked and recorded with every cell and never gates. To use it in routing, add a condition on its `id` to a rule in `rules.json`.
+- **Add a question:** append one line, `{"id": "...", "type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}}`. It is asked, with the others, for every failed cell and never gates. To use it in routing, add a condition on its `id` to a rule in `rules.json`.
 - **Remove a question:** delete its line, and any `rules.json` condition that names it.
 - **Try one without keeping it:** `judge --extra-questions my-questions.jsonl` adds it for that run only; this can be repeated.
 - **Turn the defaults off:** `judge --no-triage-questions`. Extra questions you pass with `--extra-questions` still run.

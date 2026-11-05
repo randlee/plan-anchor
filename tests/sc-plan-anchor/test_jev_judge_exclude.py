@@ -30,7 +30,8 @@ def excluded(item="ex-42", reason=REASON):
 
 
 def sent_anchor_ids(transport):
-    return [b["state"]["anchor"]["id"] for b in transport.bodies]
+    """The anchors judged: one gate request each (a failed cell's later triage request is not a judgment)."""
+    return [b["state"]["anchor"]["id"] for b in transport.bodies if "relevant" in b["questions"]]
 
 
 class JudgeExclusionTests(unittest.TestCase):
