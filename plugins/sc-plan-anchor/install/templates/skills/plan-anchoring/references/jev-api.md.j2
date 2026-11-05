@@ -135,6 +135,7 @@ A tool failure is the only nonzero exit. Exit 0 means the command ran (`success:
 | `add` | `data.added`; a refusal is `added: false` with `data.refused` `{code, message, recoverable, suggested_action}` (`ANCHOR.DUPLICATE`, `ANCHOR.LINT`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.NOT_TESTABLE`, or `VALIDATION.INPUT` when the statement repeats the quote) and nothing written |
 | `update` | `data.updated`; a `--strict` refusal is `updated: false` with `data.refused.code: ANCHOR.LINT`; nothing to change is `updated: false, changed: false` |
 | `retire`, `exclude --remove` | `data.changed` (false when the anchor is already retired, or there was no exclusion to remove) |
+| `exclude --from` | `data.applied` (one entry per line), `data.count`, `data.changed` (lines that changed the record) |
 | `report`, `coverage`, `diff` | `data.pass`; `data.uncovered_anchors`; `data.pass_after`, `data.regressions` |
 
 Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POLICY.REMOTE_JUDGE_DISABLED`, credential failure, any Jev call left without an answer, a missing dependency, and `SCRIPT.INTERNAL`. Exit 130 (`CANCELED`, `recoverable: true`) is an interrupt.
