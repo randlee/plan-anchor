@@ -3336,10 +3336,18 @@ def add_judge_options(parser, with_item: bool) -> None:
         parser.add_argument("--all", action="store_true", help="every non-retired anchor that has fixtures")
     parser.add_argument("--questions", default="", help="question-set JSON; default assets/questions/<gate>.json")
     parser.add_argument("--extra-questions", action="append", default=[], metavar="FILE.jsonl",
-                        help="repeatable: JSONL, one question per line ({id, type, instructions, criteria}); added to the set, "
-                             "asked and recorded with every cell, never gating")
+                        help="repeatable: JSONL, one question per line ({id, type, instructions, criteria}); added to the gate questions "
+                             "and the triage questions for this run, asked and recorded with every cell, never gating. Use it to try a "
+                             "question once; to keep one, add its line to .sc/plan-anchor/triage/<gate>-questions.jsonl (see --no-triage-questions)")
     parser.add_argument("--no-triage-questions", action="store_true",
-                        help="judge: do not add the triage questions (.sc/plan-anchor/triage/<gate>-questions.jsonl, else the shipped default)")
+                        help="judge: do not add the triage questions. They are on by default for the planning gate: five extra, never-gating "
+                             "questions (owns, specific, stated, paraphrase, partial) answered in the same request as the gate questions and "
+                             "recorded with each cell. Their intent is triage: when a cell fails, they say whether the item should own the "
+                             "requirement, state it more specifically, or whether the gate question needs tuning, so you fix the right thing. "
+                             "They never change a verdict. The set is .sc/plan-anchor/triage/<gate>-questions.jsonl in your repository "
+                             "(seeded once from the shipped default, never overwritten by upgrades; the nearest one wins, else the shipped copy). "
+                             "To change a default, edit that line (keep its id); to add a question, add a line ({id, type, instructions, criteria}); "
+                             "to drop one, delete its line. Routing of failing cells is in triage/rules.json beside it. Details: triage/README.md")
     parser.add_argument("--overrides-file", default="", help="JSON {anchor_id: {questions: {...}, roles: {...}}} read from the question beads; merged after anchors.json overrides")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)

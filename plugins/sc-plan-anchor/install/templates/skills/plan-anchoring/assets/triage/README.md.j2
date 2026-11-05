@@ -28,4 +28,16 @@ required_variables:
 
 Measured on 41 planning-gate cells from one plan, each with an expected route frozen before the runs: `owns` answered no at 0.94 or more on all 8 cells owned by another item and yes on 11 of 12 owning cells, with no answer flips across three repeat runs; `specific` answered no at 0.61 or more on 8 of 9 cells where the requirement was only implied, and never no on the 12 cells that state it; `stated` answered yes at 0.66 or more on all 12 stating cells. One plan is narrow evidence: measure on your own plans and adjust the thresholds here.
 
+## Add questions or change the defaults
+
+The folder `.sc/plan-anchor/triage/` is yours; `judge` reads `plan-questions.jsonl` from the nearest one, else the shipped default. An upgrade never overwrites it.
+
+- **Change a default:** edit that question's line in `plan-questions.jsonl`. Keep its `id`, because `rules.json` refers to the answers by id. Reword `instructions` or `criteria`; do not change `type`.
+- **Add a question:** append one line, `{"id": "...", "type": "choice", "instructions": "...", "criteria": {"yes": "...", "no": "...", "unclear": "..."}}`. It is asked and recorded with every cell and never gates. To use it in routing, add a condition on its `id` to a rule in `rules.json`.
+- **Remove a question:** delete its line, and any `rules.json` condition that names it.
+- **Try one without keeping it:** `judge --extra-questions my-questions.jsonl` adds it for that run only; this can be repeated.
+- **Turn the defaults off:** `judge --no-triage-questions`. Extra questions you pass with `--extra-questions` still run.
+
+Changing a question's text changes its answers: re-measure on your own plans before relying on a rule that uses it.
+
 This folder belongs to the repository: the installer writes it once, when `.sc/plan-anchor/triage/` does not exist, and never overwrites it.
