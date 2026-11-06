@@ -2,6 +2,16 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.9.1 — 2026-11-05
+
+- `report --format md` shows a failed cell's triage answers on a `Triage:`
+  line under it (`owns` no (0.90), `specific` yes (0.85), ...), in question
+  order, so the reader sees what `triage/rules.json` routes the cell on. A
+  triage request that failed is shown as `Triage error <code>`, and extras
+  dropped over the size cap are listed. `judge` records which answers are
+  triage in the cell's new `triage_questions` field; run files written by
+  0.9.0 have no such field and report as before. Verdicts are unchanged.
+
 ## 0.9.0 — 2026-11-04
 
 - The planning gate ships default triage questions (`owns`, `specific`,
