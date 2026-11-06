@@ -166,6 +166,72 @@ class TriageDefaultTests(unittest.TestCase):
             self.assertEqual(len(t.bodies), 2 if sum(len(json.dumps(b)) for b in t.bodies[1:]) else 1)
 
 
+class TriageReportTests(unittest.TestCase):
+    """`report --format md` shows a failed cell's triage answers, the answers triage/rules.json routes on."""
+
+    def report(self, j, *extra):
+        code, md = run_cli(["report", "--run", j.run["path"], "--format", "md", *extra])
+        self.assertEqual(code, 0, md)
+        return md
+
+    def test_a_failed_cell_lists_its_triage_answers_in_question_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Judged(d, ByQuestions(plan_answers(comp="no")))
+            self.assertEqual(j.result["verdict"], "not_addressed", j.out)
+            order = [q["id"] for q in shipped_questions()]
+            self.assertEqual(j.result["triage_questions"], order)
+            md = self.report(j)
+            line = next(x for x in md.splitlines() if x.startswith(">   Triage:"))
+            self.assertEqual(line, ">   Triage: " + ", ".join(f"`{q}` no (0.90)" for q in order) + ".")
+
+    def test_gate_answers_are_not_listed_as_triage(self):
+        with tempfile.TemporaryDirectory() as d:
+            md = self.report(Judged(d, ByQuestions(plan_answers(comp="no"))))
+            line = next(x for x in md.splitlines() if x.startswith(">   Triage:"))
+            for gate_id in GATE_IDS:
+                self.assertNotIn(f"`{gate_id}`", line)
+
+    def test_a_passing_cell_has_no_triage_line_even_with_all(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Judged(d, ByQuestions(plan_answers()))
+            self.assertEqual(j.result["verdict"], "satisfied", j.out)
+            self.assertNotIn("Triage", self.report(j, "--all"))
+
+    def test_no_triage_questions_means_no_triage_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Judged(d, ByQuestions(plan_answers(comp="no")), extra_args=["--no-triage-questions"])
+            self.assertNotIn("triage_questions", j.result)
+            self.assertNotIn("Triage", self.report(j))
+
+    def test_a_failed_triage_request_is_reported_with_its_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = jj.JudgeError("JEV.HTTP", "boom", recoverable=False)
+            j = Judged(d, Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad))
+            md = self.report(j)
+            self.assertIn(">   Triage error JEV.HTTP:", md)
+            self.assertNotIn(">   Triage:", md)
+
+    def test_fixture_triage_answers_are_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            fx = {"*": {**plan_answers(comp="no"), **{i: answer("yes", 0.8) for i in TRIAGE_IDS}}}
+            path = write(d, "fx.json", json.dumps(fx))
+            j = Judged(d, Transport(), extra_args=["--answers-file", path])
+            self.assertEqual(j.result["verdict"], "not_addressed", j.out)
+            self.assertIn("`owns` yes (0.80)", self.report(j))
+
+    def test_a_run_file_without_triage_questions_still_reports(self):
+        """Run files written by 0.9.0 carry triage answers but not which ones they are: no triage line, no error."""
+        with tempfile.TemporaryDirectory() as d:
+            j = Judged(d, ByQuestions(plan_answers(comp="no")))
+            run = json.loads(Path(j.run["path"]).read_text(encoding="utf-8"))
+            for r in run["results"]:
+                r.pop("triage_questions", None)
+            Path(j.run["path"]).write_text(json.dumps(run), encoding="utf-8")
+            md = self.report(j)
+            self.assertIn("not addressed", md)
+            self.assertNotIn("Triage", md)
+
+
 def shipped_questions():
     return [json.loads(line) for line in SHIPPED.read_text(encoding="utf-8").splitlines() if line.strip()]
 
