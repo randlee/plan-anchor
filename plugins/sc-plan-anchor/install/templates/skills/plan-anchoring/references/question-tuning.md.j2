@@ -269,6 +269,13 @@ python3 scripts/jev_judge.py tournament --request tune-request.json \
   median, mean), then complexity (smaller wins) and bundle id. The selected
   bundle is the top-ranked accepted one; with none accepted, the decision is
   `unstable`, `evidence_incomplete` or `rejected`.
+- **Ties.** When two or more accepted bundles tie on every key except
+  complexity and bundle id, the runner picks none: the decision is `rejected`
+  with reason `TOURNAMENT.TIE_NEEDS_CHOICE`, the sealed-set fields are null,
+  and `evidence.tie.co_leaders` lists each co-leader with its questions,
+  score, confidence diagnostics and acceptance table. The anchor-tuning agent
+  chooses one and seals it with `--results <out>/results.jsonl --choose
+  <bundle_id>` into a new `--out`; no call is repeated.
 - **Output.** `<out>/result_vars.json` holds the `anchor-tuning-result.md.j2`
   variables, already checked by `anchor_tuning_contract.py`. The runner never
   writes a bead: reading the result, choosing and sealing stay with the

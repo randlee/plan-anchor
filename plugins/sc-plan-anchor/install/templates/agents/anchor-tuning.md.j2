@@ -111,16 +111,15 @@ text, a target pass rate, or any instruction to produce a pass.
    regressions; `confidence_reference_threshold` only ranks) and writes
    `<out>/result_vars.json`. Read its acceptance table and rankings. You may
    only add `authority_recommendations` and append rationale to
-   `explanation`; never change a score, ranking or selection.
+   `explanation`; never change a score, ranking or selection. On a tie
+   (`evidence.tie.needs_choice`), choose a co-leader and seal it: `tournament
+   --results <out>/results.jsonl --choose <id> --out <new folder>`.
 7. If a diagnostic plan is supplied, copy it into a disposable workspace. Add
    explicit ceremony to positive variants and remove an important statement or
    deliverable from negative variants. Expectations still come from INTENT/ANC.
    Hash the authoritative source before and after and never write it.
-8. Down-select the smallest role-complete production set that satisfies the
-   oracle. Seal its canonical JSON, authority versions, protocol version,
-   semantic score, confidence diagnostics, and source-neutral tuning-history
-   digest. Unselected candidates remain evidence and never enter production
-   review payloads. The history object must be canonical byte-identical JSON for
+8. Unselected candidates remain evidence and never enter production review
+   payloads. The history object must be canonical byte-identical JSON for
 {% if tracker == "br" %}   Markdown and `br`;{% elif tracker == "bd" %}   Markdown and `bd`;{% endif %} source paths, tracker IDs/revisions, timestamps,
    credentials, and source kind belong only in local bindings outside it.
    Production questions contain no confidence target, verdict mapping, or

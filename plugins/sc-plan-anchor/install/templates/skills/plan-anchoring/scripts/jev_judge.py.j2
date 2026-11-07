@@ -4164,6 +4164,10 @@ class BundleScore:
                 -d["cells_at_or_above_threshold"], -d["minimum"], -d["p10"], -d["median"], -d["mean"], self.complexity(),
                 self.bundle.bundle_id)
 
+    def tie_key(self, reference: float) -> tuple:
+        """Every ranking key except complexity and bundle id: equal tie keys are a tie the tuning agent decides."""
+        return self.rank_key(reference)[:-2]
+
 
 def _percentile(values: list, p: float) -> float:
     xs = sorted(values)
@@ -4447,11 +4451,16 @@ def _decision(top: BundleScore) -> tuple:
     return "rejected", "TOURNAMENT.SEMANTIC_REJECTED"
 
 
-def _ranking_rows(ranked: list, selected: Optional[BundleScore], reference: float) -> list:
+def _ranking_rows(ranked: list, selected: Optional[BundleScore], leaders: list, reference: float) -> list:
     rows = []
+    tied = len(leaders) > 1
     for rank, s in enumerate(ranked, start=1):
         if s is selected:
-            reason = "Selected: top lexicographic rank among semantically accepted bundles."
+            reason = ("Selected by the tuning agent (--choose) among tied co-leaders: " + ", ".join(x.bundle.bundle_id for x in leaders) + "."
+                      if tied else "Selected: top lexicographic rank among semantically accepted bundles.")
+        elif tied and s in leaders and selected is None:
+            reason = ("Co-leader: ties " + ", ".join(x.bundle.bundle_id for x in leaders if x is not s)
+                      + " on every ranking key except complexity and id; the anchor-tuning agent chooses (--choose).")
         elif not s.accepted:
             causes = []
             if s.missing:
@@ -4459,11 +4468,12 @@ def _ranking_rows(ranked: list, selected: Optional[BundleScore], reference: floa
             causes += s.mismatches[:12]
             reason = "Rejected: " + "; ".join(causes) + ("; ..." if len(s.mismatches) > 12 else "") + "."
         else:
-            reason = f"Semantically accepted; ranked below {selected.bundle.bundle_id} in the lexicographic order."
+            reason = f"Semantically accepted; ranked below {(selected or leaders[0]).bundle.bundle_id} in the lexicographic order."
         rows.append({"rank": rank, "bundle_id": s.bundle.bundle_id, "roles": s.bundle.roles,
                      "question_sha256": canonical_digest(s.bundle.questions), "semantic_accepted": s.accepted,
                      "complete": s.complete, **s.semantic_score(), "confidence": s.diagnostics(reference),
-                     "complexity_bytes": s.complexity(), "selected": s is selected, "reason": reason,
+                     "complexity_bytes": s.complexity(), "selected": s is selected, "co_leader": tied and s in leaders,
+                     "reason": reason,
                      "mismatches": s.mismatches})
     return rows
 
@@ -4564,15 +4574,31 @@ def _history_event(request: dict, oracle: Oracle, chosen: BundleScore, chosen_li
 
 
 def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dict, repeat: int, roles: dict, kind: str,
-                      out_dir: pathlib.Path, results_path: pathlib.Path, workers: int, started: float) -> Result[dict, JudgeError]:
-    """Score, rank, select and assemble the anchor-tuning result variables; the contract checks them before they are written."""
+                      out_dir: pathlib.Path, results_path: pathlib.Path, workers: int, started: float,
+                      choose: str = "") -> Result[dict, JudgeError]:
+    """Score, rank, select and assemble the anchor-tuning result variables; the contract checks them before they are written.
+
+    Accepted bundles that tie on every ranking key except complexity and id are co-leaders: without ``choose`` none
+    is sealed and all come back for the tuning agent; ``choose`` names the co-leader (or sole leader) to seal.
+    """
     contract = _tournament_contract()
     reference = request["confidence_reference_threshold"]
     production = request["production_confidence_threshold"]
     scores = score_bundles(bundles, oracle, indexed, repeat, roles, kind)
     ranked = sorted(scores, key=lambda s: s.rank_key(reference))
-    selected = next((s for s in ranked if s.accepted), None)
-    chosen = selected or ranked[0]
+    top = ranked[0]
+    leaders = [s for s in ranked if s.accepted and s.tie_key(reference) == top.tie_key(reference)] if top.accepted else []
+    tie = len(leaders) > 1
+    if choose:
+        picked = next((s for s in leaders if s.bundle.bundle_id == choose), None)
+        if picked is None:
+            return fail("TOURNAMENT.CHOICE_INVALID", f"--choose {choose!r} is not a leader of this tournament (leaders: "
+                        + (", ".join(s.bundle.bundle_id for s in leaders) or "none: no bundle was accepted") + ")",
+                        action="Choose one of the co_leaders the unchosen run returned in evidence.tie.")
+        selected = picked
+    else:
+        selected = None if tie else (leaders[0] if leaders else None)
+    chosen = selected or top
     chosen_lines = [indexed[(c.case_id, chosen.bundle.bundle_id, r)] for c in oracle.cases for r in range(1, repeat + 1)
                     if (c.case_id, chosen.bundle.bundle_id, r) in indexed]
     if not any(x.get("ok") for x in chosen_lines):
@@ -4580,7 +4606,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
                     action="Fix the cause in the stream's error fields and rerun into a new --out.")
     accepted = selected is not None
     sealed = {"digest": canonical_digest({"questions": selected.bundle.questions}), "questions": selected.bundle.questions} if accepted else None
-    decision = _decision(chosen)
+    decision = ("rejected", "TOURNAMENT.TIE_NEEDS_CHOICE") if tie and selected is None else _decision(chosen)
     event = _history_event(request, oracle, chosen, chosen_lines, decision, sealed["digest"] if sealed else None, reference)
     before = request["tuning_history"]
     after = {"schema": before["schema"], "history_id": before["history_id"], "events": before["events"] + [event]}
@@ -4589,7 +4615,12 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     score = chosen.semantic_score()
     explanation = (f"{len(bundles)} role-complete bundles (baseline included) x {len(oracle.cases)} frozen oracle cases x {repeat} repeats: "
                    f"{len(all_lines)} calls, {sum(x['retry_count'] for x in all_lines)} retries. ")
-    if accepted:
+    if tie and not accepted:
+        explanation += (f"Bundles {', '.join(s.bundle.bundle_id for s in leaders)} are all semantically accepted and tie on every ranking key "
+                        f"except complexity and id ({score['exact_role_cells']}/{score['total_role_cells']} role cells, "
+                        f"{score['stable_cases']}/{score['total_cases']} stable cases, zero regressions); nothing is sealed until the "
+                        "anchor-tuning agent chooses one. ")
+    elif accepted:
         explanation += (f"Bundle {selected.bundle.bundle_id} is the top-ranked semantically accepted set: {score['exact_role_cells']}/{score['total_role_cells']} "
                         f"role cells, {score['exact_semantic_verdicts']}/{score['total_semantic_verdicts']} threshold-0 verdicts, "
                         f"{score['stable_cases']}/{score['total_cases']} stable cases, zero regressions against the baseline. ")
@@ -4605,7 +4636,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
         "tuning_history_before_sha256": contract.sha256(before), "tuning_history_after": after,
         "tuning_history_after_sha256": contract.sha256(after), "production_semantics_unchanged": True,
         "authority_citations": oracle.citations, "oracle_sha256": oracle.sha256, "sealed_question_set": sealed,
-        "candidate_rankings": _ranking_rows(ranked, selected, reference),
+        "candidate_rankings": _ranking_rows(ranked, selected, leaders, reference),
         "acceptance_table": _acceptance_table(chosen, baseline, oracle, indexed, repeat, roles, kind, production),
         "evidence": {
             "out_dir": str(out_dir), "results_path": str(results_path), "oracle_path": str(out_dir / TOURNAMENT_ORACLE_LOCK),
@@ -4621,11 +4652,22 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
             "baseline_bundle": BASELINE_BUNDLE, "bundles": {b.bundle_id: b.roles for b in bundles},
             "role_rankings": _role_rankings(scores, oracle, indexed, repeat), "ranking_order": RANKING_ORDER,
             "run_ids_all": sorted(x["run_id"] for x in all_lines),
+            "tie": None if not tie else {
+                "needs_choice": selected is None, "chosen": selected.bundle.bundle_id if selected else None,
+                "co_leaders": [{"bundle_id": s.bundle.bundle_id, "roles": s.bundle.roles, "questions": s.bundle.questions,
+                                "question_sha256": canonical_digest({"questions": s.bundle.questions}),
+                                "semantic_score": s.semantic_score(), "confidence_diagnostics": s.diagnostics(reference),
+                                "complexity_bytes": s.complexity(),
+                                "acceptance_table": _acceptance_table(s, baseline, oracle, indexed, repeat, roles, kind, production)}
+                               for s in leaders]},
         },
         "explanation": explanation,
         "planner_action": (f"Write sealed_question_set.questions as the anchor's {TUNE_GATES[request['gate']]}-questions override after validating this result; "
                            "store tuning_history_after byte-identical. Do not use tournament confidence in production review."
                            if accepted else
+                           f"Tie: choose one of {', '.join(s.bundle.bundle_id for s in leaders)} from evidence.tie.co_leaders, then seal it with "
+                           "`tournament --results <out>/results.jsonl --choose <bundle_id>` into a new --out."
+                           if tie else
                            "Keep the current questions. Read the acceptance table and candidate rankings, then evaluate new candidates against the same frozen oracle."),
         "question_action": None, "sealed_question_set_digest_before": None,
         "sealed_question_set_digest_after": sealed["digest"] if sealed else None,
@@ -4648,6 +4690,9 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
     started = time.monotonic()
     if not 1 <= args.max_workers <= BATCH_MAX_WORKERS:
         return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {BATCH_MAX_WORKERS}")
+    if args.choose and not args.results:
+        return fail("VALIDATION.INPUT", "--choose seals a co-leader of an existing stream; pass that stream with --results",
+                    action="Rerun as `tournament --results <out>/results.jsonl --choose <bundle_id> --out <new folder>`.")
     loaded = load_json(args.request, "tune request")
     if isinstance(loaded, Err):
         return loaded
@@ -4728,7 +4773,7 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
     if isinstance(indexed, Err):
         return indexed
     assembled = tournament_result(request, oracle, bundles, indexed.value, repeat, roles, kind, out_dir, results_path,
-                                  args.max_workers, started)
+                                  args.max_workers, started, args.choose)
     if isinstance(assembled, Err):
         return assembled
     variables = assembled.value
@@ -4738,6 +4783,8 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
     selected = next((r["bundle_id"] for r in d["candidate_rankings"] if r["selected"]), None)
     return Ok({"success": True, "error": None, "data": {
         "accepted": d["accepted"], "selected_bundle": selected, "decision": d["tuning_history_after"]["events"][-1]["decision"],
+        "tie_needs_choice": bool(d["evidence"]["tie"] and d["evidence"]["tie"]["needs_choice"]),
+        "co_leaders": [c["bundle_id"] for c in d["evidence"]["tie"]["co_leaders"]] if d["evidence"]["tie"] else [],
         "semantic_score": d["semantic_score"], "oracle_sha256": d["oracle_sha256"], "result_vars": str(vars_path),
         "results": str(results_path), "calls": d["evidence"]["calls"], "failed_calls": d["evidence"]["failed_calls"],
         "retries": d["evidence"]["retries"]}})
@@ -5006,6 +5053,7 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--candidates", required=True, help="candidate questions (assets/schemas/tune-candidates.schema.json)")
     tn.add_argument("--out", required=True, help="tournament folder: frozen oracle, result stream, result_vars.json")
     tn.add_argument("--results", default="", help="score this existing result stream instead of calling Jev")
+    tn.add_argument("--choose", default="", help="seal this bundle: one of the tied co-leaders an earlier run returned (needs --results)")
     tn.add_argument("--max-workers", type=int, default=BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {BATCH_MAX_WORKERS}")
     tn.add_argument("--model", default=DEFAULT_MODEL)
     tn.add_argument("--timeout", type=float, default=30.0)

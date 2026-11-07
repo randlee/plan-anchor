@@ -232,19 +232,62 @@ class TournamentTests(TournamentCase):
         self.assertTrue(all("P-SILENT: unstable across repeats" in r["mismatches"] for r in d["candidate_rankings"]))
 
     def test_regression_against_the_baseline_rejects_a_bundle(self):
-        # baseline exact everywhere; S0 calls the conflict probe compliant on both repeats (stable but wrong);
-        # S1 and S2 tie with the baseline on every score, so the smallest set wins (S1: shortest, then lowest id)
+        # baseline exact everywhere; S0 calls the conflict probe compliant on both repeats (stable but wrong)
         data = self.ran(fixture_for(wrong={("P-CONFLICT", "S0"): {"contradicted": "no"}}))
-        self.assertEqual((data["accepted"], data["selected_bundle"]), (True, "S1"))
         variables = self.result_vars()
         self.assert_contract_valid(variables)
         s0 = self.rankings(variables)["S0"]
         self.assertEqual((s0["semantic_accepted"], s0["regressions"], s0["stable_cases"]), (False, 1, 9))
         self.assertIn("regression", s0["reason"])
+        # baseline, S1 and S2 tie on every ranking key but complexity and id: all come back, nothing is sealed
+        self.assertEqual((data["accepted"], data["selected_bundle"], data["tie_needs_choice"]), (False, None, True))
+        self.assertEqual(sorted(data["co_leaders"]), ["S1", "S2", "baseline"])
+        self.assertEqual(data["decision"], {"status": "rejected", "question_set_sha256": None, "reason_code": "TOURNAMENT.TIE_NEEDS_CHOICE"})
+        d = variables["data"]
+        self.assertEqual((d["sealed_question_set"], d["sealed_question_set_digest_after"]), (None, None))
+        tie = d["evidence"]["tie"]
+        self.assertEqual((tie["needs_choice"], tie["chosen"]), (True, None))
+        leaders = {c["bundle_id"]: c for c in tie["co_leaders"]}
+        self.assertEqual(leaders["S2"]["questions"], {role: question(role, 2) for role in ROLES})
+        self.assertEqual(leaders["baseline"]["questions"], PLAN_QS["questions"])
+        for c in leaders.values():
+            self.assertEqual(c["semantic_score"]["exact_role_cells"], c["semantic_score"]["total_role_cells"])
+            self.assertEqual(len(c["acceptance_table"]), 9)
+            self.assertTrue(all(row["accepted"] for row in c["acceptance_table"]))
+        ranks = self.rankings(variables)
+        self.assertEqual({b for b, r in ranks.items() if r["co_leader"]}, {"S1", "S2", "baseline"})
+        self.assertFalse(any(r["selected"] for r in ranks.values()))
+        self.assertIn("--choose", d["planner_action"])
+
+    def test_the_tuning_agent_seals_a_chosen_co_leader(self):
+        self.ran(fixture_for(wrong={("P-CONFLICT", "S0"): {"contradicted": "no"}}))
+        stream = str(self.d / "t" / "results.jsonl")
+        data = self.ran(None, out="chosen", extra=("--results", stream, "--choose", "S2"))
+        self.assertEqual((data["accepted"], data["selected_bundle"], data["tie_needs_choice"]), (True, "S2", False))
+        variables = self.result_vars("chosen")
+        self.assert_contract_valid(variables)
+        expected = {role: question(role, 2) for role in ROLES}
+        self.assertEqual(variables["data"]["sealed_question_set"]["questions"], expected)
+        self.assertEqual(variables["data"]["evidence"]["tie"]["chosen"], "S2")
+        out = self.refused("TOURNAMENT.CHOICE_INVALID", None, out="bad", extra=("--results", stream, "--choose", "S0"))
+        self.assertIn("baseline", out["error"]["message"])
+        self.refused("VALIDATION.INPUT", fixture_for(), out="nores", extra=("--choose", "S2"))
+
+    def test_an_outright_winner_is_returned_alone(self):
+        # only S2 is more confident than the rest: no tie, S2 sealed alone
+        data = self.ran(fixture_for(conf={"S2": 0.95}))
+        self.assertEqual((data["accepted"], data["selected_bundle"], data["tie_needs_choice"], data["co_leaders"]), (True, "S2", False, []))
+        variables = self.result_vars()
+        self.assert_contract_valid(variables)
+        self.assertIsNone(variables["data"]["evidence"]["tie"])
+        self.assertEqual(variables["data"]["sealed_question_set"]["questions"], {role: question(role, 2) for role in ROLES})
+        ranks = self.rankings(variables)
+        self.assertEqual([b for b, r in ranks.items() if r["selected"]], ["S2"])
+        self.assertFalse(any(r["co_leader"] for r in ranks.values()))
 
     def test_retry_is_recorded_and_an_unanswered_call_is_incomplete_evidence(self):
         ok = {role: answer(choice, 0.9) for role, choice in CASES[0][3].items()}
-        fixture = fixture_for(failures={
+        fixture = fixture_for(conf={"S0": 0.95}, failures={
             "FX-PASS/S0/r1": [{"__error__": "JEV.OVERLOADED"}, ok],
             "FX-PASS/S1/r1": [{"__error__": "JEV.OVERLOADED"}, {"__error__": "JEV.OVERLOADED"}],
         })
@@ -273,7 +316,7 @@ class TournamentTests(TournamentCase):
         self.assertEqual(first, second)
 
     def test_oracle_changed_after_first_response_is_refused(self):
-        fixture = fixture_for()
+        fixture = fixture_for(conf={"S0": 0.95})  # S0 wins outright, so the history ends in a seal
         self.ran(fixture)
         tampered = oracle()
         tampered["cases"][3]["rationale"] = "relabelled after seeing an answer"

@@ -121,6 +121,7 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | `TOURNAMENT.REQUEST_INVALID`, `TOURNAMENT.GATE_UNSUPPORTED`, `TOURNAMENT.AUTHORITY_DIGEST` | `tournament` | The tune request fails `anchor_tuning_contract.py` (`data.violation` names the rule); the gate is `testability` (not run by the runner); an authority digest does not match its content |
 | `TOURNAMENT.ORACLE_INVALID`, `TOURNAMENT.ORACLE_INCONSISTENT`, `TOURNAMENT.ORACLE_COVERAGE`, `TOURNAMENT.ORACLE_CHANGED` | `tournament` | The oracle breaks `tune-oracle.schema.json`; an expected verdict does not follow from its expected roles; a required probe is missing; the oracle differs from the one frozen in `--out` or in the tuning history (tampering is refused, never re-frozen) |
 | `TOURNAMENT.CANDIDATES_INVALID`, `TOURNAMENT.QUESTION_META`, `TOURNAMENT.BUNDLES`, `TOURNAMENT.BASELINE` | `tournament` | The candidates break `tune-candidates.schema.json`; a question mentions confidence, thresholds or the oracle; a bundle names an unknown candidate or there are too many; the baseline set is unusable |
+| `TOURNAMENT.CHOICE_INVALID` | `tournament --choose` | The chosen bundle is not a leader of the stream (the unchosen run lists them in `evidence.tie.co_leaders`) |
 | `TOURNAMENT.EVIDENCE_MISMATCH`, `TOURNAMENT.OUT_EXISTS`, `TOURNAMENT.RESULT_INVALID`, `EXECUTION.JEV` | `tournament` | A stream line answers another request or its answers differ from its raw response; `--out` already holds a stream (pass a new one or `--results`); the assembled result fails the contract; no call of the chosen bundle has an answer |
 | `SCRIPT.INTERNAL` | anywhere | Unexpected exception, reported as JSON with exit 2 |
 
@@ -144,7 +145,7 @@ A tool failure is the only nonzero exit. Exit 0 means the command ran (`success:
 | `exclude --from` | `data.applied` (one entry per line), `data.count`, `data.changed` (lines that changed the record) |
 | `report`, `coverage`, `diff` | `data.pass`; `data.uncovered_anchors`; `data.pass_after`, `data.regressions` |
 | `batch`, `bead-batch` | No envelope: stdout is the result lines (or, with `bead-batch --emit`, the request lines). Exit 0 when every line has an answer; exit 2 with the error envelope on stderr when any line has `ok: false` |
-| `tournament` | `data.accepted`, `data.selected_bundle`, `data.decision`, `data.result_vars` (the `anchor-tuning-result.md.j2` variables) |
+| `tournament` | `data.accepted`, `data.selected_bundle`, `data.decision`, `data.result_vars` (the `anchor-tuning-result.md.j2` variables); on a tie `data.tie_needs_choice` true, `data.co_leaders` the tied bundles, `accepted` false and nothing sealed until a `--results ... --choose <bundle_id>` run |
 
 Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POLICY.REMOTE_JUDGE_DISABLED`, credential failure, any Jev call left without an answer, a missing dependency, and `SCRIPT.INTERNAL`. Exit 130 (`CANCELED`, `recoverable: true`) is an interrupt.
 
