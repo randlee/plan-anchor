@@ -84,6 +84,8 @@ contracts only when that operation needs them.
 {% if tracker == "br" %}| Review a Markdown or `br` plan |{% elif tracker == "bd" %}| Review a Markdown or `bd` plan |{% endif %} `references/planning-review-workflow.md` |
 | Review delivered sprint work | `references/development-review-workflow.md` |
 
+Why did an anchor fail? Run `judge` on the item; every failing cell carries triage answers and a route (`exclude`, `plan`, `question`, `human`); `report --run <run>` shows them.
+
 Do not preload the other workflow references. Open only additional references
 named by the selected workflow when their detail is needed.
 

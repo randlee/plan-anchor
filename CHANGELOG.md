@@ -4,6 +4,13 @@
 
 ## 0.9.3 — 2026-11-07
 
+- `SKILL.md`: one line under "Select the workflow" points to `judge` triage
+  answers and `report --run <run>` for why an anchor fails.
+- `capture-and-maintenance-workflow.md` (B): tuning runs concurrently with
+  gate runs; the rubric no longer reads as a precondition of `judge`.
+- `rubric`: an anchor whose verdict is not `testable` carries a `next` field
+  naming `judge`/`report` and anchor-tuning `triage` (`gate: testability`).
+  Absent on `testable`. Add only.
 - `jev_judge.py batch` (new, the low layer): reads JSONL request lines, each
   `{item, anchor, questions: [{candidate_id, questions, roles?}]}`, from stdin
   or `--input` through one parser, and writes one JSONL result line per
@@ -24,7 +31,9 @@
   candidate bundles x repeats) through `batch`, refuses a contract-invalid
   request or a changed oracle, scores with protocol
   `plan-anchor/question-tournament/2.0.0` (lexicographic ranking, acceptance
-  table, smallest accepted role-complete set) and writes `result_vars.json`
+  table, smallest accepted role-complete set; candidates tied on every key but
+  complexity and id all come back as co-leaders with nothing sealed, for the
+  anchor-tuning agent to choose) and writes `result_vars.json`
   for `anchor-tuning-result.md.j2`. Schemas: `assets/schemas/tune-oracle.schema.json`,
   `tune-candidates.schema.json`. The runner writes nothing to the tracker.
 - `anchor-tuning` agent, tune steps 5–6: run `jev_judge.py tournament`; never

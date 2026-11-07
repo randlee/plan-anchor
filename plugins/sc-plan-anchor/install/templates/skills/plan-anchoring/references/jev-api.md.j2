@@ -152,7 +152,7 @@ Exit 2 covers bad arguments, missing or unreadable files, invalid settings, `POL
 
 | Subcommand | Sends | Question set | Verdict |
 | --- | --- | --- | --- |
-| `rubric` | one anchor's statement, quote and scope | `assets/questions/testability.json` (single constraint, observable, requirement form, faithful to quote, scoped, positive form) | `testable` when every answer is yes at `--threshold` (default 0.6) and the lint has no error; else `needs_work` with the failing criteria; `data.pass` false on any `needs_work` |
+| `rubric` | one anchor's statement, quote and scope | `assets/questions/testability.json` (single constraint, observable, requirement form, faithful to quote, scoped, positive form) | `testable` when every answer is yes at `--threshold` (default 0.6) and the lint has no error; else `needs_work` with the failing criteria and a `next` hint (`judge`/`report`, anchor-tuning `triage`); `next` is absent on `testable`; `data.pass` false on any `needs_work` |
 | `dedupe --jev` | one pair of anchors (statements and quotes) per request, only for pairs the lexical pass flagged at `--threshold` (Jaccard, default 0.5) | `assets/questions/dedupe.json` (same constraint?) | pairs with `jev.choice` and confidence; likely duplicates are `yes` at the global confidence threshold, or Jaccard >= 0.8 without Jev; `data.likely_duplicates` lists any that remain. `--answers-file` implies `--jev` |
 | `check-fixtures` | one fixture sentence as the item | the gate's set | pass -> `satisfied`, fail -> `not_addressed` or `contradicted` |
 

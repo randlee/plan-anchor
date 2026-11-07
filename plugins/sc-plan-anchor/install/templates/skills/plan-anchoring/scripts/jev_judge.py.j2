@@ -3096,6 +3096,10 @@ def _rubric_judgement(args, api_key: str, body: dict, qs: dict, fixture, cid, th
     return Ok((responses, attempts, outcome.value))
 
 
+RUBRIC_NEXT = ("Plan diagnosis: run `judge` on the item, then `report --run <run>` for triage answers and routes. "
+               "A disputed rubric role on a locked anchor: anchor-tuning `triage` with `gate: testability`.")
+
+
 def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixture, what: str) -> Result[tuple, JudgeError]:
     """Lint, then one Jev request per candidate {id, statement, quote, scope, source_type}. Returns Ok((entries, requests_out)).
 
@@ -3140,6 +3144,8 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             entry["confirmations"] = outcome
             entry["failing"] = outcome["failing"]
             entry["verdict"] = outcome["verdict"]
+            if entry["verdict"] != "testable":
+                entry["next"] = RUBRIC_NEXT
         else:
             exc = judged.error
             if exc.code in ABORT_CODES:
