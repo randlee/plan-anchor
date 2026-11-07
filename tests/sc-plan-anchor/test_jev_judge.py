@@ -29,6 +29,7 @@ QUOTE = "copy the libraries from the legacy repo as the starting point and remov
 REQ_STATEMENT = "All public CLI commands must support --json output with a stable schema."
 LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001"}
 ASSETS = SKILL / "assets"
+TRIAGE_IDS = {"owns", "specific", "stated", "paraphrase", "partial"}
 
 
 def answer(choice, p=0.9, options=OPTIONS):
@@ -741,6 +742,10 @@ class RubricTests(unittest.TestCase):
             self.assertEqual((by_id["ANC-001"]["verdict"], by_id["ANC-001"]["failing"], by_id["ANC-001"]["statement"], by_id["ANC-001"]["lint"]),
                              ("testable", [], STATEMENT, {"warnings": [], "errors": []}))
             self.assertEqual(set(by_id["ANC-001"]["answers"]), set(jj.RUBRIC_QUESTIONS))
+            self.assertNotIn("next", by_id["ANC-001"])
+            self.assertEqual(by_id["ANC-002"]["next"], jj.RUBRIC_NEXT)
+            self.assertIn("`judge`", jj.RUBRIC_NEXT)
+            self.assertIn("gate: testability", jj.RUBRIC_NEXT)
             self.assertEqual((by_id["ANC-002"]["verdict"], by_id["ANC-002"]["failing"]),
                              ("needs_work", ["observable", "hedged wording; state the requirement",
                                               "written as speech, not as a requirement", "not phrased as a testable requirement"]))
@@ -1396,7 +1401,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertFalse(run["summary"]["pass"])
         self.assertEqual(len(run["requests"]), 2)
         self.assertEqual(run["requests"][0]["state"]["item"]["id"], "ex-42")
-        self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})
+        self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})  # 0.9.0: triage questions follow a failed cell, never the gate request
         self.assertEqual(run["totals"]["requests"], 2)
         self.assertEqual(run["totals"]["bytes"], sum(len(jj.encode_body(b)) for b in run["requests"]))
         self.assertEqual(run["totals"]["max_request_bytes"], 24000)
@@ -2404,6 +2409,65 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(out["data"]["items"], ["ex-2"])
             code, out = run_cli(["coverage", "--runs", str(Path(d) / "nowhere")])
             self.assertEqual((code, out["error"]["code"]), (2, "RUNS.NONE"))
+
+    def test_rerun_of_some_anchors_keeps_the_others(self):
+        """A later run that judged only ANC-001 replaces ANC-001's cell and keeps ANC-002's from the earlier run."""
+        with tempfile.TemporaryDirectory() as d:
+            runs = Path(d) / "runs"
+            make_run(runs, "full.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "satisfied"})
+            make_run(runs, "part.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "satisfied"})
+            code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan"])
+            data = out["data"]
+            self.assertEqual(code, 0, out)
+            self.assertEqual(data["matrix"], {"ANC-001": {"ex-1": "satisfied"}, "ANC-002": {"ex-1": "satisfied"}})
+            self.assertEqual(data["uncovered_anchors"], [])
+            self.assertEqual(data["runs_considered"], 1)
+            self.assertEqual(data["carried_from_earlier_run"], {"ANC-002": {"ex-1": "plan-2026-10-09T10:00:00+00:00-ex-1"}})
+            code, md = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--format", "md"])
+            self.assertIn("- ANC-002 x ex-1: plan-2026-10-09T10:00:00+00:00-ex-1", md)
+
+    def test_current_exclusions_apply_with_anchors(self):
+        """--anchors applies an exclusion recorded after the run, and lists one removed since for a re-judge."""
+        with tempfile.TemporaryDirectory() as d:
+            runs = Path(d) / "runs"
+            run_a = json.loads(Path(make_run(runs, "a.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00",
+                                             {"ANC-001": "not_addressed", "ANC-002": "satisfied"})).read_text())
+            run_a["results"][1].update(verdict="excluded", exclusion={"item": "ex-1", "reason": "Was excluded."})
+            write(runs, "a.json", run_a)
+            make_run(runs, "b.json", "plan", "ex-2", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
+            later = anchor("ANC-001", exclude=[{"item": "ex-1", "reason": "Owned by ex-2."}])
+            anchors_path = write(d, "anchors.json", record(later, anchor("ANC-002")))
+            code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan"])
+            self.assertEqual(out["data"]["matrix"]["ANC-001"]["ex-1"], "not_addressed")  # without --anchors: the run as written
+            code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--anchors", anchors_path])
+            data = out["data"]
+            self.assertEqual(code, 0, out)
+            self.assertEqual(data["matrix"]["ANC-001"], {"ex-1": "excluded", "ex-2": "satisfied"})
+            self.assertEqual(data["excluded"], {"ANC-001": {"ex-1": "Owned by ex-2."}})
+            self.assertEqual(data["matrix"]["ANC-002"], {})  # exclusion removed from the record: not judged, so not counted
+            self.assertEqual(data["exclusion_removed_rejudge"], {"ANC-002": ["ex-1"]})
+            self.assertEqual(data["uncovered_anchors"], ["ANC-002"])
+            code, md = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--anchors", anchors_path, "--format", "md"])
+            self.assertIn("- ANC-001 x ex-1: Owned by ex-2.", md)
+            self.assertIn("Exclusion removed since the run; re-judge: ANC-002 x ex-1", md)
+
+    def test_exclusion_for_another_item_does_not_apply(self):
+        with tempfile.TemporaryDirectory() as d:
+            runs = Path(d) / "runs"
+            make_run(runs, "a.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed"})
+            for item in ("ex-2", "EX-1", " ex-1"):
+                with self.subTest(item=item):
+                    anchors_path = write(d, "anchors.json", record(anchor("ANC-001", exclude=[{"item": item, "reason": "r"}])))
+                    code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan", "--anchors", anchors_path])
+                    self.assertEqual(out["data"]["matrix"]["ANC-001"]["ex-1"], "not_addressed")
+
+    def test_invalid_anchors_record_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            runs = Path(d) / "runs"
+            make_run(runs, "a.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied"})
+            code, out = run_cli(["coverage", "--runs", str(runs), "--anchors", str(Path(d) / "missing.json")])
+            self.assertNotEqual(code, 0)
+            self.assertEqual(out["error"]["code"], "INPUT.MISSING")
 
 
 class DiffTests(unittest.TestCase):

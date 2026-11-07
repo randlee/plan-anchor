@@ -2,10 +2,122 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
-## 0.8.8 — 2026-11-02
+## 0.10.0 — 2026-11-07
 
+One release for the #77 (triage pointer), #79 (tournament runner) and #62
+(approved rubric inputs) stack.
+
+- `SKILL.md`: one line under "Select the workflow" points to `judge` triage
+  answers and `report --run <run>` for why an anchor fails.
+- `capture-and-maintenance-workflow.md` (B): tuning runs concurrently with
+  gate runs; the rubric no longer reads as a precondition of `judge`.
+- `rubric`: an anchor whose verdict is not `testable` carries a `next` field
+  naming `judge`/`report` and anchor-tuning `triage` (`gate: testability`).
+  Absent on `testable`. Add only.
+- `jev_judge.py batch` (new, the low layer): reads JSONL request lines, each
+  `{item, anchor, questions: [{candidate_id, questions, roles?}]}`, from stdin
+  or `--input` through one parser, and writes one JSONL result line per
+  (item, candidate, repeat) to stdout as soon as that line and every line
+  before it have an answer. Each line carries the request id, run id, request
+  digest, raw response, answers with probabilities, verdict, leaning, retry
+  count and attempts. Every line is also teed, unchanged and flushed, to the
+  append-only log `anchor-runs/tournament-<run>.jsonl`. At most 4 parallel
+  calls, one recorded retry per failed call, every line validated before the
+  first call, `allow_remote_judge` checked before any live call. The library
+  API is the async iterator `stream_batch`. Schemas:
+  `assets/schemas/jev-batch-request.schema.json`, `jev-batch-result.schema.json`.
+- `jev_judge.py bead-batch` (new, the high layer): turns item beads, an
+  anchor's gate question bead and (with `--candidates`) its open child
+  candidate beads into `batch` request lines; `--emit` prints them, otherwise
+  they run through `batch` in-process. It only reads beads.
+- `jev_judge.py tournament` (new): runs a tune tournament (frozen oracle x
+  candidate bundles x repeats) through `batch`, refuses a contract-invalid
+  request or a changed oracle, scores with protocol
+  `plan-anchor/question-tournament/2.0.0` (lexicographic ranking, acceptance
+  table, smallest accepted role-complete set; candidates tied on every key but
+  complexity and id all come back as co-leaders with nothing sealed, for the
+  anchor-tuning agent to choose) and writes `result_vars.json`
+  for `anchor-tuning-result.md.j2`. Schemas: `assets/schemas/tune-oracle.schema.json`,
+  `tune-candidates.schema.json`. The runner writes nothing to the tracker.
+- `anchor-tuning` agent, tune steps 5–6: run `jev_judge.py tournament`; never
+  hand-roll the tournament. `references/question-tuning.md` documents the
+  tournament and both file formats; `references/jev-api.md` the commands,
+  outcomes and error codes.
 - Add optional repository-confined approved-intent and sealed-question inputs to `rubric`, with strict integrity checks, request provenance, and unchanged default questions and confidence rules.
 - Bind context-bearing testability triage to the exact approved intent, preserving legacy requests without context.
+
+## 0.9.2 — 2026-11-07
+
+- `plan-anchoring/references/bead-layout.md`: the read-only rule is scoped to
+  the gate agents ("All read-only for these gate agents: they never create,
+  update, close or comment on beads. The planner in the main session writes
+  beads as planning happens."), the wording sc-lint f4cc339c carried before
+  the 0.9.1 install replaced it. `report-format.md`,
+  `development-review-workflow.md` and `planning-review-workflow.md` say
+  "the gate agents never write to beads" for the same rule. Docs only.
+
+## 0.9.1 — 2026-11-05
+
+- `report --format md` shows a failed cell's triage answers on a `Triage:`
+  line under it (`owns` no (0.90), `specific` yes (0.85), ...), in question
+  order, so the reader sees what `triage/rules.json` routes the cell on. A
+  triage request that failed is shown as `Triage error <code>`, and extras
+  dropped over the size cap are listed. `judge` records which answers are
+  triage in the cell's new `triage_questions` field; run files written by
+  0.9.0 have no such field and report as before. Verdicts are unchanged.
+
+## 0.9.0 — 2026-11-04
+
+- The planning gate ships default triage questions (`owns`, `specific`,
+  `stated`, `paraphrase`, `partial`) with routing rules (`rules.json`) and a
+  README of the measurements behind them, under `assets/triage/`. `judge --gate
+  plan` asks them automatically for each cell that fails, in a second request
+  after the verdict is decided (the gate request, and so every verdict, is the
+  same with or without them; measured: adding them to the gate request moved
+  near-threshold verdicts); `--no-triage-questions` skips them. The installer
+  seeds them once into `.sc/plan-anchor/triage/`, which the repository owns:
+  later installs never overwrite or record it, and `judge` prefers that copy
+  over the shipped one. `judge --help` and `triage/README.md` describe what the
+  questions are for and how to edit, add or drop one. Questions passed with
+  `--extra-questions` stay in the gate request, as in 0.8.8.
+- Extra-question answers are optional: a response or fixture that omits one is
+  accepted (a missing gate answer or an unknown id is still refused). Over
+  `--max-request-bytes`, extras are dropped and listed in
+  `extra_questions_dropped` instead of the item being refused (a triage request
+  that is too large is dropped the same way).
+- `questions_sha256` covers the gate questions only; extras get their own
+  `extra_questions_sha256`, so digests of existing runs are unchanged.
+
+## 0.8.8 — 2026-11-04
+
+- `exclude --from <file.jsonl>` records many exclusions in one call: one
+  `{id, item, reason}` or `{id, item, remove: true}` per line, applied all or
+  nothing. A bad line, a duplicate pair or an unknown anchor saves nothing,
+  and the error names `file:line`. Each line behaves as the single-cell form:
+  no version bump, a history event, `remove` of nothing is a no-op. `--id` and
+  `--item` are no longer argparse-required; omitting them without `--from`
+  returns `VALIDATION.INPUT`.
+- Fix: the planning and development gate agents give each question-bead
+  `show` 3 attempts (1 s, then 2 s apart) before stopping with
+  `TRACKER.SHOW_FAILED`. A transient tracker failure, such as a database
+  timeout, no longer aborts the gate. The error now says it failed after 3
+  attempts and keeps the last error text.
+- Fix: `coverage` takes the latest result per anchor and item, not the latest
+  run per item, so re-running some anchors no longer drops the others'
+  results. Cells taken from an earlier run are listed in
+  `carried_from_earlier_run`.
+- Fix: `coverage --anchors <anchors.json>` applies the record's current
+  exclusions. An exclusion recorded after a run shows as `excluded` with its
+  reason; one removed since is listed in `exclusion_removed_rejudge` and does
+  not count as covered. Without `--anchors`, runs are read as written.
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
 
 ## 0.8.7 — 2026-11-02
 

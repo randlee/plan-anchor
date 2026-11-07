@@ -192,7 +192,7 @@ class RenderingTests(unittest.TestCase):
         copied_py = [rel for rel in self.package.skill if rel.endswith(".py") and rel not in self.package.rendered]
         self.assertEqual(copied_py, [])
         source = TEMPLATES / "skills" / "plan-anchoring"
-        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md"}
+        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md", "assets/triage/README.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
         self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 7)
@@ -202,7 +202,7 @@ class RenderingTests(unittest.TestCase):
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 3 + 22 + 7)  # agents, SKILL.md + 2 assets templates, references, scripts
+        self.assertEqual(len(templates), 3 + 4 + 22 + 7)  # agents, SKILL.md + 3 assets templates (incl. triage README), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -813,6 +813,26 @@ class RealInstallTests(unittest.TestCase):
         self.assertTrue(json.loads(proc.stdout)["success"], proc.stdout)
         return root
 
+    def test_triage_defaults_are_seeded_once_and_never_overwritten(self):
+        triage = ".sc/plan-anchor/triage"
+        names = {"plan-questions.jsonl", "rules.json", "README.md"}
+        for tracker in inst.TRACKERS:
+            with self.subTest(tracker=tracker):
+                root = self.install(self.repo(f"triage-{tracker}"), tracker)
+                folder = root / triage
+                self.assertEqual({p.name for p in folder.iterdir()}, names)
+                shipped = root / ".claude" / "skills" / "plan-anchoring" / "assets" / "triage"
+                for name in names:
+                    self.assertEqual((folder / name).read_bytes(), (shipped / name).read_bytes(), name)
+                lock = json.loads((root / ".sc" / "plan-anchor" / "install-lock.json").read_text(encoding="utf-8"))
+                self.assertFalse(any(k.startswith(triage) for k in lock["files"]))  # the repository owns it
+                # the repository edits its rules and drops a file; a rerun changes neither
+                (folder / "rules.json").write_text('{"edited": true}\n', encoding="utf-8")
+                (folder / "README.md").unlink()
+                self.install(root, tracker)
+                self.assertEqual((folder / "rules.json").read_text(encoding="utf-8"), '{"edited": true}\n')
+                self.assertFalse((folder / "README.md").exists())
+
     def test_each_install_names_only_its_tracker(self):
         for tracker in inst.TRACKERS:
             with self.subTest(tracker=tracker):
@@ -845,7 +865,9 @@ class RealInstallTests(unittest.TestCase):
                     continue
                 with self.subTest(tracker=tracker, path=rel):
                     harness, kind, rest = rel.split("/", 2)
-                    if kind == "agents":
+                    if rel.startswith(".sc/plan-anchor/triage/"):  # seeded from the shipped triage asset
+                        source = skill_src / "assets" / "triage" / f"{rel.rsplit('/', 1)[1]}.j2"
+                    elif kind == "agents":
                         source = TEMPLATES / "agents" / f"{rest}.j2"
                     else:
                         source = skill_src / f"{rest.split('/', 1)[1]}.j2"
@@ -854,7 +876,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 3 + 22 + 7))
+            self.assertEqual(checked, 3 * (3 + 4 + 22 + 7) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):
