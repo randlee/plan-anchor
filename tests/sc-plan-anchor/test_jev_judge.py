@@ -742,6 +742,10 @@ class RubricTests(unittest.TestCase):
             self.assertEqual((by_id["ANC-001"]["verdict"], by_id["ANC-001"]["failing"], by_id["ANC-001"]["statement"], by_id["ANC-001"]["lint"]),
                              ("testable", [], STATEMENT, {"warnings": [], "errors": []}))
             self.assertEqual(set(by_id["ANC-001"]["answers"]), set(jj.RUBRIC_QUESTIONS))
+            self.assertNotIn("next", by_id["ANC-001"])
+            self.assertEqual(by_id["ANC-002"]["next"], jj.RUBRIC_NEXT)
+            self.assertIn("`judge`", jj.RUBRIC_NEXT)
+            self.assertIn("gate: testability", jj.RUBRIC_NEXT)
             self.assertEqual((by_id["ANC-002"]["verdict"], by_id["ANC-002"]["failing"]),
                              ("needs_work", ["observable", "hedged wording; state the requirement",
                                               "written as speech, not as a requirement", "not phrased as a testable requirement"]))
