@@ -860,8 +860,9 @@ class RepositoryContractTests(unittest.TestCase):
                 with self.subTest(script=script.name):
                     self.assertNotIn("import yaml", source)
                     if script.name == "jev_judge.py":
-                        # one lazy import, inside the live-call consent check only
-                        self.assertEqual(source.count("import plan_anchor_settings"), 1)
+                        # Lazy for consent and optional repository-confined input resolution;
+                        # the settings module itself imports PyYAML only when reading settings.
+                        self.assertEqual(source.count("import plan_anchor_settings"), 2)
                         self.assertIn("    import plan_anchor_settings as settings  # lazy", source)
                         self.assertNotIn("\nimport plan_anchor_settings", source)
                         self.assertNotIn("\nfrom plan_anchor_settings", source)

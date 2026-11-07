@@ -2,6 +2,50 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.10.0 — 2026-11-07
+
+One release for the #77 (triage pointer), #79 (tournament runner) and #62
+(approved rubric inputs) stack.
+
+- `SKILL.md`: one line under "Select the workflow" points to `judge` triage
+  answers and `report --run <run>` for why an anchor fails.
+- `capture-and-maintenance-workflow.md` (B): tuning runs concurrently with
+  gate runs; the rubric no longer reads as a precondition of `judge`.
+- `rubric`: an anchor whose verdict is not `testable` carries a `next` field
+  naming `judge`/`report` and anchor-tuning `triage` (`gate: testability`).
+  Absent on `testable`. Add only.
+- `jev_judge.py batch` (new, the low layer): reads JSONL request lines, each
+  `{item, anchor, questions: [{candidate_id, questions, roles?}]}`, from stdin
+  or `--input` through one parser, and writes one JSONL result line per
+  (item, candidate, repeat) to stdout as soon as that line and every line
+  before it have an answer. Each line carries the request id, run id, request
+  digest, raw response, answers with probabilities, verdict, leaning, retry
+  count and attempts. Every line is also teed, unchanged and flushed, to the
+  append-only log `anchor-runs/tournament-<run>.jsonl`. At most 4 parallel
+  calls, one recorded retry per failed call, every line validated before the
+  first call, `allow_remote_judge` checked before any live call. The library
+  API is the async iterator `stream_batch`. Schemas:
+  `assets/schemas/jev-batch-request.schema.json`, `jev-batch-result.schema.json`.
+- `jev_judge.py bead-batch` (new, the high layer): turns item beads, an
+  anchor's gate question bead and (with `--candidates`) its open child
+  candidate beads into `batch` request lines; `--emit` prints them, otherwise
+  they run through `batch` in-process. It only reads beads.
+- `jev_judge.py tournament` (new): runs a tune tournament (frozen oracle x
+  candidate bundles x repeats) through `batch`, refuses a contract-invalid
+  request or a changed oracle, scores with protocol
+  `plan-anchor/question-tournament/2.0.0` (lexicographic ranking, acceptance
+  table, smallest accepted role-complete set; candidates tied on every key but
+  complexity and id all come back as co-leaders with nothing sealed, for the
+  anchor-tuning agent to choose) and writes `result_vars.json`
+  for `anchor-tuning-result.md.j2`. Schemas: `assets/schemas/tune-oracle.schema.json`,
+  `tune-candidates.schema.json`. The runner writes nothing to the tracker.
+- `anchor-tuning` agent, tune steps 5–6: run `jev_judge.py tournament`; never
+  hand-roll the tournament. `references/question-tuning.md` documents the
+  tournament and both file formats; `references/jev-api.md` the commands,
+  outcomes and error codes.
+- Add optional repository-confined approved-intent and sealed-question inputs to `rubric`, with strict integrity checks, request provenance, and unchanged default questions and confidence rules.
+- Bind context-bearing testability triage to the exact approved intent, preserving legacy requests without context.
+
 ## 0.9.2 — 2026-11-07
 
 - `plan-anchoring/references/bead-layout.md`: the read-only rule is scoped to
