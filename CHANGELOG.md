@@ -2,6 +2,16 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.9.3 — 2026-11-07
+
+- `SKILL.md`: one line under "Select the workflow" points to `judge` triage
+  answers and `report --run <run>` for why an anchor fails.
+- `capture-and-maintenance-workflow.md` (B): tuning runs concurrently with
+  gate runs; the rubric no longer reads as a precondition of `judge`.
+- `rubric`: an anchor whose verdict is not `testable` carries a `next` field
+  naming `judge`/`report` and anchor-tuning `triage` (`gate: testability`).
+  Absent on `testable`. Add only.
+
 ## 0.9.2 — 2026-11-07
 
 - `plan-anchoring/references/bead-layout.md`: the read-only rule is scoped to
