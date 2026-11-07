@@ -368,6 +368,45 @@ class GeneratedDataTests(unittest.TestCase):
         self.assertFalse([p for p in package.skill if p.startswith("tests/")])
 
 
+# ---------------------------------------------------------------- harness targets (#81)
+
+
+class HarnessTargetTests(unittest.TestCase):
+    """Target selection and --status need neither sc-compose nor a tracker."""
+
+    def test_status_flags_present_harnesses_with_no_install(self):
+        repo = TempRepo(self)
+        repo.path(".claude/skills/plan-anchoring").mkdir(parents=True)
+        repo.path(".codex").mkdir()
+        repo.path(".cursor").mkdir()
+        result = inst.status(repo.root)
+        self.assertIsInstance(result, inst.Ok, getattr(result, "error", None))
+        self.assertEqual(result.value["missing_targets"], ["codex", "cursor"])
+        self.assertIn("no plan-anchoring in .codex/, .cursor/", result.value["message"])
+
+    def test_status_reports_nothing_missing_when_every_harness_is_installed(self):
+        repo = TempRepo(self)
+        repo.path(".claude/skills/plan-anchoring").mkdir(parents=True)
+        result = inst.status(repo.root)
+        self.assertIsInstance(result, inst.Ok, getattr(result, "error", None))
+        self.assertEqual(result.value["missing_targets"], [])
+        self.assertNotIn("no plan-anchoring", result.value["message"])
+
+    def test_choose_targets_unions_lock_installs_present_and_requested(self):
+        repo = TempRepo(self)
+        repo.path(".codex/skills/plan-anchoring").mkdir(parents=True)
+        lock = inst.Lock("0.9.2", "br", ("claude",), {})
+        self.assertEqual(inst.choose_targets(repo.root, lock, ["cursor"]),
+                         {"claude": ["locked"], "codex": ["installed", "present"], "cursor": ["requested"]})
+
+    def test_cli_without_target_requests_nothing(self):
+        seen = []
+        with mock.patch.object(inst, "install", side_effect=lambda opts, **kw: seen.append(opts) or inst.Ok({})), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(inst.main(["--dest", ".", "--tracker", "br"]), 0)
+        self.assertEqual(seen[0].targets, [])
+
+
 # ---------------------------------------------------------------- install
 
 
@@ -427,6 +466,48 @@ class InstallTests(unittest.TestCase):
         for target in ("claude", "codex", "cursor"):  # the runner contract's registry lives in the skill
             registry = repo.path(f".{target}/skills/plan-anchoring/registry.yaml").read_text(encoding="utf-8")
             self.assertIn(f"path: .{target}/agents/anchor-tuning.md", registry)
+
+    # #81: an upgrade covers every harness the folder uses; --target only adds.
+    def test_unlocked_claude_install_upgrades_every_present_harness(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo))
+        repo.path(inst.LOCK_RELPATH).unlink()  # an install from before the lock existed
+        repo.path(".codex").mkdir()
+        repo.path(".cursor").mkdir()
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["targets"], ["claude", "codex", "cursor"])
+        self.assertEqual(data["target_reasons"], {"claude": ["installed", "present"], "codex": ["present"],
+                                                  "cursor": ["present"]})
+        self.assert_installed(repo, "br", ["claude", "codex", "cursor"])
+
+    def test_locked_targets_are_kept(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo, targets=("claude", "codex")))
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["locked", "installed", "present"],
+                                                  "codex": ["locked", "installed", "present"]})
+        self.assert_installed(repo, "br", ["claude", "codex"])
+
+    def test_claude_only_repo_installs_claude_only(self):
+        repo = TempRepo(self, beads="sqlite")
+        repo.path(".claude").mkdir()
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["present"]})
+        self.assert_installed(repo, "br", ["claude"])
+        self.assertFalse(repo.path(".codex").exists() or repo.path(".cursor").exists())
+
+    def test_no_harness_and_no_target_defaults_to_claude(self):
+        repo = TempRepo(self, beads="sqlite")
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["default"]})
+        self.assert_installed(repo, "br", ["claude"])
+
+    def test_explicit_target_adds_to_the_set(self):
+        repo = TempRepo(self, beads="sqlite")
+        repo.path(".codex").mkdir()
+        data = self.ok(run_install(repo, targets=("cursor",)))
+        self.assertEqual(data["target_reasons"], {"codex": ["present"], "cursor": ["requested"]})
+        self.assertEqual(self.lock(repo)["targets"], ["codex", "cursor"])
 
     def test_rerun_is_idempotent(self):
         repo = TempRepo(self, beads="sqlite")

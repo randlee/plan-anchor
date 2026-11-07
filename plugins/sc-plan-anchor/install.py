@@ -57,8 +57,17 @@ itself, anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``,
 ``~/.agents``, ``/etc/codex`` or Claude Code's managed-settings directory
 (which covers every plugin cache), and this plugin's own directory.
 
-What it writes, per target (default ``claude``; a rerun keeps every target the
-lock records):
+Targets. The harnesses written are the union of: the targets the lock records;
+every harness whose ``.<target>/skills/plan-anchoring/`` exists (an install,
+locked or not); every harness directory (``.claude/``, ``.codex/``,
+``.cursor/``) present at the destination; and any ``--target``. ``--target``
+only adds; it never removes. With none of these, the target is ``claude``. So
+an upgrade upgrades every harness the folder uses. ``data.target_reasons``
+gives each chosen target's reasons (``locked``, ``installed``, ``present``,
+``requested``, ``default``); ``--status`` lists in ``missing_targets`` the
+harness directories present with no plan-anchoring install.
+
+What it writes, per target:
   <dest>/.<target>/skills/plan-anchoring/...   the skill (and registry.yaml for the agents)
   <dest>/.<target>/agents/anchor-*.md          the agents
 and once per destination:
@@ -418,6 +427,36 @@ def read_lock(root: Path) -> Result[Optional[Lock], ToolError]:
             or not all(isinstance(k, str) and isinstance(v, str) for k, v in d["files"].items())):
         return err("INSTALL.LOCK_INVALID", f"{LOCK_RELPATH} is not an {PACKAGE} install record", fix)
     return Ok(Lock(str(d.get("version")), d["tracker"], tuple(d["targets"]), dict(d["files"])))
+
+
+# ---------------------------------------------------------------- targets
+
+# Why a harness is a target: "locked" (the lock records it), "installed" (its
+# skills/plan-anchoring/ exists, locked or not), "present" (its .<target>/
+# directory exists at the destination), "requested" (--target), "default"
+# (none of these, so claude).
+TargetReasons = Dict[str, List[str]]
+
+
+def harness_present(root: Path, target: str) -> bool:
+    return (root / f".{target}").is_dir()
+
+
+def harness_installed(root: Path, target: str) -> bool:
+    return (root / f".{target}" / "skills" / SKILL_NAME).exists()
+
+
+def choose_targets(root: Path, lock: Optional[Lock], requested: List[str]) -> TargetReasons:
+    """Every harness the destination uses, plus the requested ones; --target only adds (#81)."""
+    reasons: TargetReasons = {}
+    for target in TARGETS:
+        why = [name for name, hit in (("locked", lock is not None and target in lock.targets),
+                                      ("installed", harness_installed(root, target)),
+                                      ("present", harness_present(root, target)),
+                                      ("requested", target in requested)) if hit]
+        if why:
+            reasons[target] = why
+    return reasons or {"claude": ["default"]}
 
 
 def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, str]) -> str:
@@ -805,6 +844,7 @@ class Plan:
     version: str
     tracker: str
     targets: List[str]
+    target_reasons: TargetReasons = field(default_factory=dict)
     writes: Dict[str, Tuple[bytes, bool]] = field(default_factory=dict)  # key -> (bytes, executable)
     create: List[str] = field(default_factory=list)
     replace: List[str] = field(default_factory=list)
@@ -887,8 +927,10 @@ def _problem(plan: Plan, code: str, key: str, message: str) -> None:
 def build_plan(root: Path, package: Package, renderer: Renderer, choice: TrackerChoice, lock: Optional[Lock],
                requested_targets: List[str], overwrite: bool) -> Result[Plan, ToolError]:
     """Everything the install would do. Reads the repository; writes nothing."""
-    targets = [t for t in TARGETS if t in requested_targets or (lock is not None and t in lock.targets)]
-    plan = Plan(root=root, version=package.version, tracker=choice.tracker, targets=targets, br_init=choice.init_br)
+    reasons = choose_targets(root, lock, requested_targets)
+    targets = list(reasons)
+    plan = Plan(root=root, version=package.version, tracker=choice.tracker, targets=targets,
+                target_reasons=reasons, br_init=choice.init_br)
     wanted = wanted_files(package, renderer, targets, choice.tracker)
     if isinstance(wanted, Err):
         return wanted
@@ -1129,7 +1171,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
 class Options:
     dest: Path
     tracker: Optional[str]
-    targets: List[str]
+    targets: List[str]  # --target: added to the harnesses the folder uses; may be empty
     init_br: bool = False
     overwrite: bool = False
     dry_run: bool = False
@@ -1180,6 +1222,7 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
             covering = {"root": str(parent_root), "version": found.value.version if isinstance(found, Ok) and found.value else None,
                         "valid": isinstance(found, Ok)}
     installed = lock.value.version if lock.value is not None else None
+    missing = [t for t in TARGETS if harness_present(root.value, t) and not harness_installed(root.value, t)]
     have, want = version_tuple(installed), version_tuple(mine)
     if installed is None:
         state, message = "not_installed", f"not installed in {root.value}, installer {mine}"
@@ -1191,6 +1234,9 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
         state, message = "current", f"installed {installed}, installer {mine}"
     else:
         state, message = "newer", f"installed {installed} is newer than installer {mine}"
+    if missing:
+        message += ("; no plan-anchoring in " + ", ".join(f".{t}/" for t in missing)
+                    + " (rerun the installer without --target to install every harness)")
     return Ok({
         "package": PACKAGE,
         "dest": str(root.value),
@@ -1198,6 +1244,7 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
         "installed_version": installed,
         "installed_tracker": lock.value.tracker if lock.value is not None else None,
         "installed_targets": list(lock.value.targets) if lock.value is not None else [],
+        "missing_targets": missing,
         "covering_install": covering,
         "state": state,
         "message": message,
@@ -1273,6 +1320,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "switched": switched,
         "allow_remote_judge": plan.allow_remote_judge,
         "targets": plan.targets,
+        "target_reasons": plan.target_reasons,
         "dry_run": opts.dry_run,
         "migration": lock.value is None,
         "plan": {
@@ -1331,7 +1379,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--tracker", choices=TRACKERS,
                    help="render for this tracker and record it (default: the settings file, else detection)")
     p.add_argument("--target", type=_targets, action="append", default=None, metavar="claude,codex,cursor",
-                   help="harness directories to install into (repeatable or comma-separated; default claude)")
+                   help="harness directories to add (repeatable or comma-separated); every harness the folder "
+                        "uses is always included: locked, installed or present (default claude when none)")
     p.add_argument("--init-br", action="store_true", help="run 'br init' when the repository has no .beads/")
     p.add_argument("--overwrite", action="store_true",
                    help=f"move modified or foreign files in the way to {BACKUP_DIR}/<UTC>/ and install over them")
@@ -1355,7 +1404,7 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
          plugin_dir: Path = PLUGIN_DIR) -> int:
     try:
         args = _parser().parse_args(argv)
-        targets = [t for group in (args.target or [["claude"]]) for t in group]
+        targets = [t for group in (args.target or []) for t in group]
         opts = Options(dest=Path(args.dest), tracker=args.tracker, targets=list(dict.fromkeys(targets)),
                        init_br=args.init_br, overwrite=args.overwrite, dry_run=args.dry_run,
                        allow_remote_judge=args.allow_remote_judge)
