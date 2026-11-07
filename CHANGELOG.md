@@ -2,6 +2,21 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.10.1 — 2026-11-07
+
+- `install.py` (#81): an upgrade covers every harness the folder uses. Without
+  `--target` the targets are the union of the lock's targets, every harness
+  whose `skills/plan-anchoring/` exists (locked or not) and every `.claude/`,
+  `.codex/` or `.cursor/` directory present at the destination; `claude` only
+  when there is none. `--target` adds to that set and never removes from it.
+  Before, `--target` defaulted to `claude`, so an unlocked install left
+  `.codex/` and `.cursor/` without plan-anchoring and with no warning.
+- The install JSON gains `target_reasons` (`locked`, `installed`, `present`,
+  `requested`, `default` per target); `--status` gains `missing_targets`, the
+  harness directories present with no install, and names them in `message`.
+- The installer docstring and help, the installer `SKILL.md`, the README and
+  `installation-and-troubleshooting.md` describe the new default.
+
 ## 0.10.0 — 2026-11-07
 
 One release for the #77 (triage pointer), #79 (tournament runner) and #62

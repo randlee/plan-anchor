@@ -2,7 +2,7 @@
 name: plan-anchor-installer
 description: Install or upgrade plan-anchor (the plan-anchoring skill and its anchor-plan-review, anchor-sprint-review and anchor-tuning agents) into a repository or a parent folder of repositories, rendered for one anchor tracker (br or bd). Use when the user asks to install, set up, upgrade, reinstall or switch the tracker of plan-anchor or plan anchoring, or when the session-start notice says a newer plan-anchor is available. Never installs globally.
 metadata:
-  version: "0.10.0"
+  version: "0.10.1"
 ---
 
 # plan-anchor installer
@@ -76,8 +76,12 @@ uv run "${CLAUDE_PLUGIN_ROOT}/install.py" --dest <folder> --tracker br|bd \
 ```
 
 An upgrade is the same command rerun for that folder; each install folder is
-upgraded on its own. Pass the targets the user works in (`claude` by default;
-a rerun keeps the targets already installed). `--tracker` with the other value
+upgraded on its own. Without `--target` the installer covers every harness
+the folder uses: the locked targets, every `.<target>/skills/plan-anchoring/`
+and every `.claude/`, `.codex/` or `.cursor/` directory present (`claude` when
+there is none); `--target` only adds a harness. `data.target_reasons` says why
+each target was chosen, and `--status` lists `missing_targets` (harness
+directories with no install). `--tracker` with the other value
 switches the tracker: every installed copy is re-rendered and no issue data is
 migrated. A repository with no `.beads/` needs `--init-br` (runs `br init`, the
 only bootstrap the installer performs) or the user's own `br init`.
