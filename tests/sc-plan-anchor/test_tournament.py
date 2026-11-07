@@ -6,6 +6,7 @@ stream-order test proves the consumer keys lines by id: a reversed stream scores
 """
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -457,6 +458,20 @@ class BatchTests(TournamentCase):
         again = self.subprocess_batch("a", "--input", str(self.d / "in.jsonl"))
         self.assertEqual(self.log("a"), from_file.stdout + again.stdout)
 
+    def test_stdout_lines_end_in_lf_where_text_stdout_writes_crlf(self):
+        """On Windows a text-mode stdout turns "\n" into "\r\n"; the result lines must still match the log byte for byte.
+        The child gets the same CRLF-translating stdout on every OS, so this check does not depend on the runner OS."""
+        wrapper = ("import runpy, sys; sys.stdout.reconfigure(newline='\\r\\n'); sys.argv = sys.argv[1:]; "
+                   "runpy.run_path(sys.argv[0], run_name='__main__')")
+        argv = [sys.executable, "-c", wrapper, str(SCRIPTS / "jev_judge.py"), "batch", "--run-dir", str(self.d / "crlf"),
+                "--run-name", "r1", "--answers-file", self.put("answers.json", self.FIXTURE), "--input",
+                self.put("in.jsonl", jsonl(self.LINES))]
+        proc = subprocess.run(argv, capture_output=True, cwd=str(self.d))
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+        self.assertEqual(len(proc.stdout.splitlines()), 3)
+        self.assertNotIn(b"\r", proc.stdout)
+        self.assertEqual(self.log("crlf"), proc.stdout)
+
     def test_results_stream_in_request_order_as_each_answer_arrives(self):
         """Completion order is forced to c3, c1, c2 with events (no sleeps); lines still come out c1, c2, c3, and c1
         is yielded while c2 is still unanswered, so nothing is held back for the end of the batch."""
@@ -527,6 +542,8 @@ class BatchTests(TournamentCase):
 
 
 @unittest.skipIf(os.name == "nt", "the fake tracker CLI is a POSIX script")
+@unittest.skipUnless(importlib.util.find_spec("yaml") is not None,
+                     "PyYAML is not installed; anchor_tracker.py reads the tracker choice from settings.yaml with it")
 class BeadBatchTests(TournamentCase):
     """The high layer reads beads through the tracker anchor_tracker.py selects (a fake CLI here; no Dolt server)
     and produces low-layer request lines; it never writes to the tracker."""
@@ -566,6 +583,12 @@ class BeadBatchTests(TournamentCase):
         self.calls = calls
         self.path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
         self.anchors = self.put("plan/anchors.json", record(anchor(beads={"anchor": None, "plan_questions": "ex-q", "dev_questions": None})))
+
+    def test_without_pyyaml_the_tracker_lookup_is_a_typed_refusal(self):
+        """The adapter resolves the tracker through anchor_tracker.py, which needs PyYAML: its absence is DEPENDENCY.PYYAML."""
+        with mock.patch.dict(sys.modules, {"yaml": None}):
+            code, out = self.bead_batch("--emit")
+        self.assertEqual((code, out["error"]["code"]), (2, "DEPENDENCY.PYYAML"), out)
 
     def bead_batch(self, *extra):
         argv = ["bead-batch", "--anchors", self.anchors, "--gate", "plan", "--anchor", "ANC-001", "--item", "ex-7", "--item", "ex-8",

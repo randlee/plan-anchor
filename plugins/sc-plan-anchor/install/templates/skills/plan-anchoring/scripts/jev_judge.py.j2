@@ -3787,6 +3787,19 @@ def read_batch_results(path: str) -> Result[list, JudgeError]:
     return Ok(lines)
 
 
+def write_stdout_line(text: str) -> None:
+    """One JSONL line to stdout, byte for byte as written to the log: through the binary buffer, because a text-mode
+    stdout on Windows turns "\n" into "\r\n". A stream without a buffer (a test's StringIO) gets the text."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    sys.stdout.flush()
+    buffer.write(text.encode("utf-8"))
+    buffer.flush()
+
+
 def encode_result_line(line: dict) -> str:
     return json.dumps(line, ensure_ascii=False) + "\n"  # key order kept: request_sha256 hashes the request as sent
 
@@ -3828,8 +3841,7 @@ def pump_batch(lines: list, settings: BatchSettings, api_key: str, fixture, log_
                 log.write(text)
                 log.flush()
                 if echo:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+                    write_stdout_line(text)
                 out.append(line)
         return out
 
@@ -4069,7 +4081,7 @@ def cmd_bead_batch(args) -> Result[Any, JudgeError]:
         return lines
     if args.emit:
         for line in lines.value:
-            sys.stdout.write(json.dumps(line, ensure_ascii=False) + "\n")
+            write_stdout_line(json.dumps(line, ensure_ascii=False) + "\n")
         return Ok(StreamedResult([]))
     return run_low_layer(args, lines.value)
 
