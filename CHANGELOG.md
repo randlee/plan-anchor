@@ -2,6 +2,16 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.9.2 — 2026-11-07
+
+- `plan-anchoring/references/bead-layout.md`: the read-only rule is scoped to
+  the gate agents ("All read-only for these gate agents: they never create,
+  update, close or comment on beads. The planner in the main session writes
+  beads as planning happens."), the wording sc-lint f4cc339c carried before
+  the 0.9.1 install replaced it. `report-format.md`,
+  `development-review-workflow.md` and `planning-review-workflow.md` say
+  "the gate agents never write to beads" for the same rule. Docs only.
+
 ## 0.9.1 — 2026-11-05
 
 - `report --format md` shows a failed cell's triage answers on a `Triage:`
