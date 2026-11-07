@@ -231,6 +231,57 @@ source kind remain outside it as local bindings. A v1 result can become a v2
 seal only through digest-verified offline re-evaluation that preserves the
 original decision and all raw evidence.
 
+## Running a tournament
+
+`jev_judge.py tournament` runs and scores a tune tournament; the anchor-tuning
+agent never hand-rolls one (`jev-api.md`, "Batch runner and tournament").
+
+```
+python3 scripts/jev_judge.py tournament --request tune-request.json \
+  --oracle oracle.json --candidates candidates.json --out <plan>/anchor-runs/tune-ANC-012-1
+```
+
+- **Request.** The anchor-tuning tune request. The runner checks it with
+  `anchor_tuning_contract.py` and recomputes the authority digests before
+  anything else; `testability` is not run by the runner.
+- **Oracle** (`assets/schemas/tune-oracle.schema.json`). `cases[]` of
+  `{case_id, probe, item: {title, text}, expected_roles, expected_verdict,
+  rationale}` plus `authority_citations`. Every expected verdict must follow
+  from its expected roles at threshold `0.0`, and the planning probes
+  (`compliant`, `silent`, `topical_only`, `conflicting`, `irrelevant`,
+  `boundary`, `exception`, plus `fixture_pass`/`fixture_fail` when the record
+  has fixtures; development adds `asserted_without_evidence` and `evidenced`) must all be
+  present. The runner freezes it in `--out` as `oracle.frozen.json` and refuses
+  a different oracle there, or one that differs from the last event in the
+  tuning history.
+- **Candidates** (`assets/schemas/tune-candidates.schema.json`).
+  `candidates.<role>.<candidate id>` is one question object per wording, at
+  least `candidate_minimum` per role; `bundles[]` of `{bundle_id, roles:
+  {<role>: <candidate id>}}` are the role-complete sets to evaluate (default
+  the cross product, at most 64). The request's `current_questions` are the
+  `baseline` bundle every regression is counted against.
+- **Run.** Every oracle case x bundle x `repeat_count` becomes one request line
+  of the low-layer `batch` runner (at most four parallel calls, one recorded
+  retry each); every result line is logged, unchanged, to `<out>/results.jsonl`.
+- **Score.** Bundles rank lexicographically: semantic acceptance, exact role
+  cells, exact threshold-`0.0` verdicts, stable cases, fewer regressions, then
+  confidence diagnostics (cells at or above the `0.8` reference, min, p10,
+  median, mean), then complexity (smaller wins) and bundle id. The selected
+  bundle is the top-ranked accepted one; with none accepted, the decision is
+  `unstable`, `evidence_incomplete` or `rejected`.
+- **Output.** `<out>/result_vars.json` holds the `anchor-tuning-result.md.j2`
+  variables, already checked by `anchor_tuning_contract.py`. The runner never
+  writes a bead: reading the result, choosing and sealing stay with the
+  anchor-tuning agent. `--results <out>/results.jsonl` rescores the logged
+  stream without calling Jev; lines are matched by request id, so their order
+  does not matter.
+
+To judge question beads directly, without an oracle, `bead-batch --anchor
+ANC-012 --gate plan --item <bead> --candidates` runs the gate question bead
+and each open child candidate bead against the items and streams one result
+line per (item, candidate, repeat) to stdout and to
+`anchor-runs/tournament-<run>.jsonl`.
+
 ## Testing a new anchor before the first gate run
 
 Before any gate uses a freshly locked anchor: `lint` clean, fixtures written and approved, `check-fixtures` green with the defaults. Otherwise tune first; an untested question set produces findings nobody can act on.

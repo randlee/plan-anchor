@@ -98,21 +98,20 @@ text, a target pass rate, or any instruction to produce a pass.
    role. Preserve role IDs and answer options. Each candidate asks one judgment,
    names the obligation, distinguishes silence from conflict, and supplies
    concrete yes/no/unclear criteria.
-5. Call Jev directly and in parallel over identical frozen cases, with at most
-   four candidate evaluators and deterministic correlation IDs. Persist each
-   candidate, canonical request, raw response, run ID, answers, verdict,
-   confidence, and repeat stability. Never add, remove, or relabel an oracle
-   case after seeing an answer.
-6. Evaluate with the versioned question-tournament protocol. Semantic
-   acceptance requires complete raw evidence, exact role labels, exact verdicts
-   from the existing role-to-verdict mapping with confidence threshold `0.0`,
-   identical repeats, zero regressions, and a role-complete simple bundle.
-   Confidence is retained against `confidence_reference_threshold` as a
-   diagnostic and ranking input; it is not a semantic-acceptance conjunct. Rank
-   lexicographically by semantic acceptance,
-   exact cells, exact semantic verdicts, stability, regressions, confidence
-   diagnostics, complexity, and candidate ID. Record every selection and
-   rejection reason.
+5. Write the oracle and candidates (`assets/schemas/tune-oracle.schema.json`,
+   `tune-candidates.schema.json`) and run `python3 <runtime.script> tournament
+   --request <file> --oracle <file> --candidates <file> --out <new folder under
+   anchor-runs/>`. Never hand-roll the tournament or call Jev yourself. The
+   runner freezes the oracle, refuses a changed one, runs at most four
+   evaluators with one recorded retry each, logs every raw line to
+   `<out>/results.jsonl`, and writes no tracker record. Report a refusal's
+   typed error; never work around it.
+6. The runner scores with the question-tournament protocol (exact roles, exact
+   verdicts at confidence threshold `0.0`, identical repeats, zero
+   regressions; `confidence_reference_threshold` only ranks) and writes
+   `<out>/result_vars.json`. Read its acceptance table and rankings. You may
+   only add `authority_recommendations` and append rationale to
+   `explanation`; never change a score, ranking or selection.
 7. If a diagnostic plan is supplied, copy it into a disposable workspace. Add
    explicit ceremony to positive variants and remove an important statement or
    deliverable from negative variants. Expectations still come from INTENT/ANC.

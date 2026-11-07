@@ -171,6 +171,11 @@ class JevJudgeErrors(ConventionCase):
             "report": (["report", "--run", missing], None),
             "coverage": (["coverage", "--runs", str(self.d / "empty")], None),
             "diff": (["diff", "--prev", missing, "--next", missing], None),
+            "batch": (["batch", "--input", missing, "--run-dir", str(self.d / "runs")], "INPUT.MISSING"),
+            "bead-batch": (["bead-batch", "--anchors", missing, "--gate", "plan", "--anchor", "ANC-001", "--item", "bd-1",
+                            "--emit", "--repository-root", str(self.d / "nowhere")], None),
+            "tournament": (["tournament", "--request", missing, "--oracle", missing, "--candidates", missing,
+                            "--out", str(self.d / "t")], None),
         }
         (self.d / "empty").mkdir()
         listed = re.search(r"\{([a-z,-]+)\}", subprocess.run([sys.executable, str(JJ), "-h"], capture_output=True,
