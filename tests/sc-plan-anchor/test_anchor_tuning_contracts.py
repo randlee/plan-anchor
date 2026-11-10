@@ -55,7 +55,7 @@ class AnchorTuningContractTests(unittest.TestCase):
         binary = shutil.which("sc-compose")
         template_path = SKILL / "templates" / template
         if not binary:
-            self.fail("sc-compose 1.7.0 is required for strict contract rendering")
+            self.fail("sc-compose 1.8.0 is required for strict contract rendering")
         with tempfile.TemporaryDirectory() as td:
             if isinstance(variables, dict):
                 variables_path = Path(td) / "variables.json"

@@ -4,6 +4,11 @@
 
 ## 0.11.0 — 2026-11-09
 
+- sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
+  installer's version check), the skill's dependency notes and the change
+  report require `>=1.8.0,<2`, and CI installs the released 1.8.0 CLI
+  (`scripts/install_sc_compose_ci.py`, sha256 per platform from the release's
+  `checksums.txt`). Rendered output is byte-identical to 1.7.0.
 - Change report (`scripts/change_report.py`, `references/change-report.md`):
   after fast iteration and the drift review, one HTML page for the owner with
   every anchor and plan-item change of the round and its scores before and

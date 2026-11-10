@@ -52,12 +52,12 @@ def _missing_deps():
         except ImportError:
             missing.append(module)
     if "sc_compose" not in missing and isinstance(inst.check_sc_compose(), inst.Err):
-        missing.append("sc_compose (version outside >=1.7.0,<2)")
+        missing.append("sc_compose (version outside >=1.8.0,<2)")
     return missing
 
 
 MISSING = _missing_deps()
-SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.7.0,<2' "
+SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.8.0,<2' "
                "(sc-compose publishes CPython 3.11 wheels); CI's installer job runs these")
 
 

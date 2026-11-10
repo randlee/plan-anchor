@@ -3,7 +3,7 @@
 # requires-python = ">=3.11,<3.12"
 # dependencies = [
 #   "pyyaml>=5.1",
-#   "sc-compose>=1.7.0,<2",
+#   "sc-compose>=1.8.0,<2",
 # ]
 # ///
 """Install plan-anchor (the plan-anchoring skill and its agents) into a folder, rendered for one tracker.
@@ -17,9 +17,9 @@ The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
 this script.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
-sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
-header pins 3.11 (uv downloads it when needed); the code itself runs on
-Python 3.9+, so ``python3 install.py`` works wherever both packages import.
+sc-compose wheel. The header pins Python 3.11 (uv downloads it when needed);
+the code itself runs on Python 3.9+, so ``python3 install.py`` works wherever
+both packages import.
 
 What it reads:
   - Its package files, under this plugin directory: ``plugin.json`` (the
@@ -206,9 +206,9 @@ TRACKERS = ("br", "bd")
 RENDERINGS = TRACKERS
 REGISTRY = "registry.yaml"   # per-target file installed in the skill directory
 TEMPLATE_NAME_PREFIX = "name: sc-plan-anchor-"
-SC_COMPOSE_FLOOR = (1, 7, 0)
+SC_COMPOSE_FLOOR = (1, 8, 0)
 SC_COMPOSE_CEILING_MAJOR = 2
-SC_COMPOSE_SPEC = "sc-compose>=1.7.0,<2"
+SC_COMPOSE_SPEC = "sc-compose>=1.8.0,<2"
 IGNORED = frozenset({"__pycache__", ".DS_Store"})
 ERROR_EXIT = 2
 NO_DATA_MIGRATION = (

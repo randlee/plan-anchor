@@ -631,7 +631,7 @@ def find_sc_compose() -> Result[str, ToolError]:
     binary = shutil.which("sc-compose")
     if binary is None:
         return err("DEPENDENCY.SC_COMPOSE", "sc-compose is not on PATH; the report is rendered with it",
-                   "Install sc-compose 1.7.0 or newer and put it on PATH (references/installation-and-troubleshooting.md).")
+                   "Install sc-compose 1.8.0 or newer and put it on PATH (references/installation-and-troubleshooting.md).")
     return Ok(binary)
 
 
