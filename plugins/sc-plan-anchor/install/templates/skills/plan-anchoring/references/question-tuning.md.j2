@@ -136,11 +136,11 @@ result. Before the first Jev call it uses judgment to derive expected role
 answers and verdicts for approved fixtures, calibration examples, and boundary
 probes, then freezes their text, labels, rationales, and digest. It may not
 relabel or discard cases after seeing Jev. The skill writes an override only
-after presenting the frozen oracle and acceptance table.
+with the frozen oracle and acceptance table recorded.
 
 ## When to tune
 
-Tune only when a fixture or expected verdict approved before tuning demonstrates one of these. A live gate failure alone is evidence to inspect, not authority to change the measuring instrument:
+Tune only when a fixture or expected verdict frozen before tuning (the tuner's oracle) demonstrates one of these. A live gate failure alone is evidence to inspect, not authority to change the measuring instrument:
 
 | Symptom | Likely cause | Tune |
 | --- | --- | --- |
@@ -151,7 +151,7 @@ Tune only when a fixture or expected verdict approved before tuning demonstrates
 | `contradicted` on a bead that merely omits the directive | The conflict question reads silence as conflict | Add "silence is not a contradiction" examples to the `no` criterion |
 | `evidenced: no` on a report that cites a diff | The evidence question does not recognise the artifact type the team produces | Name the artifact types in the `yes` criterion |
 
-Do not tune to make a bead pass. The active plan's desired verdict is not an input. Before round 1, freeze approved pass/fail fixtures plus independent probes for compliant paraphrase, silence, topical-only mention, direct conflict, irrelevance, and any boundary or exception in the anchor; the development oracle also distinguishes assertion from evidence. Tune until every role answer and derived verdict matches this unchanged oracle. If the intent and anchor do not determine a label, report `ANCHOR.AMBIGUOUS` instead of tuning.
+Do not tune to make a bead pass. The active plan's desired verdict is not an input. Before round 1, freeze the anchor's recorded pass/fail fixtures plus independent probes for compliant paraphrase, silence, topical-only mention, direct conflict, irrelevance, and any boundary or exception in the anchor; the development oracle also distinguishes assertion from evidence. Tune until every role answer and derived verdict matches this unchanged oracle. If the intent and anchor do not determine a label, report `ANCHOR.AMBIGUOUS` instead of tuning.
 
 ## Where overrides live
 

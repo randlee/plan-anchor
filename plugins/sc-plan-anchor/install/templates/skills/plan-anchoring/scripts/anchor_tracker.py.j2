@@ -328,7 +328,8 @@ def write(start: Path, *, pinned: Optional[str] = None, init: bool = False,
     if sel.settings is None or sel.settings.anchor_tracker is None:
         kept = sel.settings if sel.settings is not None else Settings(schema_version=SCHEMA_VERSION, anchor_tracker=None)
         saved = write_settings_file(path, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=sel.tracker,
-                                                   allow_remote_judge=kept.allow_remote_judge, plan_dir=kept.plan_dir))
+                                                   allow_remote_judge=kept.allow_remote_judge, plan_dir=kept.plan_dir,
+                                                   issue_url_template=kept.issue_url_template))
         if isinstance(saved, Err):
             return saved
         written = True

@@ -52,12 +52,12 @@ def _missing_deps():
         except ImportError:
             missing.append(module)
     if "sc_compose" not in missing and isinstance(inst.check_sc_compose(), inst.Err):
-        missing.append("sc_compose (version outside >=1.7.0,<2)")
+        missing.append("sc_compose (version outside >=1.8.0,<2)")
     return missing
 
 
 MISSING = _missing_deps()
-SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.7.0,<2' "
+SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.8.0,<2' "
                "(sc-compose publishes CPython 3.11 wheels); CI's installer job runs these")
 
 
@@ -195,14 +195,14 @@ class RenderingTests(unittest.TestCase):
         expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md", "assets/triage/README.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
-        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 7)
+        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 8)
         self.assertEqual(set(self.package.rendered), expected)
-        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 22)
+        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 23)
         self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 4 + 22 + 7)  # agents, SKILL.md + 3 assets templates (incl. triage README), references, scripts
+        self.assertEqual(len(templates), 3 + 4 + 23 + 8)  # agents, SKILL.md + 3 assets templates (incl. triage README), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -268,13 +268,15 @@ class RenderingTests(unittest.TestCase):
                 self.assertEqual(installed["bad"], sorted(("docs/plans/phase-<current>", "../x", "/x", "x/", "a\\b")))
 
     def test_runtime_templates_are_copied_verbatim(self):
-        """The skill's own templates/*.md.j2 are sc-compose inputs at run time, not install templates."""
+        """The skill's own templates/*.j2 are sc-compose inputs at run time, not install templates."""
         source = TEMPLATES / "skills" / "plan-anchoring"
         runtime = sorted(t.relative_to(source).as_posix() for t in TEMPLATES.rglob("*.j2") if not inst.is_install_template(t))
-        self.assertEqual(runtime, [f"templates/{n}.md.j2" for n in ("agent-invocation", "anchor-tuning-result",
-                                                                     "anchor-tuning-review-feedback",
-                                                                     "anchor-tuning-testability-request",
-                                                                     "anchor-tuning-tune-request")])
+        self.assertEqual(runtime, sorted([f"templates/{n}.md.j2" for n in ("agent-invocation", "anchor-tuning-result",
+                                                                            "anchor-tuning-review-feedback",
+                                                                            "anchor-tuning-testability-request",
+                                                                            "anchor-tuning-tune-request")]
+                                         + ["templates/change-report.html.j2"]
+                                         + [f"templates/{n}-panel.xhtml.j2" for n in ("anchor", "drift", "sprint")]))
         for rel in runtime:
             for tracker in inst.TRACKERS:
                 self.assertEqual(self.renderer.skill_file(rel, tracker, "claude").value, (source / rel).read_bytes(), rel)
@@ -957,7 +959,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 4 + 22 + 7) + 1)  # + the seeded triage README
+            self.assertEqual(checked, 3 * (3 + 4 + 23 + 8) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):

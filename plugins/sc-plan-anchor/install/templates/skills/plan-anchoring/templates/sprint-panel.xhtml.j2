@@ -1,0 +1,82 @@
+---
+metadata:
+  name: change-report-sprint-panel
+  description: One plan item's copyable XHTML panel in the plan-anchoring change report.
+required_variables:
+  - id
+  - dom
+  - title
+  - status
+  - runs
+  - before_status
+  - before_score
+  - after_status
+  - after_score
+  - trail
+  - exclusions
+  - changes
+  - text_source
+  - copy_json
+  - context_text
+defaults:
+  url: ""
+  before_failing: ""
+  after_failing: ""
+  text_note: ""
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section unit unit-item" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>{% if url %}<a href="{{ url | e }}">{{ id | e }}</a>{% else %}{{ id | e }}{% endif %} <span class="unit-title">{{ title | e }}</span> <span class="status status-{{ status | e }}">{{ status | upper | e }}</span></h2>
+    <div class="section-actions" role="group" aria-label="Copy item data">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+      <button type="button" class="icon-button" title="Copy Context" data-copy-text="{{ context_text | e }}">&#x2398;</button>
+    </div>
+  </div>
+
+  <table class="gate">
+    <thead><tr><th scope="col">Planning gate</th><th scope="col">Result</th><th scope="col">Satisfied / applicable</th><th scope="col">Failing anchors</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">First run</th><td><span class="status status-{{ before_status | e }}">{{ before_status | upper | e }}</span></td><td>{{ before_score | e }}</td><td>{{ before_failing | e }}</td></tr>
+      <tr><th scope="row">Last run</th><td><span class="status status-{{ after_status | e }}">{{ after_status | upper | e }}</span></td><td>{{ after_score | e }}</td><td>{{ after_failing | e }}</td></tr>
+    </tbody>
+  </table>
+
+  <details class="trail">
+    <summary>All {{ runs | e }} runs</summary>
+    <table>
+      <thead><tr><th scope="col">Run</th><th scope="col">Created</th><th scope="col">Result</th><th scope="col">Score</th><th scope="col">Failing</th></tr></thead>
+      <tbody>
+{% for r in trail %}
+        <tr><td><code>{{ r.run_id | e }}</code></td><td>{{ r.created_at | e }}</td><td><span class="status status-{{ r.status | e }}">{{ r.status | upper | e }}</span></td><td>{{ r.score | e }}</td><td>{{ r.failing | e }}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+
+{% if exclusions %}
+  <h3>Excluded anchors (not judged)</h3>
+  <table class="exclusions">
+    <thead><tr><th scope="col">Anchor</th><th scope="col">Reason</th><th scope="col">Since</th></tr></thead>
+    <tbody>
+{% for x in exclusions %}
+      <tr><th scope="row"><a href="#{{ x.anchor_dom | e }}">{{ x.anchor_id | e }}</a></th><td>{{ x.reason | e }}</td><td>{% if x.added %}this round{% else %}first run{% endif %}</td></tr>
+{% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+  <h3>Text: first judged to now</h3>
+  <p class="small">Source: {{ text_source | e }}</p>
+{% if text_note %}
+  <p class="note">{{ text_note | e }}</p>
+{% endif %}
+{% for c in changes %}
+  <details{% if loop.first %} open="open"{% endif %}>
+    <summary>{{ c.field | e }}</summary>
+    <div class="diff">{{ c.html | safe }}</div>
+  </details>
+{% endfor %}
+{% if not changes and not text_note %}
+  <p class="small">Unchanged.</p>
+{% endif %}
+</section>

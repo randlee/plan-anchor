@@ -1,0 +1,872 @@
+---
+name: sc-plan-anchor-script-change_report
+version: 1.0.0
+format: python
+description: sc-plan-anchor install-time script, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+#!/usr/bin/env python3
+"""Change report: every change a planning round made to anchors and plan items, with scores before and after.
+
+The owner reads it after fast iteration and the drift review (references/change-report.md). It reads only
+local files, git and the tracker; it never calls Jev.
+
+Inputs
+  --anchors A          anchors.json now; the baseline is ``git show <baseline-rev>:<A>``
+  --baseline-rev REV   the commit holding anchors.json before the round
+  --plan-dir P         the plan folder (default: the folder holding A); runs are read from P/anchor-runs
+  --gate plan|dev      which runs to read (default plan): ``<gate>-*.json``; dry and fixture runs are skipped
+  --item ID            limit to these items (repeatable; default every item with a run)
+  --fixture-checks F   ``check-fixtures`` outputs, oldest first (repeatable): first and last per anchor
+  --tuning-result F    tournament ``result_vars.json`` files, oldest first (repeatable)
+  --drift-file F       the drift review JSON (assets/schemas/drift-review.schema.json)
+  --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
+                       in DIR/<name>/
+
+Item text before the round is the version judged by the item's first run: for {{ tracker }} plans{% if tracker == "bd" %} the
+``bd history`` entry at or before that run{% elif tracker == "br" %} the ``.beads/issues.jsonl`` committed at or
+before that run{% endif %}; for an item the tracker does not hold, the run's item file as committed then.
+
+Rendering: each panel is one sc-compose render of templates/<kind>-panel.xhtml.j2 (strict); the page is one
+render of templates/change-report.html.j2, which receives only top-level arrays and the rendered panels. Only
+the word-diff fragments are built here (escaped text inside <del>/<ins>).
+
+Output: one JSON envelope ``{success, data, error}`` on stdout. Exit 0 when the report was written, 2 with a
+typed error (VALIDATION.INPUT, SCRIPT.IO, GIT.BASELINE, DRIFT.INVALID, DEPENDENCY.SC_COMPOSE, RENDER.FAILED,
+SETTINGS.*, SCRIPT.INTERNAL), 130 on interrupt.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import difflib
+import html
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import urllib.parse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from result import Err, Ok, Result, ToolError, err, run_main  # noqa: E402
+
+TRACKER = "{{ tracker }}"
+SKILL_DIR = Path(__file__).resolve().parent.parent
+TEMPLATES = SKILL_DIR / "templates"
+DRIFT_SCHEMA = "plan-anchoring/drift-review/1"
+REPORT_SCHEMA = "plan-anchoring/change-report/1"
+SEVERITIES = ("material", "minor")
+FINDING_STATUSES = ("open", "fixed", "reverted", "owner_decision")
+ANCHOR_FIELDS = ("statement", "scope", "status", "kind", "quote", "deterministic_check")
+ITEM_FIELDS = ("title", "description", "acceptance_criteria", "design")
+ERROR_EXIT = 2
+TIMEOUT = 120
+
+Runner = Callable[[List[str], Path], Tuple[int, str, str]]
+
+
+def run_command(argv: List[str], cwd: Path) -> Tuple[int, str, str]:
+    """Run ``argv`` in ``cwd``; (exit code, stdout, stderr). A missing program is exit 127."""
+    try:
+        proc = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", stdin=subprocess.DEVNULL, timeout=TIMEOUT, check=False)
+    except FileNotFoundError as exc:
+        return 127, "", str(exc)
+    except subprocess.TimeoutExpired:
+        return 124, "", f"{argv[0]} timed out after {TIMEOUT}s"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+# ---------------------------------------------------------------- small helpers
+
+
+def read_json(path: Path, what: str) -> Result[Any, ToolError]:
+    try:
+        return Ok(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return err("SCRIPT.IO", f"{what} {path} does not exist", "Pass an existing file.")
+    except (OSError, UnicodeError) as exc:
+        return err("SCRIPT.IO", f"{what} {path} could not be read: {type(exc).__name__}", "Make it a readable UTF-8 file.")
+    except json.JSONDecodeError as exc:
+        return err("SCRIPT.IO", f"{what} {path} is not valid JSON: {exc.msg} (line {exc.lineno})", "Fix or regenerate the file.")
+
+
+def when(text: Any) -> Optional[datetime.datetime]:
+    """An ISO-8601 time as an aware UTC datetime (``Z``, offsets and 1-9 fraction digits accepted); None if not one."""
+    if not isinstance(text, str) or not text:
+        return None
+    s = text.strip().replace("Z", "+00:00")
+    s = re.sub(r"(\.\d{6})\d+", r"\1", s)
+    s = re.sub(r"\.(\d{1,5})(?=[+-]|$)", lambda m: "." + m.group(1).ljust(6, "0"), s)
+    try:
+        value = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
+
+
+def natural(text: str) -> list:
+    return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", text)]
+
+
+def dom_id(prefix: str, value: str) -> str:
+    return prefix + "-" + re.sub(r"[^A-Za-z0-9._-]", "_", value)
+
+
+def issue_url(template: Optional[str], ident: Optional[str]) -> str:
+    """The link for a tracker id, or "" (plain text) when no template is set."""
+    if not template or not ident:
+        return ""
+    return template.replace("{id}", urllib.parse.quote(str(ident), safe=""))
+
+
+E = html.escape
+
+
+def word_diff(a: str, b: str) -> str:
+    """Escaped ``b`` with removed words in <del> and added words in <ins>."""
+    x, y = re.findall(r"\S+|\s+", a or ""), re.findall(r"\S+|\s+", b or "")
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, x, y, autojunk=False).get_opcodes():
+        if op == "equal":
+            out.append(E("".join(x[i1:i2])))
+            continue
+        if i2 > i1:
+            out.append("<del>" + E("".join(x[i1:i2])) + "</del>")
+        if j2 > j1:
+            out.append("<ins>" + E("".join(y[j1:j2])) + "</ins>")
+    return "".join(out)
+
+
+def line_diff(a: str, b: str) -> str:
+    """Line diff: unchanged lines, word diffs of replaced lines, removed and added lines; escaped."""
+    x, y = (a or "").splitlines(), (b or "").splitlines()
+    rows = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, x, y, autojunk=False).get_opcodes():
+        if op == "equal":
+            rows += [f'<div class="eq">{E(line)}</div>' for line in x[i1:i2]]
+        elif op == "replace" and i2 - i1 == j2 - j1:
+            rows += [f'<div class="ch">{word_diff(p, q)}</div>' for p, q in zip(x[i1:i2], y[j1:j2])]
+        else:
+            rows += [f'<div class="rm">- {E(line)}</div>' for line in x[i1:i2]]
+            rows += [f'<div class="ad">+ {E(line)}</div>' for line in y[j1:j2]]
+    return "".join(rows)
+
+
+# ---------------------------------------------------------------- drift review
+
+
+def _need_str(obj: dict, key: str, where: str, allow_empty: bool = False) -> Optional[str]:
+    value = obj.get(key)
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        return f"{where}.{key} must be a {'string' if allow_empty else 'non-empty string'}"
+    return None
+
+
+def drift_problems(doc: Any) -> List[str]:
+    """Every way ``doc`` breaks assets/schemas/drift-review.schema.json (empty when it conforms)."""
+    if not isinstance(doc, dict):
+        return ["the drift review must be a JSON object"]
+    problems = []
+    known = {"schema", "reviewed_at", "compared", "findings", "acceptable_choices", "confirmations", "not_reviewed"}
+    problems += [f"unknown top-level key {k!r}" for k in sorted(set(doc) - known)]
+    if doc.get("schema") != DRIFT_SCHEMA:
+        problems.append(f"schema must be {DRIFT_SCHEMA!r}")
+    for key in ("reviewed_at", "compared", "not_reviewed"):
+        if key in doc and not isinstance(doc[key], str):
+            problems.append(f"{key} must be a string")
+    shapes = {
+        "findings": ("id", "severity", "location", "what_changed", "authority", "suggested_fix", "status", "fix_note"),
+        "acceptable_choices": ("location", "note"),
+        "confirmations": ("area", "note"),
+    }
+    for key, fields in shapes.items():
+        rows = doc.get(key)
+        if not isinstance(rows, list):
+            problems.append(f"{key} must be an array")
+            continue
+        for n, row in enumerate(rows):
+            where = f"{key}[{n}]"
+            if not isinstance(row, dict):
+                problems.append(f"{where} must be an object")
+                continue
+            problems += [f"{where} has unknown key {k!r}" for k in sorted(set(row) - set(fields))]
+            for name in fields:
+                if name == "authority":
+                    auth = row.get("authority")
+                    if not isinstance(auth, dict) or set(auth) - {"ref", "quote"}:
+                        problems.append(f"{where}.authority must be an object with ref and quote")
+                        continue
+                    problems += [p for p in (_need_str(auth, "ref", where + ".authority"),
+                                             _need_str(auth, "quote", where + ".authority")) if p]
+                elif name == "fix_note":
+                    p = _need_str(row, name, where, allow_empty=True)
+                    if p:
+                        problems.append(p)
+                    elif row.get("status") in FINDING_STATUSES[1:] and not row["fix_note"].strip():
+                        problems.append(f"{where}.fix_note must say what was done when status is {row['status']}")
+                else:
+                    p = _need_str(row, name, where)
+                    if p:
+                        problems.append(p)
+            if key == "findings":
+                if row.get("severity") not in SEVERITIES:
+                    problems.append(f"{where}.severity must be one of {', '.join(SEVERITIES)}")
+                if row.get("status") not in FINDING_STATUSES:
+                    problems.append(f"{where}.status must be one of {', '.join(FINDING_STATUSES)}")
+    if isinstance(doc.get("findings"), list):
+        ids = [f.get("id") for f in doc["findings"] if isinstance(f, dict)]
+        problems += [f"findings id {i!r} is not unique" for i in sorted({i for i in ids if ids.count(i) > 1}, key=str)]
+    return problems
+
+
+def load_drift(path: Path) -> Result[dict, ToolError]:
+    doc = read_json(path, "drift review")
+    if isinstance(doc, Err):
+        return doc
+    problems = drift_problems(doc.value)
+    if problems:
+        return err("DRIFT.INVALID", f"{path} does not match the drift-review schema: " + "; ".join(problems[:10]),
+                   "Fix the drift review JSON (assets/schemas/drift-review.schema.json).", data={"problems": problems})
+    return Ok(doc.value)
+
+
+# ---------------------------------------------------------------- anchors
+
+
+def git_toplevel(start: Path, run: Runner) -> Result[Path, ToolError]:
+    code, out, errout = run(["git", "rev-parse", "--show-toplevel"], start)
+    if code != 0:
+        return err("GIT.BASELINE", f"{start} is not inside a git repository ({errout.strip()[-300:]})",
+                   "The change report compares against a git revision; run it inside the repository.")
+    return Ok(Path(out.strip()))
+
+
+def baseline_anchors(anchors: Path, rev: str, run: Runner) -> Result[dict, ToolError]:
+    code, out, errout = run(["git", "show", f"{rev}:./{anchors.name}"], anchors.parent)
+    if code != 0:
+        return err("GIT.BASELINE", f"git show {rev}:{anchors.name} failed: {errout.strip()[-300:]}",
+                   "Pass --baseline-rev naming a commit that holds this anchors.json.")
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError as exc:
+        return err("GIT.BASELINE", f"{anchors.name} at {rev} is not valid JSON: {exc.msg}", "Pick another baseline commit.")
+    return Ok(doc)
+
+
+def by_id(doc: Any) -> Dict[str, dict]:
+    rows = doc.get("anchors") if isinstance(doc, dict) else None
+    return {a["id"]: a for a in rows or [] if isinstance(a, dict) and isinstance(a.get("id"), str)}
+
+
+def fixture_checks(paths: Sequence[Path]) -> Result[List[Dict[str, List[dict]]], ToolError]:
+    """Per file, the check-fixtures checks grouped by anchor."""
+    out = []
+    for path in paths:
+        doc = read_json(path, "fixture check")
+        if isinstance(doc, Err):
+            return doc
+        checks = ((doc.value.get("data") or {}).get("checks") if isinstance(doc.value, dict) else None)
+        if not isinstance(checks, list):
+            return err("SCRIPT.IO", f"{path} holds no data.checks list", "Pass the JSON stdout of check-fixtures.")
+        grouped: Dict[str, List[dict]] = {}
+        for c in checks:
+            if isinstance(c, dict) and c.get("anchor_id"):
+                grouped.setdefault(c["anchor_id"], []).append(c)
+        out.append(grouped)
+    return Ok(out)
+
+
+def tuning_results(paths: Sequence[Path]) -> Result[Dict[str, List[dict]], ToolError]:
+    """Per anchor, every tournament in the given order: default-question score and tuned score."""
+    out: Dict[str, List[dict]] = {}
+    for path in paths:
+        doc = read_json(path, "tuning result")
+        if isinstance(doc, Err):
+            return doc
+        data = doc.value.get("data") if isinstance(doc.value, dict) else None
+        table = data.get("acceptance_table") if isinstance(data, dict) else None
+        if not isinstance(table, list):
+            return err("SCRIPT.IO", f"{path} holds no data.acceptance_table", "Pass a tournament's result_vars.json.")
+        aid = None
+        oracle = path.parent / "oracle.frozen.json"
+        if oracle.is_file():
+            o = read_json(oracle, "frozen oracle")
+            if isinstance(o, Ok) and isinstance(o.value, dict):
+                aid = o.value.get("anchor_id")
+        for event in ((data.get("tuning_history_after") or {}).get("events") or []):
+            aid = aid or ((event.get("authority") or {}).get("anchor_id") if isinstance(event, dict) else None)
+        if not aid:
+            return err("SCRIPT.IO", f"{path} does not name its anchor (no oracle.frozen.json beside it)",
+                       "Pass result_vars.json from inside its tournament folder.")
+        score = data.get("semantic_score") or {}
+        out.setdefault(aid, []).append({
+            "source": path.as_posix(), "accepted": bool(data.get("accepted")), "total": len(table),
+            "default": sum(1 for c in table if isinstance(c, dict) and c.get("baseline_exact")),
+            "tuned": score.get("stable_cases") if data.get("accepted") else None,
+        })
+    return Ok(out)
+
+
+def _fx(checks: List[dict]) -> str:
+    return f"{sum(1 for c in checks if c.get('expected_ok'))}/{len(checks)}" if checks else "-"
+
+
+def _exclusions(rec: dict) -> Dict[str, str]:
+    rows = rec.get("exclude") or []
+    return {str(x.get("item")): str(x.get("reason") or "") for x in rows if isinstance(x, dict)}
+
+
+def anchor_unit(aid: str, old: dict, new: dict, checks: List[Dict[str, List[dict]]],
+                tuning: Dict[str, List[dict]], template: Optional[str]) -> dict:
+    changes = []
+    for key in ANCHOR_FIELDS:
+        a, b = old.get(key), new.get(key)
+        if (a or "") != (b or ""):
+            changes.append({"field": key, "before": a or "", "after": b or "", "html": word_diff(str(a or ""), str(b or ""))})
+    for key in ("pass", "fail"):
+        a = " | ".join((old.get("fixtures") or {}).get(key) or [])
+        b = " | ".join((new.get("fixtures") or {}).get(key) or [])
+        if a != b:
+            changes.append({"field": f"fixture {key}", "before": a, "after": b, "html": word_diff(a, b)})
+    ex0, ex1 = _exclusions(old), _exclusions(new)
+    exclusions = [{"item": i, "item_url": issue_url(template, i), "reason": r, "added": i not in ex0}
+                  for i, r in sorted(ex1.items(), key=lambda kv: natural(kv[0]))]
+    removed = [{"item": i, "item_url": issue_url(template, i), "reason": r}
+               for i, r in sorted(ex0.items(), key=lambda kv: natural(kv[0])) if i not in ex1]
+    seen = len(old.get("history") or [])
+    history = []
+    for event in (new.get("history") or [])[seen:]:
+        if not isinstance(event, dict):
+            continue
+        detail = {k: v for k, v in event.items() if k not in ("at", "event")}
+        history.append({"at": str(event.get("at", "")), "event": str(event.get("event", "")),
+                        "detail": "; ".join(f"{k}: {v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}"
+                                            for k, v in sorted(detail.items()))})
+    present = [g[aid] for g in checks if aid in g]
+    tours = tuning.get(aid, [])
+    accepted = [t for t in tours if t["accepted"]]
+    first, last = (tours[0] if tours else None), (accepted[-1] if accepted else None)
+    bead = (new.get("beads") or old.get("beads") or {}).get("anchor")
+    unit = {
+        "id": aid, "dom": dom_id("anchor", aid), "bead": bead or "", "bead_url": issue_url(template, bead),
+        "status": str(new.get("status") or "absent"), "status_before": str(old.get("status") or "absent"),
+        "version_before": str(old.get("version", "-")), "version_now": str(new.get("version", "-")),
+        "statement": new.get("statement") or old.get("statement") or "", "quote": new.get("quote") or old.get("quote") or "",
+        "changes": changes, "exclusions": exclusions, "removed_exclusions": removed, "history": history,
+        "fixtures_before": _fx(present[0]) if present else "-", "fixtures_after": _fx(present[-1]) if present else "-",
+        "tuning": tours,
+        "questions_default": f"{first['default']}/{first['total']}" if first else "-",
+        "questions_tuned": (f"{last['tuned']}/{last['total']}" if last else ("not accepted" if tours else "-")),
+    }
+    return unit
+
+
+def select_anchors(old: Dict[str, dict], new: Dict[str, dict]) -> List[str]:
+    """Anchors locked before or now, plus any whose record changed since the baseline."""
+    keep = []
+    for aid in set(old) | set(new):
+        o, n = old.get(aid, {}), new.get(aid, {})
+        if "locked" in (o.get("status"), n.get("status")) or o != n:
+            keep.append(aid)
+    return sorted(keep, key=natural)
+
+
+# ---------------------------------------------------------------- runs and item text
+
+
+def score(run: dict) -> dict:
+    s = run.get("summary") or {}
+    counts = s.get("counts") or {}
+    total = sum(v for v in counts.values() if isinstance(v, int))
+    applicable = total - counts.get("not_applicable", 0) - counts.get("excluded", 0)
+    satisfied = counts.get("satisfied", 0)
+    return {
+        "run_id": str(run.get("run_id", "")), "created_at": str(run.get("created_at", "")),
+        "pass": bool(s.get("pass")), "status": "pass" if s.get("pass") else "fail",
+        "score": f"{satisfied}/{applicable}", "failing": [str(x) for x in s.get("failing") or []],
+        "excluded": [{"anchor_id": str(x.get("anchor_id", "")), "reason": str(x.get("reason", ""))}
+                     for x in s.get("excluded") or [] if isinstance(x, dict)],
+    }
+
+
+def load_runs(runs_dir: Path, gate: str, items: Sequence[str]) -> Result[Dict[str, List[dict]], ToolError]:
+    """Real runs of ``gate`` per item id, oldest first (dry and fixture runs skipped)."""
+    if not runs_dir.is_dir():
+        return err("SCRIPT.IO", f"{runs_dir} is not a folder", "Pass --plan-dir holding anchor-runs/.")
+    grouped: Dict[str, List[dict]] = {}
+    for path in sorted(runs_dir.glob(f"{gate}-*.json")):
+        doc = read_json(path, "run")
+        if isinstance(doc, Err):
+            return doc
+        run = doc.value
+        if not isinstance(run, dict) or run.get("gate") != gate or run.get("dry_run") or run.get("fixture"):
+            continue
+        item = str((run.get("item") or {}).get("id") or "")
+        if item and (not items or item in items):
+            run["_path"] = path.as_posix()
+            grouped.setdefault(item, []).append(run)
+    for runs in grouped.values():
+        runs.sort(key=lambda r: (when(r.get("created_at")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+                                 r["_path"]))
+    return Ok(grouped)
+
+
+def _pick(entries: List[Tuple[datetime.datetime, Any]], at: Optional[datetime.datetime]) -> Any:
+    """The latest entry at or before ``at``; the earliest when none is."""
+    entries = sorted(entries, key=lambda e: e[0])
+    if not entries:
+        return None
+    before = [e for e in entries if at is not None and e[0] <= at]
+    return (before[-1] if before else entries[0])[1]
+
+
+def _show(item: str, root: Path, run: Runner) -> Optional[dict]:
+    code, out, _ = run([TRACKER, "show", item, "--json"], root)
+    if code != 0:
+        return None
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    doc = doc[0] if isinstance(doc, list) and doc else doc
+    return doc if isinstance(doc, dict) and doc.get("id") == item else None
+{% if tracker == "bd" %}
+
+def tracker_before(item: str, at: Optional[datetime.datetime], root: Path, run: Runner) -> Optional[dict]:
+    """The item as ``bd history`` recorded it at or before ``at``."""
+    code, out, _ = run(["bd", "history", item, "--json"], root)
+    if code != 0:
+        return None
+    try:
+        rows = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    entries = [(when(h.get("CommitDate")), h["Issue"]) for h in rows if isinstance(h, dict) and isinstance(h.get("Issue"), dict)]
+    return _pick([e for e in entries if e[0] is not None], at)
+{% elif tracker == "br" %}
+
+def tracker_before(item: str, at: Optional[datetime.datetime], root: Path, run: Runner) -> Optional[dict]:
+    """The item as the ``.beads/issues.jsonl`` committed at or before ``at`` recorded it."""
+    code, out, _ = run(["git", "log", "--format=%H%x09%cI", "--", ".beads/issues.jsonl"], root)
+    if code != 0:
+        return None
+    commits = []
+    for line in out.splitlines():
+        sha, _, stamp = line.partition("\t")
+        if when(stamp) is not None:
+            commits.append((when(stamp), sha))
+    sha = _pick(commits, at)
+    if sha is None:
+        return None
+    code, out, _ = run(["git", "show", f"{sha}:.beads/issues.jsonl"], root)
+    if code != 0:
+        return None
+    for line in out.splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and rec.get("id") == item:
+            return rec
+    return None
+{% endif %}
+
+def file_before(path: Path, at: Optional[datetime.datetime], root: Path, run: Runner) -> Optional[str]:
+    """``path`` as committed at or before ``at`` (the earliest commit when none is)."""
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return None
+    code, out, _ = run(["git", "log", "--format=%H%x09%cI", "--", rel], root)
+    if code != 0:
+        return None
+    commits = [(when(s), h) for h, _, s in (line.partition("\t") for line in out.splitlines()) if when(s) is not None]
+    sha = _pick(commits, at)
+    if sha is None:
+        return None
+    code, out, _ = run(["git", "show", f"{sha}:{rel}"], root)
+    return out if code == 0 else None
+
+
+def item_text(item: str, first: dict, root: Path, run: Runner) -> dict:
+    """Before and now for each changed item field, and where the text came from."""
+    at = when(first.get("created_at"))
+    now = _show(item, root, run)
+    if now is not None:
+        before = tracker_before(item, at, root, run)
+        if before is None:
+            return {"source": f"{TRACKER} show (no earlier version found)", "fields": [], "note":
+                    f"No {TRACKER} version of {item} from before its first run was found; only the current text is known."}
+        fields = []
+        for key in ITEM_FIELDS:
+            a, b = str(before.get(key) or ""), str(now.get(key) or "")
+            if a != b:
+                fields.append({"field": key, "before": a, "after": b,
+                               "html": word_diff(a, b) if key == "title" else line_diff(a, b)})
+        return {"source": TRACKER, "fields": fields, "title": str(now.get("title") or ""), "note": ""}
+    source = str((first.get("item") or {}).get("source") or "")
+    path = Path(source) if source else None
+    if path is None or not path.is_file():
+        return {"source": "none", "fields": [], "note":
+                f"{item} is not a {TRACKER} issue and its first run names no item file that still exists; text changes unknown."}
+    try:
+        current = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {"source": "none", "fields": [], "note": f"{source} could not be read; text changes unknown."}
+    before = file_before(path, at, root, run)
+    if before is None:
+        return {"source": source, "fields": [], "note": f"{source} has no committed version; text changes unknown."}
+    fields = [] if before == current else [{"field": "item text", "before": before, "after": current,
+                                             "html": line_diff(before, current)}]
+    return {"source": source, "fields": fields, "note": ""}
+
+
+def item_unit(item: str, runs: List[dict], root: Path, run: Runner, template: Optional[str]) -> dict:
+    first, last = score(runs[0]), score(runs[-1])
+    text = item_text(item, runs[0], root, run)
+    title = text.get("title") or str((runs[-1].get("item") or {}).get("title") or "") or item
+    before_excluded = {x["anchor_id"] for x in first["excluded"]}
+    return {
+        "id": item, "dom": dom_id("item", item), "url": issue_url(template, item), "title": title,
+        "status": last["status"], "first": first, "last": last, "runs": len(runs),
+        "trail": [score(r) for r in runs],
+        "exclusions": [dict(x, added=x["anchor_id"] not in before_excluded,
+                            anchor_dom=dom_id("anchor", x["anchor_id"])) for x in last["excluded"]],
+        "text_source": text["source"], "text_note": text["note"], "changes": text["fields"],
+    }
+
+
+# ---------------------------------------------------------------- rendering
+
+
+def strip_html(unit: Any) -> Any:
+    """The unit without its pre-rendered diff fragments (Copy JSON and the sidecar carry the texts instead)."""
+    if isinstance(unit, dict):
+        return {k: strip_html(v) for k, v in unit.items() if k not in ("html", "dom", "anchor_dom")}
+    if isinstance(unit, list):
+        return [strip_html(v) for v in unit]
+    return unit
+
+
+def item_context(u: dict) -> str:
+    f, l = u["first"], u["last"]
+    lines = [f"Plan item {u['id']}: {u['title']}",
+             f"Gate {f['status'].upper()} {f['score']} -> {l['status'].upper()} {l['score']} over {u['runs']} runs.",
+             f"Failing at first run: {', '.join(f['failing']) or 'none'}.",
+             f"Failing now: {', '.join(l['failing']) or 'none'}."]
+    lines += [f"Excluded {x['anchor_id']}: {x['reason']}" for x in u["exclusions"]]
+    lines.append(f"Changed fields: {', '.join(c['field'] for c in u['changes']) or 'none'}.")
+    if u["text_note"]:
+        lines.append(u["text_note"])
+    return "\n".join(lines)
+
+
+def anchor_context(u: dict) -> str:
+    lines = [f"Anchor {u['id']} ({u['status_before']} v{u['version_before']} -> {u['status']} v{u['version_now']})",
+             f"Statement: {u['statement']}", f"Quote: {u['quote']}",
+             f"Fixture checks: {u['fixtures_before']} -> {u['fixtures_after']}.",
+             f"Questions: default {u['questions_default']} -> tuned {u['questions_tuned']} oracle cases."]
+    lines += [f"Changed {c['field']}: {c['before']!r} -> {c['after']!r}" for c in u["changes"]]
+    lines += [f"Excluded for {x['item']}: {x['reason']}" for x in u["exclusions"]]
+    lines += [f"{h['at']} {h['event']}: {h['detail']}" for h in u["history"]]
+    return "\n".join(lines)
+
+
+def drift_context(d: dict) -> str:
+    lines = ["Drift review" + (f" ({d['reviewed_at']})" if d.get("reviewed_at") else "")]
+    for f in d["findings"]:
+        lines.append(f"{f['id']} [{f['severity']}, {f['status']}] {f['location']}: {f['what_changed']} "
+                     f"Authority {f['authority']['ref']}: \"{f['authority']['quote']}\". Fix: {f['suggested_fix']}"
+                     + (f" Done: {f['fix_note']}" if f["fix_note"] else ""))
+    return "\n".join(lines)
+
+
+def copy_json(value: Any) -> str:
+    """A panel's Copy JSON: its data without diff fragments, and item texts left to the sidecar (they are large)."""
+    data = strip_html(value)
+    if isinstance(data, dict) and "changes" in data and "trail" in data:
+        data["changes"] = [{"field": c["field"], "before_chars": len(c["before"]), "after_chars": len(c["after"])}
+                           for c in data["changes"]]
+    return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+def item_vars(u: dict) -> dict:
+    f, l = u["first"], u["last"]
+    return {
+        "id": u["id"], "dom": u["dom"], "url": u["url"], "title": u["title"], "status": u["status"], "runs": u["runs"],
+        "before_status": f["status"], "before_score": f["score"], "before_failing": ", ".join(f["failing"]),
+        "after_status": l["status"], "after_score": l["score"], "after_failing": ", ".join(l["failing"]),
+        "trail": [dict(t, failing=", ".join(t["failing"])) for t in u["trail"]],
+        "exclusions": u["exclusions"], "changes": u["changes"], "text_source": u["text_source"],
+        "text_note": u["text_note"], "copy_json": copy_json(u), "context_text": item_context(u),
+    }
+
+
+def anchor_vars(u: dict) -> dict:
+    return dict({k: v for k, v in u.items()}, copy_json=copy_json(u), context_text=anchor_context(u))
+
+
+def drift_vars(d: dict) -> dict:
+    findings = [dict(f, authority_ref=f["authority"]["ref"], authority_quote=f["authority"]["quote"],
+                     pill={"open": "fail", "fixed": "pass", "reverted": "pass", "owner_decision": "drift"}[f["status"]],
+                     severity_pill="fail" if f["severity"] == "material" else "info")
+                for f in d["findings"]]
+    return {"dom": "drift-review", "reviewed_at": d.get("reviewed_at", ""), "compared": d.get("compared", ""),
+            "not_reviewed": d.get("not_reviewed", ""), "findings": findings,
+            "acceptable_choices": d["acceptable_choices"], "confirmations": d["confirmations"],
+            "open_count": sum(1 for f in d["findings"] if f["status"] == "open"),
+            "copy_json": json.dumps(d, indent=2, sort_keys=True, ensure_ascii=False), "context_text": drift_context(d)}
+
+
+def find_sc_compose() -> Result[str, ToolError]:
+    binary = shutil.which("sc-compose")
+    if binary is None:
+        return err("DEPENDENCY.SC_COMPOSE", "sc-compose is not on PATH; the report is rendered with it",
+                   "Install sc-compose 1.8.0 or newer and put it on PATH (references/installation-and-troubleshooting.md).")
+    return Ok(binary)
+
+
+def render(binary: str, template: str, variables: dict, out: Path, scratch: Path, run: Runner) -> Result[str, ToolError]:
+    """One strict, render-checked sc-compose render of templates/<template> into ``out``; its text."""
+    var_file = scratch / (out.name + ".vars.json")
+    var_file.write_text(json.dumps(variables, ensure_ascii=False), encoding="utf-8")
+    code, _, errout = run([binary, "render", "--root", str(TEMPLATES), "--file", str(TEMPLATES / template),
+                           "--var-file", str(var_file), "--strict", "--check-render", "--output", str(out)],
+               scratch)  # sc-compose keeps its log in the working folder: the scratch folder, never the skill
+    if code != 0:
+        return err("RENDER.FAILED", f"sc-compose could not render {template} (exit {code}): {errout.strip()[-1500:]}",
+                   "Fix the template or the variables named above; rerun.")
+    try:
+        return Ok(out.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        return err("SCRIPT.IO", f"{out} could not be read back: {type(exc).__name__}", "Check the --out folder.")
+
+
+def overall_status(items: List[dict], drift: Optional[dict]) -> str:
+    if any(u["status"] != "pass" for u in items):
+        return "FAIL"
+    if drift and any(f["status"] == "open" for f in drift["findings"]):
+        return "DRIFT"
+    return "PASS"
+
+
+# ---------------------------------------------------------------- command
+
+
+def issue_template(root: Path) -> Result[Optional[str], ToolError]:
+    import plan_anchor_settings as pas  # lazy: PyYAML only when a settings file exists
+
+    found = pas.effective_settings(root)
+    if isinstance(found, Err):
+        return found
+    s = found.value.settings
+    return Ok(s.issue_url_template if s is not None else None)
+
+
+def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, ToolError]:
+    anchors = Path(args.anchors)
+    if not anchors.is_file():
+        return err("SCRIPT.IO", f"anchors file {anchors} does not exist", "Pass --anchors naming anchors.json.")
+    anchors = anchors.resolve()
+    plan_dir = Path(args.plan_dir).resolve() if args.plan_dir else anchors.parent
+    if not args.out:
+        return err("VALIDATION.INPUT", "--out is required", "Pass --out <folder> for the report.")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.name):
+        return err("VALIDATION.INPUT", f"--name {args.name!r} must be a file stem of letters, digits, '.', '_' or '-'",
+                   "Pass --name like phase-b-changes.")
+    root = git_toplevel(anchors.parent, run)
+    if isinstance(root, Err):
+        return root
+    template = issue_template(Path(args.repository_root))
+    if isinstance(template, Err):
+        return template
+    binary = find_sc_compose()
+    if isinstance(binary, Err):
+        return binary
+    now_doc = read_json(anchors, "anchors file")
+    if isinstance(now_doc, Err):
+        return now_doc
+    old_doc = baseline_anchors(anchors, args.baseline_rev, run)
+    if isinstance(old_doc, Err):
+        return old_doc
+    checks = fixture_checks([Path(p) for p in args.fixture_checks])
+    if isinstance(checks, Err):
+        return checks
+    tuning = tuning_results([Path(p) for p in args.tuning_result])
+    if isinstance(tuning, Err):
+        return tuning
+    drift = None
+    if args.drift_file:
+        loaded = load_drift(Path(args.drift_file))
+        if isinstance(loaded, Err):
+            return loaded
+        drift = loaded.value
+    runs = load_runs(plan_dir / "anchor-runs", args.gate, args.item)
+    if isinstance(runs, Err):
+        return runs
+    warnings = [f"no {args.gate} run found for item {i}" for i in args.item if i not in runs.value]
+
+    old, new = by_id(old_doc.value), by_id(now_doc.value)
+    anchor_units = [anchor_unit(a, old.get(a, {}), new.get(a, {}), checks.value, tuning.value, template.value)
+                    for a in select_anchors(old, new)]
+    items = [item_unit(i, runs.value[i], root.value, run, template.value) for i in sorted(runs.value, key=natural)]
+    warnings += [f"{u['id']}: {u['text_note']}" for u in items if u["text_note"]]
+
+    out = Path(args.out).resolve()
+    panels_dir = out / args.name
+    try:
+        panels_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return err("SCRIPT.IO", f"could not create {panels_dir}: {exc}", "Pass a writable --out folder.")
+    plan = str((now_doc.value or {}).get("plan") or plan_dir.name)
+    code, head, _ = run(["git", "rev-parse", "--short", "HEAD"], root.value)
+    commit = head.strip() if code == 0 else "unknown"
+    generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    sections, toc, panel_paths = [], [], []
+    with tempfile.TemporaryDirectory(prefix="change-report-") as tmp:
+        scratch = Path(tmp)
+        jobs = [("sprint-panel.xhtml.j2", u["dom"], item_vars(u), u["dom"], f"{u['id']}: {u['title']}", u["status"])
+                for u in items]
+        jobs += [("anchor-panel.xhtml.j2", u["dom"], anchor_vars(u), u["dom"], u["id"], u["status"])
+                 for u in anchor_units]
+        if drift is not None:
+            dv = drift_vars(drift)
+            jobs.append(("drift-panel.xhtml.j2", "drift-review", dv, "drift-review", "Drift review",
+                         "drift" if dv["open_count"] else "pass"))
+        for tpl, stem, variables, dom, label, status in jobs:
+            target = panels_dir / f"{args.name}-{stem}.xhtml"
+            text = render(binary.value, tpl, variables, target, scratch, run)
+            if isinstance(text, Err):
+                return text
+            sections.append(text.value)
+            toc.append({"id": dom, "title": label, "status": status})
+            panel_paths.append(target.as_posix())
+        item_rows = [{"id": u["id"], "dom": u["dom"], "url": u["url"], "title": u["title"],
+                      "before_status": u["first"]["status"], "before_score": u["first"]["score"],
+                      "after_status": u["last"]["status"], "after_score": u["last"]["score"],
+                      "excluded_now": ", ".join(x["anchor_id"] for x in u["exclusions"]) or "-", "runs": u["runs"],
+                      "failing_before": ", ".join(u["first"]["failing"]) or "-",
+                      "changed": ", ".join(c["field"] for c in u["changes"]) or "-"} for u in items]
+        anchor_rows = [{"id": u["id"], "dom": u["dom"], "url": u["bead_url"], "bead": u["bead"],
+                        "status_before": u["status_before"], "status": u["status"],
+                        "version": f"{u['version_before']} → {u['version_now']}",
+                        "fixtures": f"{u['fixtures_before']} → {u['fixtures_after']}",
+                        "questions": f"{u['questions_default']} → {u['questions_tuned']}",
+                        "exclusions": len(u["exclusions"]), "changed": ", ".join(c["field"] for c in u["changes"]) or "-"}
+                       for u in anchor_units]
+        drift_rows = []
+        if drift is not None:
+            for sev in SEVERITIES:
+                for st in FINDING_STATUSES:
+                    n = sum(1 for f in drift["findings"] if f["severity"] == sev and f["status"] == st)
+                    if n:
+                        drift_rows.append({"label": f"{sev} findings, {st.replace('_', ' ')}", "value": str(n)})
+            drift_rows.append({"label": "acceptable choices", "value": str(len(drift["acceptable_choices"]))})
+        status = overall_status(items, drift)
+        metadata = [{"label": "Plan", "value": plan}, {"label": "Anchors", "value": str(anchors)},
+                    {"label": "Baseline revision (anchors)", "value": args.baseline_rev},
+                    {"label": "Repository commit", "value": commit}, {"label": "Gate", "value": args.gate},
+                    {"label": "Tracker", "value": TRACKER},
+                    {"label": "Fixture check files", "value": ", ".join(args.fixture_checks) or "-"},
+                    {"label": "Tuning results", "value": str(len(args.tuning_result))},
+                    {"label": "Drift review", "value": args.drift_file or "-"}]
+        summary = {"status": status, "items": strip_html(item_rows), "anchors": strip_html(anchor_rows)}
+        shell = {
+            "title": args.title or f"{plan}: every change and its score, before and after",
+            "status": status, "generated_at": generated,
+            "subtitle": (f"Baseline: each item's first {args.gate} run, anchors at {args.baseline_rev}. "
+                         "Struck red = removed, green = added."),
+            "item_rows": item_rows, "anchor_rows": anchor_rows, "drift_rows": drift_rows, "toc_rows": toc,
+            "sections": sections, "metadata_rows": metadata,
+            "summary_copy_json": json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False),
+            "summary_copy_context": "\n".join(
+                [f"{r['id']}: {r['before_status'].upper()} {r['before_score']} -> {r['after_status'].upper()} {r['after_score']}"
+                 for r in item_rows]),
+        }
+        page = out / f"{args.name}.html"
+        rendered = render(binary.value, "change-report.html.j2", shell, page, scratch, run)
+        if isinstance(rendered, Err):
+            return rendered
+    sidecar = out / f"{args.name}.json"
+    model = {"schema": REPORT_SCHEMA, "generated_at": generated, "plan": plan, "status": status,
+             "baseline_rev": args.baseline_rev, "commit": commit, "gate": args.gate, "tracker": TRACKER,
+             "items": strip_html(items), "anchors": strip_html(anchor_units), "drift_review": drift, "warnings": warnings}
+    try:
+        sidecar.write_text(json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return err("SCRIPT.IO", f"could not write {sidecar}: {exc}", "Pass a writable --out folder.")
+    return Ok({"html": page.as_posix(), "sidecar": sidecar.as_posix(), "panels": panel_paths, "status": status,
+               "items": len(items), "anchors": len(anchor_units),
+               "drift": None if drift is None else {"findings": len(drift["findings"]),
+                                                    "open": sum(1 for f in drift["findings"] if f["status"] == "open")},
+               "warnings": warnings})
+
+
+# ---------------------------------------------------------------- CLI
+
+
+class _UsageError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    def error(self, message):  # argparse hook; never returns
+        raise _UsageError(f"{self.prog}: {message}")
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = _JsonArgumentParser(prog="change_report.py", description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--anchors", required=True, help="anchors.json now")
+    p.add_argument("--baseline-rev", required=True, help="git revision holding anchors.json before the round")
+    p.add_argument("--plan-dir", default="", help="plan folder holding anchor-runs/ (default: the folder holding --anchors)")
+    p.add_argument("--gate", choices=("plan", "dev"), default="plan")
+    p.add_argument("--item", action="append", default=[], help="plan item id; repeatable (default: every item with a run)")
+    p.add_argument("--fixture-checks", action="append", default=[], metavar="FILE",
+                   help="check-fixtures JSON output, oldest first; repeatable")
+    p.add_argument("--tuning-result", action="append", default=[], metavar="FILE",
+                   help="tournament result_vars.json, oldest first; repeatable")
+    p.add_argument("--drift-file", default="", help="drift review JSON (assets/schemas/drift-review.schema.json)")
+    p.add_argument("--out", required=True, help="output folder")
+    p.add_argument("--name", default="change-report", help="file stem of the page, sidecar and panel folder")
+    p.add_argument("--title", default="")
+    p.add_argument("--repository-root", default=".", help="where .sc/plan-anchor/settings.yaml is looked up (default: .)")
+    return p
+
+
+def _print(envelope: dict) -> None:
+    print(json.dumps(envelope, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def main(argv: Optional[list] = None, run: Runner = run_command) -> int:
+    try:
+        args = _parser().parse_args(argv)
+    except _UsageError as exc:
+        _print({"success": False, "data": None, "error": ToolError(
+            "VALIDATION.INPUT", str(exc), "Run 'change_report.py --help' for the accepted arguments.").to_json()})
+        return ERROR_EXIT
+    try:
+        outcome = build(args, run)
+    except Exception as exc:  # a bug, not an expected failure
+        _print({"success": False, "data": None, "error": ToolError(
+            "SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}", "Report this with the command line that produced it.").to_json()})
+        return ERROR_EXIT
+    if isinstance(outcome, Err):
+        e = outcome.error
+        _print({"success": False, "data": dict(e.data) if e.data is not None else None, "error": e.to_json()})
+        return ERROR_EXIT
+    _print({"success": True, "data": outcome.value, "error": None})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run_main(main))

@@ -32,7 +32,7 @@ T="<this skill's directory>/scripts/anchor_tracker.py"
 python3 "$T" resolve > /tmp/anchor-tracker.json; jq '{success, error: .error.code}' /tmp/anchor-tracker.json
 ANCHOR_TRACKER="$(jq -r '.data.tracker // empty' /tmp/anchor-tracker.json)"
 which "$ANCHOR_TRACKER" && "$ANCHOR_TRACKER" --version
-which sc-compose && sc-compose --version    # 1.7.0 or newer
+which sc-compose && sc-compose --version    # 1.8.0 or newer
 test -n "$TYPESAFE_API_KEY" && echo "TYPESAFE_API_KEY set (preferred)" || echo "TYPESAFE_API_KEY absent; live Jev may use the documented platform credential store"
 python3 "<this skill's directory>/scripts/plan_anchor_settings.py" show | jq '.data.allow_remote_judge'   # true, false, or null (never asked)
 ```
@@ -83,6 +83,9 @@ contracts only when that operation needs them.
 | Calibrate the rubric or tune anchor questions | `references/question-tuning-workflow.md` |
 {% if tracker == "br" %}| Review a Markdown or `br` plan |{% elif tracker == "bd" %}| Review a Markdown or `bd` plan |{% endif %} `references/planning-review-workflow.md` |
 | Review delivered sprint work | `references/development-review-workflow.md` |
+| Report a planning round's changes to the owner (after the drift review) | `references/change-report.md` |
+
+**Iterate fast, then drift-review** (tuning and both gates; `references/triage-and-iteration.md`). Apply many small clarity changes yourself (plan text, anchor wording, scope, fixtures, exclusions, tuner authority recommendations), batch every fix a run found, and re-run immediately; never wait for user approval before testing a clarity change, and do not report issues one by one. Get the anchors and gates passing first. Then review every changed anchor and plan passage against the approved intent and the verbatim quotes, revert or escalate only material drift, and record the review as JSON (`assets/schemas/drift-review.schema.json`). Then generate the change report (`scripts/change_report.py`, `references/change-report.md`) and send it to the user.
 
 Why did an anchor fail? Run `judge` on the item; every failing cell carries triage answers and a route (`exclude`, `plan`, `question`, `human`); `report --run <run>` shows them.
 
@@ -102,15 +105,15 @@ locking do not load that reference.
 - **Fast-model cross-check**: not in this version. Jev's per-question confidence drives the `underspecified` verdict instead.
 - **Relationship to plan hardening**: standalone and composable; run the planning gate after hardening.
 - **Data retention**: fail closed. Every live Jev call is refused unless the committed `.sc/plan-anchor/settings.yaml` sets `allow_remote_judge: true`; the user decides it once per repository, and `--dry-run` writes exactly what would leave the machine.
-- **Fixture authorship**: the skill drafts one pass and one fail fixture per anchor at lock time; the user approves them. `check-fixtures` sends them to Jev (same setting) to confirm the wording lands them; `--answers-file` fixtures exercise the gating offline in CI.
+- **Fixture authorship**: the skill drafts one pass and one fail fixture per anchor at lock time and may sharpen them while iterating; the drift review, not a prior approval, checks them against the quote. `check-fixtures` sends them to Jev (same setting) to confirm the wording lands them; `--answers-file` fixtures exercise the gating offline in CI.
 - **Not relevant to one item**: `exclude` is the one way to say an anchor does not apply to a specific plan item: `python3 "$S" exclude --anchors "$A" --id ANC-011 --item bi-2 --reason "<one sentence>"`. `judge` then skips that cell without calling Jev and reports it `excluded` with the reason; it passes the gate. No approval, no frozen expectation, no version bump, and other runs stay valid; it is not QA-verified, so the reason must say why. Use it when the anchor's scope is right and the item simply does not touch it; when the scope itself is wrong, fix the scope (`references/triage-and-iteration.md`). Do not drop the anchor from `--anchor` or override its relevance question instead; neither is recorded.
-- **Question-tuning independence**: the planner cannot tune. An isolated evaluator (Claude: Opus; Codex: Sol; Cursor: Grok at high effort, version left off) derives and freezes its oracle from approved intent and anchors before seeing Jev answers, then iterates wording against that oracle without regard to whether the current plan passes. A live gate failure alone never authorizes an override or scope change. The main session records only an override accompanied by the frozen oracle, digest, acceptance table, and run IDs.
+- **Question-tuning independence**: the planner cannot tune. An isolated evaluator (Claude: Opus; Codex: Sol; Cursor: Grok at high effort, version left off) derives and freezes its oracle from approved intent and anchors before seeing Jev answers, then iterates wording against that oracle without regard to whether the current plan passes. A live gate failure alone never authorizes a question override. The main session records only an override accompanied by the frozen oracle, digest, acceptance table, and run IDs.
 
 ## Hard stops
 
 - An anchor without a verbatim `quote` has no provenance; one whose statement is just the quote is not testable. Both are refused.
 - Never tune a question or reword a statement to make one bead pass. Fixtures and a known-bad bead must still fail.
-- Never tune or rescope from a live failure alone. Require a frozen, user-approved fixture or expected verdict that independently demonstrates the false result; scope changes require user approval and invalidate prior gate runs for that anchor. An `exclude` is not a rescope and needs neither.
+- Never tune a question from a live failure alone; the independent tuner's frozen oracle must demonstrate the false result. Statement, scope and fixture clarity changes need no prior approval: apply, test, then drift-review. A scope change invalidates prior gate runs for that anchor; an `exclude` is not a rescope.
 - A failing-to-passing plan edit that grows the composed item is a hard stop unless each added passage is traced to a locked ANC/REQ/ADR that predates the failed run.
 - Never split a bead, trim its text, or raise a size cap to pass `PLAN.TOO_LARGE`. Triage unapproved work, then prose and ceremony, then split.
 - Never send more than one bead or one work description per Jev request, and never the whole plan.

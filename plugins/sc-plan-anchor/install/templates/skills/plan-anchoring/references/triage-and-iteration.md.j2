@@ -17,6 +17,17 @@ description: The loop at both gates - run, triage every failing verdict into pla
 
 A gate run is the first step of a loop: run, triage each failing verdict, fix where the defect is, re-run what changed, diff, repeat until the gate passes or a stop condition fires. The planning agent drives it at the planning gate; the quality manager at the development gate.
 
+## Iterate fast, then review drift
+
+Slow iteration is the main failure of this loop. Waiting on the user between runs, or fixing one thing per run, is a defect.
+
+1. **Apply and re-run.** The driver makes many small clarity changes itself: plan text, anchor statement wording, scope, fixtures, exclusions, and the tuner's `authority_recommendations`. Batch every fix a run found, then re-run the affected items immediately. No user approval is needed before applying or testing a clarity change, and issues are not reported to the user as they are found; stopping to list issues means the loop is iterating too slowly.
+2. **Get the anchors and the gate passing first** (section 5).
+3. **Drift review (mandatory before reporting).** Compare every changed anchor (statement, scope, fixtures) and every plan change against the approved intent and the user's verbatim quotes. Material drift is a change in meaning, an added or dropped requirement, or scope creep: revert it, or escalate it to the user when reverting would fail the gate. The reviewer returns the review as data, never prose: one JSON object matching `assets/schemas/drift-review.schema.json`, with `findings[]` (`id`, `severity` `material` or `minor`, `location`, `what_changed`, `authority` `{ref, quote}` with the authority's verbatim words, `suggested_fix`, `status` `open`, `fixed`, `reverted` or `owner_decision`, `fix_note`), `acceptable_choices[]` (`location`, `note`) and `confirmations[]` (`area`, `note`). Save it beside the plan (`$P/anchor-tuning/drift-review-<date>.json`). After fixing, the planner sets each finding's `status` and says what was done in `fix_note`; a finding still `open` is reported as open.
+4. **Report.** Generate the change report from the drift review JSON (`references/change-report.md`) and send it to the user: every anchor and plan-item change with its scores before and after, not each intermediate step.
+
+These safeguards still hold: quotes are immutable; only the independent tuner's frozen oracle authorizes a question change; never tune or reword to pass one bead while a fixture or known-bad bead stops failing; the `PLAN.TOO_LARGE` order; the three-identical-failures stop.
+
 ```
 run -> report -> for each failing verdict: triage -> fix in the right place -> re-run affected beads -> diff -> coverage
          ^                                                                                                |
@@ -35,16 +46,16 @@ For each `contradicted`, `not_addressed`, `asserted_only`, `underspecified` or `
 | --- | --- | --- | --- |
 | **Plan defect** | The bead really is silent about, or conflicts with, the statement | The bead | Cut conflicting or unapproved text first, replace unclear text second, and add only content required by a pre-existing locked ANC/REQ/ADR |
 | **Anchor defect: statement** | Vague, bundled, or words no bead would use; `lint` warns; the same anchor fails on most beads | The anchor | `update --statement`, `lint`, re-test fixtures (`question-tuning.md`) |
-| **Anchor defect: scope** | A frozen, user-approved expected verdict says `not_applicable` should apply, or `relevant: yes` appears on an approved unrelated example | The anchor, after user approval | `update --scope`; incremented anchor version invalidates prior runs for that anchor |
+| **Anchor defect: scope** | `not_applicable` should apply to items the scope wrongly includes, or `relevant: yes` lands on unrelated items or the fail fixture | The anchor; apply, test, then drift-review | `update --scope`; incremented anchor version invalidates prior runs for that anchor |
 | **Anchor does not apply to this item** | The anchor's `scope` is right, and this item simply does not touch it (e.g. a data-only sprint against an anchor on CLI options that belong to the next sprint); the cell is `underspecified` or `not_addressed` only because Jev wavers on relevance | The anchor's `exclude` list; no approval or frozen expectation needed | `exclude --id <ANC> --item <item id> --reason "<one sentence>"`, `render`, re-judge that item only. No version bump; other cells' runs stay valid |
-| **Question defect** | Frozen, user-approved fixtures or known examples land wrong; a live gate failure alone is insufficient | The question bead | Override the question (`question-tuning.md`), `check-fixtures`, re-run against the frozen set |
+| **Question defect** | The tuner's frozen oracle (fixtures, known examples) lands wrong; a live gate failure alone is insufficient | The question bead | Override the question (`question-tuning.md`), `check-fixtures`, re-run against the frozen set |
 | **Oversized bead** (`PLAN.TOO_LARGE`) | The bead does not fit one Jev request after code reduction | The plan, in this order: unapproved work, then prose and ceremony, then split | `shape`, scope-anchor verdicts, the reviewing-ceremony skill when installed; see `plan-size-and-shape.md`. Never split to pass |
 | **Jev error** | `verdict: error`; `results[].error.code` | Environment | `JEV.CONTEXT_EXCEEDED`: shorten the evidence; transport codes: re-run later (the script already retried three times); `AUTH`: fix credentials; `POLICY`: ask the user once if `allow_remote_judge` is absent, never infer it |
 
 Rules of triage:
 
 - Do not reword a bead until the statement and the question are ruled out; fixing the plan to satisfy a bad question entrenches it.
-- Do not reword the statement to match a bead. Only the user changes what it requires; rewording for clarity (`update --statement`) keeps the quote.
+- Do not reword the statement to match a bead. Only the user changes what it requires; rewording for clarity (`update --statement`) keeps the quote, needs no approval, and is checked in the drift review.
 - Low confidence is a plan-quality signal: the bead is unclear, excessive or missing something. Fix the bead; do not explain the score away.
 - Before editing a bead, write one `to_fix` record: `{anchor_id, sentence, action: cut|replace|add, replacement, authority}`. `authority` is required for `add` and names a locked ANC/REQ/ADR that predates the failed run.
 - Cuts are the default. Replace only when cutting would remove required meaning. Do not add explanation merely to lift confidence.
@@ -55,7 +66,7 @@ Rules of triage:
 
 ## 3. Apply
 
-One class of change per iteration, so the diff is attributable:
+Apply every fix the run found in one batch; each `to_fix` record and the anchor history attribute the diff:
 
 - Plan edits: change the bead text, then re-judge that bead.
 - Exclusions: `exclude` (`exclude --from <file.jsonl>` for a triage batch), `render`, then re-judge only the excluded item.
@@ -77,8 +88,8 @@ python3 "$S" coverage --runs anchor-runs --gate plan --format md
 
 - **Pass.** Every bead's latest run has `summary.pass: true` and `coverage` lists no uncovered locked anchor (planning gate); the sprint's latest run has `summary.pass: true` and every deterministic check is recorded (development gate).
 - **Hard stop: three identical failures.** Three consecutive runs of one bead with the same failing set. Stop editing; post the report and ask the user.
-- **Hard stop: anchor churn.** A statement updated three times. Retire the anchor and lock a new one with the user.
+- **Hard stop: anchor churn.** A statement reworded three times while its cells still fail. Drift-review it now; if its meaning has moved from the quote, retire it and lock a new one with the user.
 
 ## Recording the iteration
 
-Each run file is the record. Post the final passing run's report on the bead or the PR, referencing the iterations' run IDs and each `to_fix` action. The final summary lists every allowed growth exception with its pre-existing authority; no exception first declared during remediation is accepted. If tuning was needed, identify the frozen fixture or expected verdict that proved the defect, what was tuned, and why.
+Each run file is the record. Post the final passing run's report on the bead or the PR, referencing the iterations' run IDs and each `to_fix` action. The final summary lists every allowed growth exception with its pre-existing authority; no exception first declared during remediation is accepted. If tuning was needed, identify the frozen fixture or expected verdict that proved the defect, what was tuned, and why. Include the drift review: each changed anchor and plan passage, and whether its meaning held.

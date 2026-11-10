@@ -131,8 +131,8 @@ text, a target pass rate, or any instruction to produce a pass.
    untrusted. Compare the cited INTENT/ANC, question, answer and source text.
 2. For planning/development, `plan_violation` cites the missing or conflicting
    authority and directs a plan fix. For testability, `anchor_defect` instead
-   identifies ambiguity or bundling and recommends a user-approved clarity
-   correction. Both preserve the sealed digest and `question_action: unchanged`.
+   identifies ambiguity or bundling and recommends a clarity correction the planner
+   applies and drift-reviews. Both preserve the sealed digest and `question_action: unchanged`.
 3. `question_defect` must demonstrate an oracle mismatch against cited authority.
    Reopen only the affected tournament; reseal after frozen-oracle regression
    checks. Never relabel cases or use the active plan as calibration truth.
@@ -144,7 +144,9 @@ text, a target pass rate, or any instruction to produce a pass.
 
 Any operation may recommend, but never apply, a clarity-only INTENT/ANC change.
 Name its version, exact ambiguity, proposed text, and why meaning is unchanged;
-user approval versions authority and invalidates only affected evidence.
+the planner applies it without waiting for user approval, re-runs, and
+drift-reviews it; applying it versions authority and invalidates only affected
+evidence.
 Recommend `exclude` (item, reason), not a scope fix, when the scope is right
 but one item does not touch the anchor; it versions nothing.
 

@@ -27,8 +27,9 @@ stable role-complete set plus canonical history. Validate its schema and
 violation; exit 2 with a typed `error` when the file cannot be read) and require
 `data.valid: true` before writing the selected questions to the
 {% if tracker == "br" %}`br` question record.{% elif tracker == "bd" %}`bd` question record.{% endif %} Leaf review waits for current protocol seals. On
-ambiguous authority, present the tuner's clarity-only recommendation to the
-user; the planner never tunes questions itself.
+ambiguous authority, apply the tuner's clarity-only recommendation yourself,
+re-run, and cover it in the drift review (`references/triage-and-iteration.md`);
+do not wait for user approval. The planner never tunes questions itself.
 
 Exclusions are not a tuning outcome. When an anchor's scope is right and one
 item simply does not touch it, record `exclude` (`anchor-document.md`) instead

@@ -3,7 +3,7 @@
 # requires-python = ">=3.11,<3.12"
 # dependencies = [
 #   "pyyaml>=5.1",
-#   "sc-compose>=1.7.0,<2",
+#   "sc-compose>=1.8.0,<2",
 # ]
 # ///
 """Install plan-anchor (the plan-anchoring skill and its agents) into a folder, rendered for one tracker.
@@ -17,9 +17,9 @@ The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
 this script.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
-sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
-header pins 3.11 (uv downloads it when needed); the code itself runs on
-Python 3.9+, so ``python3 install.py`` works wherever both packages import.
+sc-compose wheel. The header pins Python 3.11 (uv downloads it when needed);
+the code itself runs on Python 3.9+, so ``python3 install.py`` works wherever
+both packages import.
 
 What it reads:
   - Its package files, under this plugin directory: ``plugin.json`` (the
@@ -74,7 +74,8 @@ and once per destination:
   <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
                                                ``allow_remote_judge`` when a flag gives it;
                                                written when either value changes; a
-                                               ``plan_dir`` it holds is kept
+                                               ``plan_dir`` or ``issue_url_template``
+                                               it holds is kept
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
   <dest>/.sc/plan-anchor/triage/              triage defaults (plan-questions.jsonl, rules.json,
                                                README.md), written only when the folder is
@@ -205,9 +206,9 @@ TRACKERS = ("br", "bd")
 RENDERINGS = TRACKERS
 REGISTRY = "registry.yaml"   # per-target file installed in the skill directory
 TEMPLATE_NAME_PREFIX = "name: sc-plan-anchor-"
-SC_COMPOSE_FLOOR = (1, 7, 0)
+SC_COMPOSE_FLOOR = (1, 8, 0)
 SC_COMPOSE_CEILING_MAJOR = 2
-SC_COMPOSE_SPEC = "sc-compose>=1.7.0,<2"
+SC_COMPOSE_SPEC = "sc-compose>=1.8.0,<2"
 IGNORED = frozenset({"__pycache__", ".DS_Store"})
 ERROR_EXIT = 2
 NO_DATA_MIGRATION = (
@@ -475,7 +476,7 @@ def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, s
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
-SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir")
+SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "issue_url_template")
 PLAN_DIR_CONVENTION = "docs/plans/phase-<current>"
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
@@ -493,6 +494,9 @@ PLAN_DIR_LINES = """\
 # plan_dir: the current phase's plan folder (anchors.json, intent.md, anchor-runs/). Set it again when the phase changes.
 plan_dir: {value}
 """
+ID_TOKEN = "{id}"
+ISSUE_URL_COMMENT = ("# issue_url_template: link for tracker ids in the change report; the id replaces "
+                     + ID_TOKEN + ".\n")
 DOLT_OUT_OF_SCOPE = (
     "bd is supported only where a Dolt-backed .beads/ already exists; "
     "provisioning Dolt (DoltHub or a Dolt server) is outside this skill."
@@ -509,6 +513,20 @@ class Settings:
     anchor_tracker: Optional[str]
     allow_remote_judge: Optional[bool] = None
     plan_dir: Optional[str] = None
+    issue_url_template: Optional[str] = None
+
+
+def issue_url_problem(value: Any) -> Optional[str]:
+    """Why ``value`` is not a usable ``issue_url_template``, or None (the installed plan_anchor_settings.py rule)."""
+    if not isinstance(value, str):
+        return "must be a string such as 'https://tracker.example/issues/" + ID_TOKEN + "', got " + type(value).__name__
+    if value != value.strip() or any(c.isspace() for c in value):
+        return "must hold no spaces"
+    if not (value.startswith("https://") or value.startswith("http://")):
+        return "must start with https:// or http://"
+    if value.count(ID_TOKEN) != 1:
+        return "must hold " + ID_TOKEN + " exactly once, where the tracker id goes"
+    return None
 
 
 def plan_dir_problem(value: Any) -> Optional[str]:
@@ -582,7 +600,13 @@ def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
     problem = plan_dir_problem(plan_dir) if "plan_dir" in data else None
     if problem:
         return err("SETTINGS.INVALID_PLAN_DIR", f"{path} plan_dir is {plan_dir!r}: it {problem}", fix)
-    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir))
+    link = data.get("issue_url_template")
+    problem = issue_url_problem(link) if "issue_url_template" in data else None
+    if problem:
+        return err("SETTINGS.INVALID_ISSUE_URL", f"{path} issue_url_template is {link!r}: it {problem}",
+                   f"Edit {path}: set issue_url_template to an http(s) URL holding " + ID_TOKEN + ", or remove the key.")
+    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir,
+                       issue_url_template=link))
 
 
 def settings_path(root: Path) -> Path:
@@ -613,6 +637,8 @@ def render_settings(settings: Settings) -> str:
         raise ValueError(f"render_settings got allow_remote_judge {settings.allow_remote_judge!r}")  # caller bug
     if settings.plan_dir is not None and plan_dir_problem(settings.plan_dir):
         raise ValueError(f"render_settings got plan_dir {settings.plan_dir!r}")  # caller bug
+    if settings.issue_url_template is not None and issue_url_problem(settings.issue_url_template):
+        raise ValueError(f"render_settings got issue_url_template {settings.issue_url_template!r}")  # caller bug
     text = SETTINGS_HEADER.format(schema_version=settings.schema_version)
     if settings.anchor_tracker is not None:
         text += TRACKER_LINE.format(anchor_tracker=settings.anchor_tracker)
@@ -620,6 +646,8 @@ def render_settings(settings: Settings) -> str:
         text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
     if settings.plan_dir is not None:
         text += PLAN_DIR_LINES.format(value=json.dumps(settings.plan_dir, ensure_ascii=False))  # quoted: always a string
+    if settings.issue_url_template is not None:
+        text += ISSUE_URL_COMMENT + "issue_url_template: " + json.dumps(settings.issue_url_template, ensure_ascii=False) + "\n"
     return text
 
 
@@ -858,6 +886,7 @@ class Plan:
     remote_judge_change: Optional[dict] = None
     allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
     plan_dir: Optional[str] = None  # kept from the destination's own settings file
+    issue_url_template: Optional[str] = None  # kept likewise
     br_init: bool = False
     triage_seed: Dict[str, bytes] = field(default_factory=dict)  # key -> bytes; written only when the folder is absent
 
@@ -1057,6 +1086,7 @@ def build_plan(root: Path, package: Package, renderer: Renderer, choice: Tracker
         plan.settings_change = {"path": SETTINGS_RELPATH, "from": configured, "to": choice.tracker}
     plan.allow_remote_judge = choice.settings.allow_remote_judge if choice.settings is not None else None
     plan.plan_dir = choice.settings.plan_dir if choice.settings is not None else None
+    plan.issue_url_template = choice.settings.issue_url_template if choice.settings is not None else None
     plan.backup = sorted(set(plan.backup))
     plan.remove = sorted(set(plan.remove))
     return Ok(plan)
@@ -1148,7 +1178,8 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
                    "Fix the reported path (permissions, disk space), then rerun; the lock file is written last.")
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker,
-                                              allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir))
+                                              allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir,
+                                              issue_url_template=plan.issue_url_template))
         if isinstance(saved, Err):
             return saved
     changed = plan.create + plan.replace + plan.remove
