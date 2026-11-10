@@ -2,7 +2,7 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
-## 0.10.3 — 2026-11-09
+## 0.11.0 — 2026-11-09
 
 - Change report (`scripts/change_report.py`, `references/change-report.md`):
   after fast iteration and the drift review, one HTML page for the owner with
