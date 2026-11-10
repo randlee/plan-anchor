@@ -36,7 +36,7 @@ and state what remains plainly. Add text only where Jev found something missing.
 python3 "$S" coverage --runs "$P/anchor-runs" --gate plan --anchors "$A" --format md
 ```
 
-5. **Stop** when every bead's latest run passes and every locked anchor is `satisfied` by at least one bead. Report any allowed growth with its pre-existing authority when planning is complete. Then run the drift review and report its findings with a summary of changes. A hard stop also ends the loop: three identical failing runs of one bead, or an anchor reworded three times while still failing. Question design: `references/plan-anchor-questions.md`. Verdict logic: `references/verdict-gating.md`.
+5. **Stop** when every bead's latest run passes and every locked anchor is `satisfied` by at least one bead. Report any allowed growth with its pre-existing authority when planning is complete. Then run the drift review, which returns JSON (`assets/schemas/drift-review.schema.json`; `references/triage-and-iteration.md`), fix what it found and update each finding's `status` and `fix_note`. After the drift review, generate the change report and send it to the user (`references/change-report.md`). A hard stop also ends the loop: three identical failing runs of one bead, or an anchor reworded three times while still failing. Question design: `references/plan-anchor-questions.md`. Verdict logic: `references/verdict-gating.md`.
 
 ### E. Report
 

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synaptic-canvas.dev/plan-anchor/drift-review.schema.json",
+  "title": "Drift review",
+  "description": "What the drift reviewer returns after fast iteration: every material or minor drift finding with its authority, the acceptable choices the owner should know, and the areas confirmed free of drift. The planner updates each finding's status and fix_note after fixing; change_report.py renders it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "findings", "acceptable_choices", "confirmations"],
+  "properties": {
+    "schema": {"const": "plan-anchoring/drift-review/1"},
+    "reviewed_at": {"type": "string", "description": "ISO date of the review"},
+    "compared": {"type": "string", "description": "What was compared: anchors.json and plan revisions, item ids"},
+    "not_reviewed": {"type": "string", "description": "What the review did not cover"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "location", "what_changed", "authority", "suggested_fix", "status", "fix_note"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "description": "Stable finding id, unique in the review (M1, m2)"},
+          "severity": {"enum": ["material", "minor"], "description": "material: a change in meaning, an added or dropped requirement, or scope creep"},
+          "location": {"type": "string", "minLength": 1, "description": "Item or anchor id and the field or passage"},
+          "what_changed": {"type": "string", "minLength": 1},
+          "authority": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref", "quote"],
+            "properties": {
+              "ref": {"type": "string", "minLength": 1, "description": "Anchor, requirement or ADR id the change departs from"},
+              "quote": {"type": "string", "minLength": 1, "description": "The authority's words, verbatim"}
+            }
+          },
+          "suggested_fix": {"type": "string", "minLength": 1},
+          "status": {"enum": ["open", "fixed", "reverted", "owner_decision"]},
+          "fix_note": {"type": "string", "description": "What was done; empty only while status is open"}
+        },
+        "if": {"properties": {"status": {"enum": ["fixed", "reverted", "owner_decision"]}}},
+        "then": {"properties": {"fix_note": {"minLength": 1}}}
+      }
+    },
+    "acceptable_choices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["location", "note"],
+        "properties": {"location": {"type": "string", "minLength": 1}, "note": {"type": "string", "minLength": 1}}
+      }
+    },
+    "confirmations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area", "note"],
+        "properties": {"area": {"type": "string", "minLength": 1}, "note": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}
