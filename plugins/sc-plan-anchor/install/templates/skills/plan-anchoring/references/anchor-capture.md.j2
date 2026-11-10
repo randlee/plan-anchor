@@ -20,7 +20,7 @@ An anchor is a fact the user stated while planning, written as a requirement a p
 | Field | What it is | Who writes it | Used for |
 | --- | --- | --- | --- |
 | `quote` | The user's exact words | nobody; copied verbatim | Provenance; quoted in every failing verdict. Immutable |
-| `statement` | One clear, testable requirement | the orchestrator; approved by the user | What Jev judges. Reworded with `update --statement` |
+| `statement` | One clear, testable requirement | the orchestrator; approved by the user at lock | What Jev judges. Reworded for clarity with `update --statement` without approval; the drift review checks it (`triage-and-iteration.md`) |
 
 **The quote is not the anchor.** Speech is compressed, deictic ("these crates", "like the legacy repo") and bundled; Jev reads literally, so a statement that is just the quote yields `underspecified` and false `not_addressed` verdicts. `validate` and `add` refuse it. Capture is interactive and stays in the main session.
 
@@ -116,7 +116,7 @@ One testable constraint per anchor. "Copy the legacy crates and strip the legacy
 | `kind` | Chooses the gating | `directive` unless the statement forbids something (`prohibition`) or describes the shape of every bead (`structural`) |
 | `summary` | Table label | Under 12 words |
 | `deterministic_check` | Code-level proof paired at the development gate | A diff, git log, grep, or test showing the statement literally holds |
-| `fixtures.pass` / `fixtures.fail` | What a bead would say if it satisfied or violated the anchor | One sentence each; draft, get approval, record with `update --fixture-pass/--fixture-fail`; `check-fixtures` confirms they land |
+| `fixtures.pass` / `fixtures.fail` | What a bead would say if it satisfied or violated the anchor | One sentence each; draft and record with `update --fixture-pass/--fixture-fail` (no approval wait; the drift review checks them); `check-fixtures` confirms they land |
 
 ```bash
 python3 "$S" add --anchors "$A" \

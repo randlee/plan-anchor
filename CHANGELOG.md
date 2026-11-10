@@ -2,6 +2,28 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.10.2 — 2026-11-09
+
+- Tuning and both gates now mandate fast iteration
+  (`triage-and-iteration.md`, "Iterate fast, then review drift"): the driver
+  applies small clarity changes itself (plan text, anchor statement wording,
+  scope, fixtures, exclusions, the tuner's authority recommendations), batches
+  every fix a run found, and re-runs at once, with no user approval before
+  testing and no issue-by-issue reports. Once anchors and gates pass, a
+  mandatory drift review compares every changed anchor and plan passage with
+  the approved intent and verbatim quotes, reverts or escalates material drift,
+  and reports the findings with a summary of changes.
+- Replaced "frozen, user-approved fixture or expected verdict before tuning or
+  rescoping" with apply, test, then drift-review in `SKILL.md`,
+  `triage-and-iteration.md`, `question-tuning.md`,
+  `question-tuning-workflow.md`, `planning-review-workflow.md`,
+  `capture-and-maintenance-workflow.md`, `anchor-capture.md`,
+  `anchor-document.md` and the `anchor-tuning` agent. "One class of change per
+  iteration" becomes one batch per run. Kept: immutable quotes, the tuner's
+  frozen oracle as the only authority for a question change, never tuning to
+  pass one bead, the `PLAN.TOO_LARGE` order, and the three-identical-failures
+  stop; the anchor-churn stop now triggers a drift review first.
+
 ## 0.10.1 — 2026-11-07
 
 - `install.py` (#81): an upgrade covers every harness the folder uses. Without
