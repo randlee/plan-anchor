@@ -866,6 +866,10 @@ class RepositoryContractTests(unittest.TestCase):
                         self.assertIn("    import plan_anchor_settings as settings  # lazy", source)
                         self.assertNotIn("\nimport plan_anchor_settings", source)
                         self.assertNotIn("\nfrom plan_anchor_settings", source)
+                    elif script.name == "change_report.py":
+                        # Lazy, for the optional issue_url_template; PyYAML only when a settings file exists.
+                        self.assertEqual(source.count("import plan_anchor_settings"), 1)
+                        self.assertIn("    import plan_anchor_settings as pas  # lazy", source)
                     else:
                         self.assertNotIn("plan_anchor_settings", source)
         code = ("import sys\nsys.modules['yaml'] = None\n"

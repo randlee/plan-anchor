@@ -1,0 +1,103 @@
+---
+metadata:
+  name: change-report-anchor-panel
+  description: One anchor's copyable XHTML panel in the plan-anchoring change report.
+required_variables:
+  - id
+  - dom
+  - status
+  - status_before
+  - version_before
+  - version_now
+  - statement
+  - quote
+  - changes
+  - exclusions
+  - removed_exclusions
+  - history
+  - fixtures_before
+  - fixtures_after
+  - tuning
+  - questions_default
+  - questions_tuned
+  - copy_json
+  - context_text
+defaults:
+  bead: ""
+  bead_url: ""
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section unit unit-anchor" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>{{ id | e }} <span class="status status-{{ status | e }}">{{ status | e }}</span>{% if bead %} <span class="small">bead {% if bead_url %}<a href="{{ bead_url | e }}">{{ bead | e }}</a>{% else %}{{ bead | e }}{% endif %}</span>{% endif %}</h2>
+    <div class="section-actions" role="group" aria-label="Copy anchor data">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+      <button type="button" class="icon-button" title="Copy Context" data-copy-text="{{ context_text | e }}">&#x2398;</button>
+    </div>
+  </div>
+  <p class="statement">{{ statement | e }}</p>
+  <p class="quote">&#x201C;{{ quote | e }}&#x201D;</p>
+
+  <table class="scores">
+    <thead><tr><th scope="col"></th><th scope="col">Before</th><th scope="col">Now</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Status</th><td>{{ status_before | e }}</td><td>{{ status | e }}</td></tr>
+      <tr><th scope="row">Version</th><td>{{ version_before | e }}</td><td>{{ version_now | e }}</td></tr>
+      <tr><th scope="row">Fixture checks (expected verdicts)</th><td>{{ fixtures_before | e }}</td><td>{{ fixtures_after | e }}</td></tr>
+      <tr><th scope="row">Questions: oracle cases matched (default, tuned)</th><td>{{ questions_default | e }}</td><td>{{ questions_tuned | e }}</td></tr>
+    </tbody>
+  </table>
+
+{% if tuning %}
+  <details>
+    <summary>Tuning tournaments ({{ tuning | length }})</summary>
+    <table>
+      <thead><tr><th scope="col">Result file</th><th scope="col">Accepted</th><th scope="col">Default questions</th><th scope="col">Tuned (stable cases)</th></tr></thead>
+      <tbody>
+{% for t in tuning %}
+        <tr><td><code>{{ t.source | e }}</code></td><td>{% if t.accepted %}<span class="status status-pass">yes</span>{% else %}<span class="status status-fail">no</span>{% endif %}</td><td>{{ t.default | e }}/{{ t.total | e }}</td><td>{% if t.accepted %}{{ t.tuned | e }}/{{ t.total | e }}{% else %}-{% endif %}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+{% endif %}
+
+  <h3>Record changes</h3>
+{% for c in changes %}
+  <p><b>{{ c.field | e }}</b></p>
+  <div class="diff">{{ c.html | safe }}</div>
+{% endfor %}
+{% if not changes %}
+  <p class="small">Text unchanged.</p>
+{% endif %}
+
+{% if history %}
+  <details>
+    <summary>History since the baseline ({{ history | length }})</summary>
+    <table>
+      <thead><tr><th scope="col">At</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
+      <tbody>
+{% for h in history %}
+        <tr><td>{{ h.at | e }}</td><td>{{ h.event | e }}</td><td>{{ h.detail | e }}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+{% endif %}
+
+{% if exclusions or removed_exclusions %}
+  <details open="open">
+    <summary>Exclusions ({{ exclusions | length }})</summary>
+    <table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Reason</th><th scope="col">Change</th></tr></thead>
+      <tbody>
+{% for x in exclusions %}
+        <tr><th scope="row">{% if x.item_url %}<a href="{{ x.item_url | e }}">{{ x.item | e }}</a>{% else %}{{ x.item | e }}{% endif %}</th><td>{{ x.reason | e }}</td><td>{% if x.added %}added{% else %}kept{% endif %}</td></tr>
+{% endfor %}
+{% for x in removed_exclusions %}
+        <tr class="removed"><th scope="row">{% if x.item_url %}<a href="{{ x.item_url | e }}">{{ x.item | e }}</a>{% else %}{{ x.item | e }}{% endif %}</th><td><del>{{ x.reason | e }}</del></td><td>removed</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+{% endif %}
+</section>

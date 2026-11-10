@@ -1,0 +1,60 @@
+---
+name: sc-plan-anchor-change-report
+version: 1.0.0
+format: markdown
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+---
+name: change-report
+version: {{ version }}
+description: The owner's HTML report of one planning round - every anchor and plan-item change with scores before and after, and the drift review as a table - rendered by change_report.py from local files, git and the tracker.
+---
+
+# Change report
+
+After fast iteration and the drift review (`references/triage-and-iteration.md`), the owner reviews what changed in one page: every anchor and plan item changed in the round, with its scores before and after. `scripts/change_report.py` builds it from local files, git and the tracker; it never calls Jev.
+
+## Run it
+
+```bash
+R="<this skill's directory>/scripts/change_report.py"
+python3 "$R" --anchors "$A" --baseline-rev <commit before the round> \
+  --fixture-checks <check-fixtures output, oldest first> ... \
+  --tuning-result <tournament result_vars.json, oldest first> ... \
+  --drift-file "$P/anchor-tuning/drift-review-<date>.json" \
+  --out "$P/reports" --name <phase>-changes
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--anchors` | `anchors.json` now; the baseline is the same file at `--baseline-rev` (`git show`) |
+| `--baseline-rev` | the commit holding `anchors.json` before the round |
+| `--plan-dir` | the plan folder holding `anchor-runs/` (default: the folder holding `--anchors`) |
+| `--gate` | `plan` (default) or `dev`: which runs to read; dry and fixture runs are skipped |
+| `--item` | limit to these items (repeatable); default every item with a run |
+| `--fixture-checks` | `check-fixtures` JSON outputs, oldest first; per anchor the first file holding it is "before", the last "after" |
+| `--tuning-result` | each tournament's `result_vars.json`, oldest first; "default" is the first tournament's `baseline_exact` cases, "tuned" the last accepted one's `semantic_score.stable_cases` |
+| `--drift-file` | the drift review JSON (`assets/schemas/drift-review.schema.json`); optional |
+| `--out`, `--name` | writes `<out>/<name>.html`, the JSON sidecar `<out>/<name>.json` and one XHTML panel per unit in `<out>/<name>/` (default name `change-report`) |
+| `--title` | page title |
+| `--repository-root` | where `.sc/plan-anchor/settings.yaml` is looked up (default `.`) |
+
+Output is the JSON envelope `{success, data, error}`: `data` names the page, sidecar and panels, the overall `status` and any `warnings` (an item with no run, an item whose earlier text was not found). Exit 0 when the report was written; 2 with a typed error: `VALIDATION.INPUT`, `SCRIPT.IO`, `GIT.BASELINE` (not a git repository, or the revision does not hold the file), `DRIFT.INVALID` (`data.problems` lists every schema violation), `DEPENDENCY.SC_COMPOSE`, `RENDER.FAILED`, `SETTINGS.*`, `SCRIPT.INTERNAL`; 130 on interrupt.
+
+## What it shows
+
+- **Plan items.** Per item, the first and the last run: pass or fail, satisfied / applicable anchors (not-applicable and excluded anchors left out), the failing anchors, every run, and each exclusion with its reason. The text diff runs from the version the first run judged to now: {% if tracker == "bd" %}for a `bd` issue, the `bd history` entry at or before the first run against `bd show`{% elif tracker == "br" %}for a `br` issue, the `.beads/issues.jsonl` committed at or before the first run against `br show` (only committed versions are known){% endif %}, field by field (`title`, `description`, `acceptance_criteria`, `design`); for a Markdown plan item, the run's item file as committed at or before the first run against the file now.
+- **Anchors.** Every anchor locked at the baseline or now, plus any whose record changed: word diffs of statement, scope, status, kind, quote, deterministic check and fixtures; history events since the baseline (a retirement and its reason); exclusions with reasons, marked added, kept or removed; fixture checks before and after; default and tuned question scores.
+- **Drift review.** Findings as a table (severity, location, what changed, authority and its quote, suggested fix, status and fix note), the acceptable choices and the confirmations.
+- The page status is `FAIL` when an item's last run fails, else `DRIFT` while a finding is `open`, else `PASS`.
+
+Each panel has Copy JSON and Copy Context buttons; the page has a table of contents, status pills and a dark mode. Tracker ids (items and anchor beads) are links when `issue_url_template` is set in `.sc/plan-anchor/settings.yaml` (`python3 "<this skill's directory>/scripts/plan_anchor_settings.py" set issue_url_template 'https://tracker.example/issues/{id}'`), plain text otherwise.
+
+## How it renders
+
+Two templates, as the sc-compose html-report pattern prescribes: each panel is one strict, render-checked `sc-compose render` of `templates/sprint-panel.xhtml.j2`, `templates/anchor-panel.xhtml.j2` or `templates/drift-panel.xhtml.j2`; the page is one render of `templates/change-report.html.j2`, which receives only top-level arrays and the rendered panels. The script assembles no HTML except the word-diff fragments (escaped text inside `<del>` and `<ins>`). The sidecar holds the whole data model, item texts included.
+
+Send the user the page and say where the sidecar is. Commit both beside the plan with the drift review JSON when the plan is committed.

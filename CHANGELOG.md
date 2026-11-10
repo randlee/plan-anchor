@@ -2,6 +2,39 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.0 — 2026-11-09
+
+- sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
+  installer's version check), the skill's dependency notes and the change
+  report require `>=1.8.0,<2`, and CI installs the released 1.8.0 CLI
+  (`scripts/install_sc_compose_ci.py`, sha256 per platform from the release's
+  `checksums.txt`). Rendered output is byte-identical to 1.7.0.
+- Change report (`scripts/change_report.py`, `references/change-report.md`):
+  after fast iteration and the drift review, one HTML page for the owner with
+  every anchor and plan-item change of the round and its scores before and
+  after (gate pass and satisfied/applicable per item, first run to last;
+  statement, scope, status, fixture and exclusion changes per anchor; fixture
+  checks and default versus tuned question scores), plus a JSON sidecar. Item
+  text before the round is the version the first run judged (tracker history,
+  or the committed item file for a Markdown plan). Rendered with the
+  sc-compose two-template pattern: one strict XHTML panel per item, anchor and
+  drift review (`templates/sprint-panel.xhtml.j2`, `anchor-panel.xhtml.j2`,
+  `drift-panel.xhtml.j2`) and one page shell (`templates/change-report.html.j2`)
+  that receives only top-level arrays and the rendered panels; Copy JSON and
+  Copy Context per panel, status pills, a table of contents and dark mode.
+  Reads only local files, git and the tracker; never calls Jev.
+- The drift review is data, not prose: the reviewer returns JSON matching
+  `assets/schemas/drift-review.schema.json` (`findings[]` with severity,
+  location, what changed, authority ref and quote, suggested fix, status and
+  fix note; `acceptable_choices[]`; `confirmations[]`), the planner updates
+  each finding's status after fixing, and the report renders it as a table
+  (`triage-and-iteration.md`, `planning-review-workflow.md`, `SKILL.md`).
+- Optional `issue_url_template` in `.sc/plan-anchor/settings.yaml` (an http(s)
+  URL holding `{id}`; `plan_anchor_settings.py set issue_url_template`): when
+  set, tracker ids in the change report are links. Unset by default; the
+  installer and `anchor_tracker.py write` keep it. A bad value is
+  `SETTINGS.INVALID_ISSUE_URL`.
+
 ## 0.10.2 — 2026-11-09
 
 - Tuning and both gates now mandate fast iteration

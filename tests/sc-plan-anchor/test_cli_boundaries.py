@@ -42,6 +42,7 @@ class UsageErrorEnvelopeTests(unittest.TestCase):
         "jev_judge.py": (["judge", "--no-such-flag"], ["frobnicate"], []),
         "anchor_runner_contract.py": (["resolve", "--harness", "codex"], ["frobnicate"], []),
         "anchor_tuning_contract.py": (["request"], ["sideways", "x.json"], []),
+        "change_report.py": ([], ["--anchors", "a.json", "--no-such-flag"], ["--gate", "sideways"]),
     }
 
     def test_usage_errors_are_validation_input_on_stdout(self):
