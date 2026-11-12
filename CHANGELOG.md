@@ -20,7 +20,10 @@
 - Stop condition: three consecutive failed runs of one bead, whether or not the
   failing set is the same (was: identical sets only), and the response is to
   ask Jev, not to ask the user.
-- When to ask the owner: only when no anchor answers the question.
+- The owner reviews once, at the end, with final approval of plan, ADRs,
+  requirements and anchors. The loop makes the changes, finds and corrects
+  drift, and reports what changed, significant drift and conflicts resolved.
+  No questions mid-loop; an unresolved cell is reported, not asked about.
 - `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
 
 ## 0.11.0 — 2026-11-09

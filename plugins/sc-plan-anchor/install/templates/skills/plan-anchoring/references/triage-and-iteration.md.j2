@@ -35,7 +35,7 @@ These safeguards still hold: quotes are immutable; only the independent tuner's 
 
 **Roles.** The planner converges: it may change anything in the plan and works the cause out with Jev directly. The lead does not diagnose failures or send replacement wording. It reviews the converged plan for drift and accepts or rejects it, naming what drifted and the authority's words; `suggested_fix` names the text to revert to and nothing else.
 
-**When to ask the owner.** The owner supplied the anchors and the outline. Making the plan match them is this loop's job, and Jev says whether it does. Ask the owner only when no anchor answers the question and the owner can answer it in under a minute without help, such as two locked anchors that cannot both be satisfied. That a requirement is hard to verify is never a reason to loosen it or to ask: keep the requirement and verify what the anchor's deterministic check names.
+**The owner reviews once, at the end.** The owner supplied the anchors and the outline and has final approval of the plan, the ADRs, the requirements and the anchors. Until then this loop does the work without asking: (1) make the changes; (2) look for drift and correct it; (3) report what changed, any significant drift, and each conflict resolved and how it was resolved. Do not send questions mid-loop. A conflict between anchors is resolved by the stricter reading and reported. That a requirement is hard to verify is never a reason to loosen it: keep the requirement and verify what the anchor's deterministic check names. Anything the loop could not resolve goes in the same report as unresolved, with Jev's answers.
 
 ```
 run -> report -> for each failing verdict: triage -> fix in the right place -> re-run affected beads -> diff -> coverage
@@ -96,7 +96,7 @@ python3 "$S" coverage --runs anchor-runs --gate plan --format md
 ## 5. Stop conditions
 
 - **Pass.** Every bead's latest run has `summary.pass: true` and `coverage` lists no uncovered locked anchor (planning gate); the sprint's latest run has `summary.pass: true` and every deterministic check is recorded (development gate).
-- **Hard stop: three failed runs.** Three consecutive failed runs of one bead, whether or not the failing set is the same. Stop editing and go back to asking Jev (above). Report to the user only when questions cannot locate the cause, and send the answers gathered, not score histories.
+- **Hard stop: three failed runs.** Three consecutive failed runs of one bead, whether or not the failing set is the same. Stop editing and go back to asking Jev (above). If questions cannot locate the cause, record the cell as unresolved in the change report with the answers gathered, not score histories, and continue with the rest.
 - **Hard stop: anchor churn.** A statement reworded three times while its cells still fail. Drift-review it now; if its meaning has moved from the quote, retire it and lock a new one with the user.
 
 ## Recording the iteration
