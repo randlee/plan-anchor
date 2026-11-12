@@ -24,6 +24,9 @@
   requirements and anchors. The loop makes the changes, finds and corrects
   drift, and reports what changed, significant drift and conflicts resolved.
   No questions mid-loop; an unresolved cell is reported, not asked about.
+- The change report is mandatory: a round is not finished until the user has
+  been shown the HTML page, and the final message lists every ADR, REQ, NFR
+  and ANC change by id in prose (`change-report.md`, triage step 7).
 - `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
 
 ## 0.11.0 — 2026-11-09
