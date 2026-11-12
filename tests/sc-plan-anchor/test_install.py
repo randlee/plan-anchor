@@ -192,7 +192,8 @@ class RenderingTests(unittest.TestCase):
         copied_py = [rel for rel in self.package.skill if rel.endswith(".py") and rel not in self.package.rendered]
         self.assertEqual(copied_py, [])
         source = TEMPLATES / "skills" / "plan-anchoring"
-        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md", "assets/triage/README.md"}
+        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md", "assets/triage/README.md",
+                    "assets/examples/plan-anchor-repo-guidelines.example.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
         self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 8)
@@ -202,7 +203,7 @@ class RenderingTests(unittest.TestCase):
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 4 + 23 + 8)  # agents, SKILL.md + 3 assets templates (incl. triage README), references, scripts
+        self.assertEqual(len(templates), 3 + 5 + 23 + 8)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -545,6 +546,40 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(repo.path(".claude/skills/plan-anchoring/tests").exists())
         self.assertEqual(repo.path(".claude/agents/mine.md").read_text(encoding="utf-8"), "consumer agent\n")
         self.assertNotIn(".claude/agents/anchor-question-tune.md", self.lock(repo)["files"])
+
+    def test_repo_guidelines_are_never_written_by_the_installer(self):
+        key = ".sc/plan-anchor/plan-anchor-repo-guidelines.md"
+        repo = TempRepo(self, beads="dolt")
+        self.ok(run_install(repo, tracker="bd"))
+        self.assertFalse(repo.path(key).exists())  # never created
+        data = b"# Owner notes\n\n- Prefer cuts.\r\n\xe2\x80\x94 trailing bytes kept\n"
+        repo.path(key).write_bytes(data)
+        steps = {
+            "rerun": lambda: run_install(repo, tracker="bd"),
+            "overwrite": lambda: run_install(repo, tracker="bd", overwrite=True),
+            "tracker switch": lambda: (repo.beads("sqlite"), run_install(repo, tracker="br"))[1],
+            "add targets": lambda: run_install(repo, tracker="br", targets=("claude", "codex", "cursor")),
+        }
+        for step, run in steps.items():
+            with self.subTest(step=step):
+                result = self.ok(run())
+                self.assertEqual(repo.path(key).read_bytes(), data)
+                plan = result["plan"]
+                for kind in ("create", "replace", "remove", "backup"):
+                    self.assertNotIn(key, plan[kind])
+                self.assertNotIn(key, self.lock(repo)["files"])
+        lock = self.lock(repo)  # an upgrade from an earlier version
+        lock["version"] = "0.6.0"
+        repo.path(inst.LOCK_RELPATH).write_text(json.dumps(lock), encoding="utf-8")
+        data_upgrade = self.ok(run_install(repo, tracker="br"))
+        self.assertEqual(data_upgrade["previous_version"], "0.6.0")
+        self.assertEqual(repo.path(key).read_bytes(), data)
+        self.assertNotIn(key, self.lock(repo)["files"])
+        repo.path(inst.LOCK_RELPATH).unlink()  # an install from before the lock existed
+        self.ok(run_install(repo, tracker="br"))
+        self.assertEqual(repo.path(key).read_bytes(), data)
+        legacy = json.loads(inst.LEGACY_PATH.read_text(encoding="utf-8"))
+        self.assertFalse(any(key in json.dumps(v) for v in legacy.values()))
 
     def test_modified_file_is_refused_then_backed_up_with_overwrite(self):
         repo = TempRepo(self, beads="sqlite")
@@ -959,7 +994,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 4 + 23 + 8) + 1)  # + the seeded triage README
+            self.assertEqual(checked, 3 * (3 + 5 + 23 + 8) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):

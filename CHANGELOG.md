@@ -2,6 +2,22 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.1 — 2026-11-12
+
+- Optional repository guidelines: `.sc/plan-anchor/plan-anchor-repo-guidelines.md`,
+  written and committed by the repository owner beside `settings.yaml`, holds
+  repository-specific notes for plan-anchor work (conflict resolution, triage,
+  plan fixes, question tuning, drift review, vocabulary, pitfalls). When
+  present, `SKILL.md`, the capture, tuning, planning-review and
+  development-review workflows, triage, the drift review and the
+  `anchor-tuning` agent read it; it supplements the approved intent, anchors
+  and quotes and never overrides them, and is never sent to Jev whole
+  (`references/anchor-document.md`, `references/jev-api.md`). Absent, nothing
+  changes. `plan_anchor_paths.find_guidelines` finds it and
+  `plan_anchor_settings.py show` reports it as `data.repo_guidelines_path`.
+  The installer never creates, changes or deletes it. Example:
+  `assets/examples/plan-anchor-repo-guidelines.example.md`.
+
 ## 0.11.0 — 2026-11-09
 
 - sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
