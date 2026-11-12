@@ -2,6 +2,39 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.1 — 2026-11-11
+
+- Triage guide (`triage-and-iteration.md`): the opening section is now "Ask
+  Jev first, edit once, then review drift". The first move on a failing cell
+  is to read the default triage answers and ask Jev with `--extra-questions`
+  until the cause is located, then make one edit. Both instructions already
+  existed (`question-tuning.md`, section 2 of the guide) but sat behind a
+  section that said to apply many small clarity changes and re-run. States the
+  cost (about $10 per 100,000 queries) and the budget (a few thousand queries
+  per gate run).
+- Drift review never loosens: a passage is judged against every locked anchor
+  that applies, a fix that would loosen is `owner_decision` and never `minor`,
+  and a fix that turns a pass into a fail is reverted.
+- Roles: the planner converges with Jev; the lead reviews the result for drift
+  and does not send replacement wording.
+- Stop condition: three consecutive failed runs of one bead, whether or not the
+  failing set is the same (was: identical sets only), and the response is to
+  ask Jev, not to ask the user.
+- The owner reviews once, at the end, with final approval of plan, ADRs,
+  requirements and anchors. The loop makes the changes, finds and corrects
+  drift, and reports what changed, significant drift and conflicts resolved.
+  No questions mid-loop; an unresolved cell is reported, not asked about.
+- Editing requirements and ADRs is part of planning: amend them explicitly,
+  never work around one.
+- The change report is mandatory: a round is not finished until the user has
+  been shown the HTML page, and the final message lists every ADR, REQ, NFR
+  and ANC change by id in prose (`change-report.md`, triage step 7).
+- Every failure list has a why column, and each `to_fix` record carries its own
+  `why` (failing run, question, answer and confidence, cause) and a specific
+  authority. Records are committed beside the plan, and the message announcing
+  a batch of fixes carries a table of item, anchor, run, why and action.
+- `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
+
 ## 0.11.0 — 2026-11-09
 
 - sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
