@@ -2,6 +2,27 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.1 — 2026-11-11
+
+- Triage guide (`triage-and-iteration.md`): the opening section is now "Ask
+  Jev first, edit once, then review drift". The first move on a failing cell
+  is to read the default triage answers and ask Jev with `--extra-questions`
+  until the cause is located, then make one edit. Both instructions already
+  existed (`question-tuning.md`, section 2 of the guide) but sat behind a
+  section that said to apply many small clarity changes and re-run. States the
+  cost (about $10 per 100,000 queries) and the budget (a few thousand queries
+  per gate run).
+- Drift review never loosens: a passage is judged against every locked anchor
+  that applies, a fix that would loosen is `owner_decision` and never `minor`,
+  and a fix that turns a pass into a fail is reverted.
+- Roles: the planner converges with Jev; the lead reviews the result for drift
+  and does not send replacement wording.
+- Stop condition: three consecutive failed runs of one bead, whether or not the
+  failing set is the same (was: identical sets only), and the response is to
+  ask Jev, not to ask the user.
+- When to ask the owner: only when no anchor answers the question.
+- `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
+
 ## 0.11.0 — 2026-11-09
 
 - sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
