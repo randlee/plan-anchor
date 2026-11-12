@@ -66,7 +66,7 @@ Rules of triage:
 - Do not reword a bead until the statement and the question are ruled out; fixing the plan to satisfy a bad question entrenches it.
 - Do not reword the statement to match a bead. Only the user changes what it requires; rewording for clarity (`update --statement`) keeps the quote, needs no approval, and is checked in the drift review.
 - Low confidence is a plan-quality signal: the bead is unclear, excessive or missing something. Fix the bead; do not explain the score away.
-- Before editing a bead, write one `to_fix` record: `{anchor_id, sentence, action: cut|replace|add, replacement, authority}`. `authority` is required for `add` and names a locked ANC/REQ/ADR that predates the failed run.
+- Before editing a bead, write one `to_fix` record: `{anchor_id, sentence, action: cut|replace|add, replacement, why, authority}`. `why` is required on every record and belongs to that fix alone: the failing run id, the question, its answer and confidence, and the cause in one sentence (for example "run 064548Z, `addressed` yes at 0.53: the extra upper bound has no comment rule"). `authority` is required for `add` and names the one locked ANC/REQ/ADR that predates the failed run. One string repeated across several records is neither a why nor an authority.
 - Cuts are the default. Replace only when cutting would remove required meaning. Do not add explanation merely to lift confidence.
 - Work the change cannot succeed without stays only when pre-existing authority requires it; list the cell, added line, and that authority in the planning-complete summary.
 - If Jev looks wrong and no defect applies, say so in the posted report and ask the user. Do not iterate until Jev agrees.
@@ -101,4 +101,6 @@ python3 "$S" coverage --runs anchor-runs --gate plan --format md
 
 ## Recording the iteration
 
-Each run file is the record. Post the final passing run's report on the bead or the PR, referencing the iterations' run IDs and each `to_fix` action. The final summary lists every allowed growth exception with its pre-existing authority; no exception first declared during remediation is accepted. If tuning was needed, identify the frozen fixture or expected verdict that proved the defect, what was tuned, and why. Include the drift review: each changed anchor and plan passage, and whether its meaning held.
+Each run file is the record. Post the final passing run's report on the bead or the PR, referencing the iterations' run IDs and each `to_fix` action.
+
+A failure without its why is not a report. Every failure list, to the planner, the lead or the user, has a why column: the item, the anchor, the run id, the question with its answer and confidence, and the cause in one sentence. Commit the `to_fix` records beside the plan with the run evidence (`$P/anchor-tuning/`); a record left in a temporary directory is lost evidence. The message that announces a batch of fixes carries a table of item, anchor, run, why and action, not a summary per sprint. The final summary lists every allowed growth exception with its pre-existing authority; no exception first declared during remediation is accepted. If tuning was needed, identify the frozen fixture or expected verdict that proved the defect, what was tuned, and why. Include the drift review: each changed anchor and plan passage, and whether its meaning held.

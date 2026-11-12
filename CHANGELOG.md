@@ -29,6 +29,10 @@
 - The change report is mandatory: a round is not finished until the user has
   been shown the HTML page, and the final message lists every ADR, REQ, NFR
   and ANC change by id in prose (`change-report.md`, triage step 7).
+- Every failure list has a why column, and each `to_fix` record carries its own
+  `why` (failing run, question, answer and confidence, cause) and a specific
+  authority. Records are committed beside the plan, and the message announcing
+  a batch of fixes carries a table of item, anchor, run, why and action.
 - `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
 
 ## 0.11.0 — 2026-11-09
