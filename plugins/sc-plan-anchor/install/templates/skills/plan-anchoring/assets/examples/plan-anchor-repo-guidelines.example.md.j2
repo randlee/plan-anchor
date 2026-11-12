@@ -1,0 +1,36 @@
+---
+name: sc-plan-anchor-asset-repo-guidelines-example
+version: 1.0.0
+format: markdown
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+# Plan-anchor repository guidelines
+
+Copy to `.sc/plan-anchor/plan-anchor-repo-guidelines.md`, keep what applies, and commit it. The repository owner maintains this file; the installer never writes it. It supplements the approved intent, the anchors and their quotes, and never overrides them (`references/anchor-document.md`). Do not put secrets or private plan text here.
+
+## Resolving anchor conflicts
+
+- When two anchors pull against each other, the newer locked anchor wins only if the owner said so; otherwise ask the owner.
+
+## Triage and plan fixes
+
+- Prefer cutting a sentence over adding one; this repository's plans are read by the people who build them.
+
+## Question tuning
+
+- Treat "configuration" as the committed config files only, never runtime flags.
+
+## Drift review
+
+- A renamed public command is material drift even when its behaviour is unchanged.
+
+## Vocabulary
+
+- "legacy repo": the read-only source the migration copies from.
+
+## Known pitfalls
+
+- Plan items that say "as before" are judged without the earlier item; restate the rule.

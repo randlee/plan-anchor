@@ -71,6 +71,8 @@ python3 "$S" --help
 
 Every command below uses `$S`, `$P` and `$A`; every agent invocation passes `$S` as `script` and `$A` as `anchors_path`.
 
+If `plan_anchor_settings.py show` reports a `repo_guidelines_path`, read that repository-owned file before the workflow; it supplements the intent and anchors and never overrides them (`references/anchor-document.md`).
+
 ## Select the workflow
 
 After dependency verification, read only the row for the current operation.

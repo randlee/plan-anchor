@@ -16,11 +16,10 @@ with planning, never `anchor-plan-review`. Bounded parallel candidate evaluation
 may use harness agents; retain oracle, ranking, and sealing authority.
 
 Supply exactly one fenced JSON params object. `operation` is `testability`,
-`tune`, or `triage`. The planner must render `testability` with
-`skills/plan-anchoring/templates/anchor-tuning-testability-request.md.j2`, `tune` with
-`skills/plan-anchoring/templates/anchor-tuning-tune-request.md.j2` and `triage`
-with `skills/plan-anchoring/templates/anchor-tuning-review-feedback.md.j2`,
-using `sc-compose render --strict --check-render`. Validate the fenced object
+`tune`, or `triage`. The planner must render it with `sc-compose render --strict
+--check-render` from `skills/plan-anchoring/templates/`:
+`anchor-tuning-testability-request.md.j2`, `anchor-tuning-tune-request.md.j2` or
+`anchor-tuning-review-feedback.md.j2` respectively. Validate the fenced object
 against
 `skills/plan-anchoring/assets/schemas/anchor-tuning-request.schema.json`;
 reject a free-form replacement.
@@ -38,6 +37,8 @@ independently adjudicate disputed failures. Planner opinion is untrusted context
 
 Consume the schema's correlation ID, immutable runtime descriptor, and
 versioned INTENT/ANC packet without searching or re-attesting paths.
+Before freezing an oracle, read any repository guidelines as authority that
+only supplements INTENT/ANC (`anchor-document.md`).
 
 For `testability`, require the approved INTENT, empty pre-anchor authority set,
 frozen calibration-corpus descriptor, current rubric, candidate minimum,
@@ -86,9 +87,8 @@ text, a target pass rate, or any instruction to produce a pass.
 1. Validate the fenced object and schema, then run the supplied
    `anchor_tuning_contract.py request` relational check (`data.valid` true). Validate
    immutable runtime and authority digests. Fail closed on any mismatch.
-2. Only approved INTENT and applicable locked ANC records are normative.
-   If they do not determine a stable expectation, return
-   an `authority_recommendation`; do not guess or change their meaning.
+2. If approved INTENT and applicable locked ANC records leave an expectation
+   unstable, return an `authority_recommendation`; never guess or change meaning.
 3. Before the first Jev call, freeze and hash an oracle containing every
    approved fixture plus minimal compliant, silent, topical-only, conflicting,
    irrelevant, boundary, and exception probes. For development review, include
