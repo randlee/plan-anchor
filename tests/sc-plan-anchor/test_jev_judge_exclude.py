@@ -93,9 +93,9 @@ class JudgeExclusionTests(unittest.TestCase):
             j = Judged(d, t, anchors=[cli_anchor(exclude=excluded())], env_values={})
             self.assertEqual((j.code, j.result["verdict"], t.bodies), (0, "excluded", []))
             # with one anchor left to judge, the key and opt-in are required as before
-            t = Transport()
+            t = Transport(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))
             j = Judged(d, t, anchors=[anchor("ANC-001"), cli_anchor(exclude=excluded())], env_values={})
-            self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "AUTH.CREDENTIALS", []))
+            self.assertEqual((j.code, j.out["error"]["code"], len(t.bodies)), (2, "AUTH.CREDENTIALS", 1))
 
     def test_dry_run_writes_no_request_for_an_excluded_cell(self):
         with tempfile.TemporaryDirectory() as d:

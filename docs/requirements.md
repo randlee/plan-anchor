@@ -63,9 +63,9 @@ Verified: `test_jev_judge.py::DecideTests` (all rows, including `test_row1_not_a
 Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. Status: shipped.
 Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_runs_ignored`, `DiffTests`.
 
-**REQ-011** The script alone shall own the retry policy: up to three attempts for 429, 529, 5xx, network and invalid responses, no retry on 401, and an error on one anchor shall not lose the others.
-Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
-Verified: `test_jev_judge.py::TransportPolicyTests`.
+**REQ-011** Provider retries shall be delegated to sc-decidr under amended REQ-SAG-0601; the script shall not add a second transport retry loop. An error on one anchor shall not lose the others. Context-size shortening and the near-threshold confirmation are domain decisions, not transport retries.
+Source: Phase B design (`agt-bpa-1`); `design/architecture-and-call-graphs.md` §4. Status: migration in progress; B-1 must publish the amended retry behavior.
+Verified: controlled consumer-boundary tests in `test_decidr_client.py`; the published wheel's retry cases remain pending B-1.
 
 **REQ-012** Every Jev answer shall be checked by `validate_response`, which requires exactly the requested answer IDs.
 Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
@@ -94,9 +94,9 @@ Source: ANC-012. Status: shipped; run files are redacted since 0.8.3 (`save_json
 Verified: `test_jev_judge.py::FailClosedTests.test_every_emitted_value_redacts_the_live_key_and_bearer_tokens`, `FailClosedTests.test_key_format_checked_and_never_echoed`, `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 Verified: `test_jev_failures.py::RunFileRedaction.test_a_key_in_the_item_title_never_reaches_a_fixture_run_file`, `RunFileRedaction.test_a_key_in_the_item_text_never_reaches_a_dry_run_file` (a canary key in `TYPESAFE_API_KEY` and a bearer token, fed through `--item-title` and `--item-file`, are absent from the run file). Partial: a live run's file is not read (it is written by the same `save_json`).
 
-**REQ-018** Plan-anchor shall resolve the TypeSafe API key from `TYPESAFE_API_KEY` first and, only when it is absent, from the documented platform credential store; it shall not read other environment variables as runtime configuration.
-Source: ANC-005; OPERATOR. Status: shipped (met since 0.7.3; credential-store fallback added in 0.8.6).
-Verified: `test_jev_judge.py::CredentialLookupTests`, `test_no_plugin_env_vars.py::ShippedTreeNamesNoRetiredVariable.test_only_typesafe_key_is_read_from_the_environment`, `ShippedTreeNamesNoRetiredVariable.test_no_plan_anchor_prefix_in_shipped_files`, `RetiredVariablesHaveNoEffect.test_dry_run_output_and_requests_are_unchanged`, `RetiredVariablesHaveNoEffect.test_live_request_url_and_behaviour_are_unchanged`. Note: the remote-judge opt-in moved to settings in 0.7.1 (REQ-065) and the other six `PLAN_ANCHOR_*` variables were removed in 0.7.3; their values are defaults with CLI flags. The only other variables read are `USER`, as the default for `add --stated-by` (provenance, not configuration), and the home directory (`HOME`, `USERPROFILE` or `HOMEDRIVE`+`HOMEPATH` through `os.path.expanduser`), which only ends the nearest-install and settings walks and names the global locations (REQ-068, REQ-073).
+**REQ-018** Plan-anchor shall delegate TypeSafe credential resolution to sc-decidr: repository `.env`, then `TYPESAFE_API_KEY` in the environment, then the default OS keyring entry (service `TYPESAFE_API_KEY`, account the current OS user), without a consumer keyring override.
+Source: Phase B design (`agt-bpa-1`). Status: migration in progress; the corrected published wheel and precedence verification remain B-1 work.
+Verified: pending published-wheel precedence and shared-keyring recheck (`agt-r17`).
 
 **REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys (`schema_version`, `anchor_tracker`, `allow_remote_judge`, `plan_dir` (REQ-082)), committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
 Source: OPERATOR. Status: shipped. Values are parsed with PyYAML's `SafeLoader` (YAML 1.1), so `allow_remote_judge: yes` reads as `true` and is accepted; `plan_anchor_settings.py set` writes only `true` or `false`. "Committed" is checked only as not git-ignored (`set` reports `settings_ignored_by_git`); tracking is not checked.
@@ -222,9 +222,9 @@ Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
-Source: OPERATOR; ADR-006. Status: shipped.
-Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.11 floor rest on the CI `dependency-floor` job.
+**REQ-047** Skill scripts shall support Python 3.11 or newer. Live Jev calls use the published sc-decidr wheel and PyYAML for consent settings; these dependencies are loaded lazily, so offline fixture and dry-run operation remains available without them. The installer also uses sc-compose (REQ-059).
+Source: OPERATOR; ADR-006; Phase B design (`agt-bpa-1`). Status: migration in progress.
+Verified: Python floor by `test_python_floor.py`; offline dependency and final published-wheel verification remain part of the integration validation.
 
 **REQ-048** Functions that can fail in an expected way shall return `Result[T, E]` (frozen `Ok`/`Err` with a literal `ok` discriminant) rather than raise; exceptions are for bugs and are converted to `SCRIPT.INTERNAL` at the CLI boundary.
 Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py` (`anchor_runner_contract.py` since 0.7.1; it keeps `SCRIPT.IO` for unreadable input).

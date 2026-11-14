@@ -24,9 +24,9 @@ required for ANC anchors and defaults to the statement for REQ/ADR anchors
 (register text). A record whose anchor lacks `quote` is read as quote =
 statement; `validate` reports it.
 
-Standard library only. Python 3.11+. One exception: a live Jev call reads the
-committed ``allow_remote_judge`` answer through ``plan_anchor_settings.py``
-(PyYAML when the settings file exists), imported lazily inside that check, so
+Python 3.11+. Live Jev calls use sc-decidr and read the committed
+``allow_remote_judge`` answer through ``plan_anchor_settings.py`` (PyYAML when
+the settings file exists). Those dependencies are imported lazily, so
 --dry-run, --answers-file and every offline subcommand stay stdlib-only.
 
 Expected failures travel as values: a function that can fail returns
@@ -104,30 +104,23 @@ Plan-gate size handling
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as _dt
 import hashlib
-import http.client
 import json
 import math
 import os
 import pathlib
 import re
-import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from result import Err, Ok, Result, utf8_stdio  # noqa: E402
+import decidr_client  # noqa: E402
 
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"  # tests redirect by patching this constant in-process
 TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY"
-CREDENTIAL_SERVICE = "plan-anchor"
-CREDENTIAL_ACCOUNT = "typesafe-api-key"
-WINDOWS_CREDENTIAL_TARGET = f"{CREDENTIAL_SERVICE}:{CREDENTIAL_ACCOUNT}"
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_ITEM_CHARS = 24000
@@ -137,10 +130,6 @@ DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a plant
 DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
 DEFAULT_MIN_ITEM_CHARS = 2000      # below this the item is not shortened further on a context overflow
-MAX_RESPONSE_BYTES = 1048576
-MAX_ATTEMPTS = 3                   # per anchor, for transport-level failures (429, 529, 5xx, network, bad response)
-RETRY_DELAYS = (1.0, 2.0)          # seconds before the second and third attempt; Retry-After overrides the first
-MAX_RETRY_AFTER = 30.0
 PROBABILITY_ROUNDING = 0.01        # Jev rounds each probability; the sum may be off by this per option
 TRUNCATION_MARKER = "\n[... truncated by jev_judge; keep the state small ...]"
 HERE = pathlib.Path(__file__).resolve().parent
@@ -167,7 +156,6 @@ EXCLUSION_KEYS = ("item", "reason")
 SEVERITY = {v: i for i, v in enumerate(VERDICTS)}
 REQUIRED_ROLES = ("relevance", "compliance", "conflict")
 ABORT_CODES = ("AUTH.CREDENTIALS", "POLICY.REMOTE_JUDGE_DISABLED")
-TRANSIENT_CODES = ("JEV.RATE_LIMITED", "JEV.OVERLOADED", "JEV.NETWORK", "JEV.RESPONSE_INVALID")
 FIXTURE_EXPECTED = {"pass": ("satisfied",), "fail": ("not_addressed", "contradicted")}
 ITEM_SECTIONS = (("description", "Description"), ("design", "Design"), ("acceptance_criteria", "Acceptance criteria"), ("notes", "Notes"))
 
@@ -193,7 +181,6 @@ REQUIREMENT_FORM_WARNINGS = (
     "not phrased as a testable requirement",
 )
 
-_sleep = time.sleep  # replaced in tests
 
 SAFE_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s\"']+")
@@ -238,6 +225,14 @@ class JudgeError:
 def fail(code: str, message: str, **fields) -> Err[JudgeError]:
     """An expected failure as a value: ``return fail(...)`` where the old code raised."""
     return Err(JudgeError(code, message, **fields))
+
+
+def error_detail(error: JudgeError) -> dict:
+    """Preserve lower-layer details when a failure is embedded in a run."""
+    result = error.to_json()["error"]
+    if error.data is not None:
+        result["data"] = redact_sensitive(error.data)
+    return result
 
 
 def jev_failure(what: str, failures: list, total: int, data: dict) -> Err[JudgeError]:
@@ -1619,68 +1614,82 @@ def encode_body(body: dict) -> bytes:
     return json.dumps(body, allow_nan=False).encode("utf-8")
 
 
-def parse_retry_after(value):
-    if value is None:
-        return None
+def invoke_wheel(operation) -> Result[Any, JudgeError]:
+    """Translate command-level wheel failures while retaining their details."""
     try:
-        delay = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(delay) or delay < 0:
-        return None
-    return min(delay, MAX_RETRY_AFTER)
+        result = operation()
+    except ImportError:
+        return fail("DEPENDENCY.SC_DECIDR", "sc-decidr is required for live Jev judgments",
+                    action="Install the supported sc-decidr wheel in the Python interpreter running this skill.")
+    except TypeError as exc:
+        if "timeout_secs" not in str(exc):
+            raise
+        return fail("DEPENDENCY.SC_DECIDR", f"The installed sc-decidr does not support the required call: {exc}",
+                    action="Install a release of sc-decidr that supports per-call timeouts.")
+    except ValueError as exc:
+        return fail("JEV.RESPONSE_INVALID", f"Invalid sc-decidr result: {exc}")
+    except Exception as exc:
+        # SagError carries the wheel's id, message and full detail as its arguments.
+        import sc_agent
+        if not isinstance(exc, sc_agent.SagError):
+            raise
+        parts = exc.args
+        code = str(parts[0])
+        message = str(parts[1]) if len(parts) > 1 else str(exc)
+        detail = None
+        if len(parts) > 2:
+            try:
+                detail = json.loads(parts[2])
+            except (TypeError, ValueError):
+                detail = {"detail": parts[2]}
+        # Keep the CLI's established credential-abort behavior while retaining
+        # the wheel's full error chain in data.
+        def has_credential_error(node):
+            if isinstance(node, dict):
+                if node.get("id") in ("secrets.key_missing", "secrets.key_malformed", "decidr.no_provider_key"):
+                    return True
+                return any(has_credential_error(value) for value in node.values())
+            return isinstance(node, list) and any(has_credential_error(value) for value in node)
+        if code == "decidr.no_provider_key" or has_credential_error(detail):
+            code = "AUTH.CREDENTIALS"
+        error = JudgeError(code, message)
+        error.data = detail
+        return Err(error)
+    return Ok(result)
 
 
-def http_error(status: int, text: str, retry_after=None) -> JudgeError:
-    """Map an HTTP failure to a JudgeError. Bodies are withheld except the first 300 chars of a 422."""
-    low = text.lower()
-    if 400 <= status < 500 and ("max_tokens" in low or ("token" in low and "exceed" in low)):
-        return JudgeError("JEV.CONTEXT_EXCEEDED", f"Jev HTTP {status}: request exceeds the model's context window", recoverable=True,
-                          action="Shorten the evidence for this item.", status=status)
-    if status == 401:
-        return JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401; response body withheld", action="Check TYPESAFE_API_KEY.", status=status)
-    if status == 422:
-        return JudgeError("JEV.VALIDATION", f"Jev HTTP 422: {text[:300]}", action="Fix the named field; usually a malformed question override.", status=status)
-    code = {429: "JEV.RATE_LIMITED", 529: "JEV.OVERLOADED"}.get(status, "JEV.HTTP")
-    transient = status in (429, 529) or status >= 500
-    return JudgeError(code, f"Jev HTTP {status}; response body withheld", recoverable=transient,
-                      action="Retry with backoff" if transient else "Check the request body.",
-                      status=status, retry_after=retry_after)
+def decode_wheel_result(result: dict) -> Result[dict, JudgeError]:
+    """Translate an individual wheel result without losing the error chain."""
+    if "error" in result:
+        detail = result["error"]
+        if not isinstance(detail, dict):
+            return fail("JEV.RESPONSE_INVALID", "sc-decidr returned a malformed error")
+        code = str(detail.get("id", "decision.error"))
+        message = str(detail.get("message", "sc-decidr returned an error"))
+        lower = message.lower()
+        if "http 401" in lower:
+            code = "AUTH.CREDENTIALS"
+        elif re.search(r"\bhttp 4\d\d\b", lower) and ("max_tokens" in lower or ("token" in lower and "exceed" in lower)):
+            code = "JEV.CONTEXT_EXCEEDED"
+        error = JudgeError(code, message, recoverable=bool(detail.get("recoverable", False)))
+        error.data = detail
+        return Err(error)
+    response = result.get("response")
+    if not isinstance(response, dict):
+        return fail("JEV.RESPONSE_INVALID", "sc-decidr returned no response object")
+    return Ok(response)
 
 
-def call_jev(body: dict, api_key: str, timeout: float) -> Result[dict, JudgeError]:
-    """One POST to Jev. Returns Err(JudgeError) on failure; never retries or shortens (judge_with_policy does both)."""
-    data = encode_body(body)
-    req = urllib.request.Request(
-        JEV_URL, data=data, method="POST",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "plan-anchoring/jev_judge"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(MAX_RESPONSE_BYTES + 1)
-    except urllib.error.HTTPError as exc:
-        text = exc.read(4096).decode("utf-8", "replace")
-        retry_after = parse_retry_after(exc.headers.get("Retry-After") if exc.headers is not None else None)
-        return Err(http_error(exc.code, text, retry_after))
-    except urllib.error.URLError as exc:
-        return fail("JEV.NETWORK", f"Could not reach Jev: {exc.reason}", recoverable=True, action="Check network access and retry.")
-    except (OSError, http.client.HTTPException) as exc:
-        return fail("JEV.NETWORK", f"Jev connection failed: {type(exc).__name__}: {exc}", recoverable=True, action="Check network access and retry.")
-    if len(raw) > MAX_RESPONSE_BYTES:
-        return fail("JEV.RESPONSE_INVALID", "Jev response exceeded the size limit", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeError):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not JSON", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
-    if not isinstance(parsed, dict):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not a JSON object", recoverable=True, action="Check for a proxy rewriting the response.")
-    return Ok(parsed)
+def call_jev(body: dict, api_key: str, timeout: float, *, general_log=None, cancel=None) -> Result[dict, JudgeError]:
+    """Send using sc-decidr; transport and credential resolution belong to the wheel."""
+    result = invoke_wheel(lambda: decidr_client.send(body, timeout, general_log=general_log, cancel=cancel))
+    return decode_wheel_result(result.value) if isinstance(result, Ok) else result
 
 
-def is_transient(exc: JudgeError) -> bool:
-    if exc.code in TRANSIENT_CODES:
-        return True
-    return exc.code == "JEV.HTTP" and exc.status is not None and exc.status >= 500
+def call_jev_batch(bodies: list, timeout: float, *, general_log=None, cancel=None) -> Result[list, JudgeError]:
+    """Return individual results in input order, retaining wheel failures."""
+    result = invoke_wheel(lambda: decidr_client.send_batch(bodies, timeout, general_log=general_log, cancel=cancel))
+    return Ok([decode_wheel_result(line) for line in result.value]) if isinstance(result, Ok) else result
 
 
 def item_core(text: str) -> str:
@@ -1724,26 +1733,22 @@ def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: d
 
 
 def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
-                      shorten: bool = True) -> Result[tuple, JudgeError]:
-    """call_jev with the attempt policy and context handling. Returns Ok((validated response, meta)) or Err(JudgeError carrying .meta).
-
-    - Transport-level failures (429, 529, 5xx, network, invalid response): up to MAX_ATTEMPTS attempts; the first
-      retry waits Retry-After when given, else RETRY_DELAYS[0]; the next waits RETRY_DELAYS[1].
-    - Context overflow (4xx mentioning max_tokens / token ... exceed): halve the item and retry until it fits or
-      the item is at min_item_chars, then give up with JEV.CONTEXT_EXCEEDED. With shorten=False (the plan gate)
-      the item is never cut: the overflow is returned at once as PLAN.TOO_LARGE.
-    - Everything else (401, 422) is returned at once.
-    """
+                      shorten: bool = True, *, general_log=None, cancel=None, first_answer=None) -> Result[tuple, JudgeError]:
+    """Apply domain sizing and response validation; sc-decidr owns transport retries."""
     item = body["state"].get("item")
     meta = {"attempts": 0, "item_chars_sent": len(item["text"]) if item else 0, "item_shortened": False}
     fitted = fit_request(body, max_request_bytes, min_item_chars, meta)
     if isinstance(fitted, Err):
         return fitted
-    transient_failures = 0
     while True:
         meta["attempts"] += 1
         meta["item_chars_sent"] = len(item["text"]) if item else 0
-        answered = call_jev(body, api_key, timeout)
+        if first_answer is not None:
+            answered, first_answer = first_answer, None
+        elif general_log is None and cancel is None:
+            answered = call_jev(body, api_key, timeout)
+        else:
+            answered = call_jev(body, api_key, timeout, general_log=general_log, cancel=cancel)
         if isinstance(answered, Ok):
             answered = validate_response(answered.value, questions)
             if isinstance(answered, Ok):
@@ -1753,6 +1758,8 @@ def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_byte
         if exc.code == "JEV.CONTEXT_EXCEEDED" and item is not None and not shorten:
             final = plan_too_large(item, f"Jev rejected it for context size ({exc.message})")
             final.meta = dict(meta, **final.meta)
+            if exc.data is not None:
+                final.data["provider_error"] = exc.data
             return Err(final)
         if exc.code == "JEV.CONTEXT_EXCEEDED":
             if item is not None and halve_item(item, min_item_chars, meta):
@@ -1764,14 +1771,8 @@ def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_byte
                                action="Shorten the evidence for this item: sprint report and PR body summaries, file names and counts only; or lower --min-item-chars.",
                                status=exc.status)
             final.meta = meta
+            final.data = exc.data
             return Err(final)
-        if is_transient(exc) and transient_failures < MAX_ATTEMPTS - 1:
-            delay = RETRY_DELAYS[min(transient_failures, len(RETRY_DELAYS) - 1)]
-            if transient_failures == 0 and exc.retry_after is not None:
-                delay = exc.retry_after
-            transient_failures += 1
-            _sleep(delay)
-            continue
         return answered
 
 
@@ -1973,80 +1974,6 @@ def read_item(args) -> Result[dict, JudgeError]:
     return Ok(item)
 
 
-def _command_credential(argv: list[str]) -> str:
-    """Read a credential from a platform command without exposing its output on failure."""
-    try:
-        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True, encoding="utf-8", timeout=5, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def _windows_credential() -> str:
-    """Read the documented generic credential target from Windows Credential Manager."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class Credential(ctypes.Structure):
-            _fields_ = [
-                ("Flags", wintypes.DWORD), ("Type", wintypes.DWORD), ("TargetName", wintypes.LPWSTR),
-                ("Comment", wintypes.LPWSTR), ("LastWritten", wintypes.FILETIME),
-                ("CredentialBlobSize", wintypes.DWORD), ("CredentialBlob", ctypes.c_void_p),
-                ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
-                ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR),
-            ]
-
-        credential = ctypes.POINTER(Credential)()
-        advapi = ctypes.windll.advapi32
-        advapi.CredReadW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                                     ctypes.POINTER(ctypes.POINTER(Credential)))
-        advapi.CredReadW.restype = wintypes.BOOL
-        advapi.CredFree.argtypes = (ctypes.c_void_p,)
-        if not advapi.CredReadW(WINDOWS_CREDENTIAL_TARGET, 1, 0, ctypes.byref(credential)):
-            return ""
-        try:
-            size = int(credential.contents.CredentialBlobSize)
-            if not size or not credential.contents.CredentialBlob:
-                return ""
-            return ctypes.string_at(credential.contents.CredentialBlob, size).decode("utf-16-le").strip()
-        finally:
-            advapi.CredFree(credential)
-    except (AttributeError, OSError, UnicodeDecodeError):
-        return ""
-
-
-def credential_store_api_key() -> str:
-    """Read the documented OS credential only when the environment has no key."""
-    if sys.platform == "darwin":
-        return _command_credential(["security", "find-generic-password", "-s", CREDENTIAL_SERVICE,
-                                    "-a", CREDENTIAL_ACCOUNT, "-w"])
-    if sys.platform == "win32":
-        return _windows_credential()
-    if sys.platform.startswith("linux"):
-        return _command_credential(["secret-tool", "lookup", "service", CREDENTIAL_SERVICE,
-                                    "account", CREDENTIAL_ACCOUNT])
-    return ""
-
-
-def resolved_api_key() -> str:
-    """Resolve the TypeSafe key from the environment first, then the platform credential store."""
-    environment_key = os.environ.get(TYPESAFE_KEY_ENV)
-    if environment_key is not None:
-        return environment_key.strip()
-    return credential_store_api_key()
-
-
-def check_api_key(api_key: str) -> Result[None, JudgeError]:
-    if not api_key:
-        return fail("AUTH.CREDENTIALS", "no TypeSafe API key was found", action="Export TYPESAFE_API_KEY or add the documented platform credential, or use --dry-run / --answers-file.")
-    if not api_key.isascii() or any(ord(c) <= 32 or ord(c) == 127 for c in api_key):
-        return fail("AUTH.CREDENTIALS", "the TypeSafe API key has invalid formatting (whitespace, control or non-ASCII characters)",
-                    action="Replace TYPESAFE_API_KEY or the platform credential with the key exactly as issued.")
-    return Ok(None)
-
-
 def judge_context(args, rec: dict, remote: bool = True) -> Result[dict, JudgeError]:
     """Shared pre-flight for judge and check-fixtures: options, question set, overrides, fixture answers, key and consent.
 
@@ -2148,15 +2075,11 @@ def _from_tool_error(error) -> JudgeError:
 
 
 def remote_preflight(args, what: str) -> Result[str, JudgeError]:
-    """Key and consent checks shared by every live Jev call; returns the API key. Nothing leaves the machine before this passes."""
-    api_key = resolved_api_key()
-    checked = check_api_key(api_key)
-    if isinstance(checked, Err):
-        return checked
+    """Check consent before allowing the wheel to access credentials or network."""
     consent = remote_judge_consent(args, what)
     if isinstance(consent, Err):
         return consent
-    return Ok(api_key)
+    return Ok("")
 
 
 def load_answers_fixture(path: str, keyed_by: str) -> Result[Any, JudgeError]:
@@ -2228,7 +2151,7 @@ def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
     return Ok(prepared)
 
 
-def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_key) -> Result[tuple, JudgeError]:
+def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_key, first_answer=None) -> Result[tuple, JudgeError]:
     """The first answer for one anchor: the fixture entry when a fixture is given, else the live policy. Ok((response, meta))."""
     if ctx["answers_fixture"] is not None:
         fx = ctx["answers_fixture"].get(fixture_key(a)) or ctx["answers_fixture"].get("*")
@@ -2241,7 +2164,8 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
             return checked
         return Ok((checked.value, meta))
     return judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], qs["questions"],
-                             shorten=ctx["gate"] != "plan")
+                             shorten=ctx["gate"] != "plan", first_answer=first_answer,
+                             general_log=ctx.get("general_log"), cancel=ctx.get("cancel"))
 
 
 def entry_base(a: dict) -> dict:
@@ -2274,6 +2198,28 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
     the first verdict and records ``confirm_error``); ``cell_failures`` lists both, and the caller exits 2.
     """
     results, requests_out, model_answered = [], [], None
+    # Only already-fitting live requests are batched. Larger development items
+    # retain the existing individual fit/shortening policy.
+    batch_answers = {}
+    if not ctx["dry_run"] and ctx["answers_fixture"] is None:
+        candidates = []
+        for anchor, questions, _ in prepared:
+            if anchor_kind(anchor) == "structural" and ctx["gate"] == "plan":
+                continue
+            request = {"model": ctx["model"], "state": build_state(anchor, item), "questions": questions["questions"]}
+            if len(encode_body(request)) <= ctx["max_request_bytes"]:
+                candidates.append((anchor["id"], request))
+        if len(candidates) > 1:
+            batched = call_jev_batch([request for _, request in candidates], ctx["timeout"],
+                                     general_log=ctx.get("general_log"), cancel=ctx.get("cancel"))
+            if isinstance(batched, Err):
+                if batched.error.code in ABORT_CODES:
+                    return batched
+                # A command-level batch failure is recorded for every affected
+                # anchor, preserving the partial-run failure contract.
+                batch_answers = {key: Err(copy.copy(batched.error)) for key, _ in candidates}
+            else:
+                batch_answers = dict(zip((key for key, _ in candidates), batched.value))
     for a, qs, overridden in prepared:
         body = {"model": ctx["model"], "state": build_state(a, item), "questions": qs["questions"]}
         entry = entry_base(a)
@@ -2302,7 +2248,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             entry.update(meta)
             results.append(entry)
             continue
-        first = _first_answer(ctx, a, qs, body, meta, fixture_key)
+        first = _first_answer(ctx, a, qs, body, meta, fixture_key, first_answer=batch_answers.get(a["id"]))
         if isinstance(first, Ok):
             resp, meta = first.value
             model_answered = resp.get("model", model_answered)
@@ -2327,7 +2273,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                     if exc2.code in ABORT_CODES:
                         return second
                     meta["attempts"] += (exc2.meta or {}).get("attempts", 0)
-                    entry["confirm_error"] = exc2.to_json()["error"]
+                    entry["confirm_error"] = error_detail(exc2)
             entry.update({"verdict": verdict, "answers": resp["answers"], "min_confidence": round(min_conf, 3),
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
             if verdict == "underspecified":
@@ -2337,9 +2283,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             if exc.code in ABORT_CODES:
                 return first
             meta = exc.meta or meta
-            error = exc.to_json()["error"]
-            if exc.data:
-                error["data"] = exc.data
+            error = error_detail(exc)
             entry.update({"verdict": "error", "answers": None, "min_confidence": None, "explanation": explain("error", 0.0, ctx["gate"]),
                           "error": error})
         entry.update({k: v for k, v in meta.items() if k != "size"})
@@ -2717,7 +2661,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                 exc = asked.error
                 if exc.code in ABORT_CODES:
                     return asked
-                pair["jev"] = {"choice": None, "confidence": None, "attempts": (exc.meta or {}).get("attempts"), "error": exc.to_json()["error"]}
+                pair["jev"] = {"choice": None, "confidence": None, "attempts": (exc.meta or {}).get("attempts"), "error": error_detail(exc)}
                 failures.append((f"{pair['a']}|{pair['b']}", exc))
         if dry_run:
             data["requests"] = requests_out
@@ -2913,7 +2857,7 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
                 return judged
             entry["verdict"] = "error"
             entry["failing"] = [f"error: {exc.code}"] + lint_errors
-            entry["error"] = exc.to_json()["error"]
+            entry["error"] = error_detail(exc)
             failures.append((str(c["id"]), exc))
         entries.append(entry)
     if failures:  # a rubric that could not run is never needs_work, and `add --rubric` never records on it

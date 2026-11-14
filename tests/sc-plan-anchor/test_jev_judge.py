@@ -90,8 +90,7 @@ def run_cli(argv):
 @contextlib.contextmanager
 def env(**values):
     # Unit fixtures control both credential sources; never consult a developer's store.
-    with mock.patch.dict(os.environ, values, clear=True), \
-            mock.patch.object(jj, "credential_store_api_key", return_value=""):
+    with mock.patch.dict(os.environ, values, clear=True):
         yield
 
 
@@ -153,63 +152,24 @@ class Transport:
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
 
 
-class CredentialLookupTests(unittest.TestCase):
-    def test_absent_environment_and_empty_store_have_no_key(self):
-        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="") as store:
-            self.assertEqual(jj.resolved_api_key(), "")
-        store.assert_called_once_with()
-
-    def test_environment_key_wins_without_consulting_the_platform_store(self):
-        with env(TYPESAFE_API_KEY="env-key"), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
-            self.assertEqual(jj.resolved_api_key(), "env-key")
-        store.assert_not_called()
-
-    def test_present_but_invalid_environment_key_fails_closed_without_consulting_store(self):
-        with env(TYPESAFE_API_KEY="  "), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
-            self.assertEqual(jj.resolved_api_key(), "")
-        store.assert_not_called()
-
-    def test_macos_uses_the_documented_keychain_item(self):
-        completed = mock.Mock(returncode=0, stdout="mac-key\n")
-        with mock.patch.object(jj.sys, "platform", "darwin"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
-            self.assertEqual(jj.credential_store_api_key(), "mac-key")
-        run.assert_called_once_with(
-            ["security", "find-generic-password", "-s", "plan-anchor", "-a", "typesafe-api-key", "-w"],
-            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
-            text=True, encoding="utf-8", timeout=5, check=False,
-        )
-
-    def test_linux_uses_the_documented_secret_service_item(self):
-        completed = mock.Mock(returncode=0, stdout="linux-key\n")
-        with mock.patch.object(jj.sys, "platform", "linux"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
-            self.assertEqual(jj.credential_store_api_key(), "linux-key")
-        run.assert_called_once_with(
-            ["secret-tool", "lookup", "service", "plan-anchor", "account", "typesafe-api-key"],
-            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
-            text=True, encoding="utf-8", timeout=5, check=False,
-        )
-
-    def test_windows_uses_credential_manager(self):
-        with mock.patch.object(jj.sys, "platform", "win32"), mock.patch.object(jj, "_windows_credential", return_value="windows-key") as credential:
-            self.assertEqual(jj.credential_store_api_key(), "windows-key")
-        credential.assert_called_once_with()
-
-    def test_missing_or_invalid_store_key_fails_closed_without_contacting_jev(self):
-        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="bad key"), consented():
-            error = failure(jj.remote_preflight(mock.Mock(), "anchor text"))
-        self.assertEqual(error.code, "AUTH.CREDENTIALS")
-        self.assertNotIn("bad key", error.message)
-
-
 def http(status, text="", retry_after=None):
-    return jj.http_error(status, text, retry_after)
+    """Controlled domain error returned by a wheel-boundary test double."""
+    if status in (400, 422) and ("max_tokens" in text.lower() or ("token" in text.lower() and "exceed" in text.lower())):
+        return jj.JudgeError("JEV.CONTEXT_EXCEEDED", f"Jev HTTP {status}: request exceeds the model's context window", recoverable=True, status=status)
+    if status == 401:
+        return jj.JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401; response body withheld", status=status)
+    if status == 422:
+        return jj.JudgeError("JEV.VALIDATION", f"Jev HTTP 422: {text[:300]}", status=status)
+    code = {429: "JEV.RATE_LIMITED", 529: "JEV.OVERLOADED"}.get(status, "JEV.HTTP")
+    return jj.JudgeError(code, f"Jev HTTP {status}; response body withheld", recoverable=status in (429, 529) or status >= 500,
+                         status=status, retry_after=retry_after)
 
 
 class Judged:
     """Run `judge` against a stubbed transport with the opt-in satisfied; exposes the run and call log."""
 
     def __init__(self, d, transport, anchors=None, extra_args=(), item_text="Sprint 2 copies the legacy runtime crates.", env_values=None, gate="plan",
-                 consent=True):
+                 consent=True, batch_stub=True):
         self.anchors_path = write(d, "anchors.json", record(*(anchors or [anchor()])))
         self.item_path = write(d, "item.txt", item_text)
         self.sleeps = []
@@ -220,7 +180,9 @@ class Judged:
             if consent:
                 stack.enter_context(consented())
             stack.enter_context(mock.patch.object(jj, "call_jev", transport))
-            stack.enter_context(mock.patch.object(jj, "_sleep", self.sleeps.append))
+            if batch_stub:
+                stack.enter_context(mock.patch.object(jj, "call_jev_batch", side_effect=lambda bodies, timeout, **kw:
+                                                      jj.Ok([transport(body, "", timeout) for body in bodies])))
             self.code, self.out = run_cli(argv)
         self.run = self.out.get("data") if isinstance(self.out, dict) else None
         self.result = self.run["results"][0] if self.run and self.run.get("results") else None
@@ -564,7 +526,7 @@ class DedupeTests(unittest.TestCase):
             self.assertTrue(all(p["jev"] is None for p in out["data"]["pairs"]))
             self.assertEqual(sorted(Path(d).iterdir()), sorted(Path(d) / n for n in ("anchors.json", "answers.json", "partial.json")))  # no run files
             # live: key and opt-in are enforced before anything is sent
-            with env():
+            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -580,24 +542,24 @@ class DedupeTests(unittest.TestCase):
     def test_jev_live_uses_the_transport_policy(self):
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "anchors.json", record(anchor(), anchor("ANC-002", statement=self.A, quote="copy the libraries from the legacy repo and remove the legacy-specific code")))
-            t = Transport(http(429), {"model": "jev-1.13.0", "answers": {"same_constraint": answer("yes", 0.8)}})
+            t = Transport({"model": "jev-1.13.0", "answers": {"same_constraint": answer("yes", 0.8)}})
             sleeps = []
-            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", sleeps.append):
+            with live(), mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual((code, len(out["data"]["likely_duplicates"])), (0, 1))
-            self.assertEqual(out["data"]["pairs"][0]["jev"], {"choice": "yes", "confidence": 0.8, "attempts": 2})
-            self.assertEqual((len(t.bodies), sleeps), (2, [1.0]))
+            self.assertEqual(out["data"]["pairs"][0]["jev"], {"choice": "yes", "confidence": 0.8, "attempts": 1})
+            self.assertEqual((len(t.bodies), sleeps), (1, []))
             self.assertEqual(t.bodies[0]["state"]["a"]["id"], "ANC-001")
             t = Transport(http(401))
             with live(), mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport(http(503), http(503), http(503))
-            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+            with live(), mock.patch.object(jj, "call_jev", t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             # 0.8.3: retries exhausted is a Jev failure, exit 2, never a pair silently missing from likely_duplicates
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.HTTP"))
-            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.HTTP", 3))
+            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.HTTP", 1))
 
     def test_add_refuses_duplicate_candidates_unless_allowed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -796,7 +758,7 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--dry-run"])
             self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-            with env():
+            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -846,7 +808,7 @@ class RubricTests(unittest.TestCase):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The parser does not call the network.", "--quote", "no network in the parser"])
             self.assertEqual(code, 0)
             self.assertNotIn("rubric", out["data"])
-            with env():
+            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertEqual(len(json.loads(Path(path).read_text())["anchors"]), 3)
@@ -1058,8 +1020,8 @@ class ConfirmTests(unittest.TestCase):
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(503), http(503), http(503))
             j = Judged(d, t)
         # 0.8.3: a confirmation Jev never answered is a Jev failure: exit 2; the run keeps the first answer
-        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "JEV.HTTP", "satisfied", 4, "JEV.HTTP"))
-        self.assertEqual(j.sleeps, [1.0, 2.0])
+        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "JEV.HTTP", "satisfied", 2, "JEV.HTTP"))
+        self.assertEqual(j.sleeps, [])
         with tempfile.TemporaryDirectory() as d:  # the second call hitting 401 still aborts the run
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(401))
             j = Judged(d, t)
@@ -1222,36 +1184,6 @@ class ResponseValidationTests(unittest.TestCase):
         plan = ok(jj.load_question_set("plan"))
         for aid, answers in fixture.items():
             ok(jj.validate_response({"answers": answers}, plan["questions"]))
-
-
-class HttpErrorTests(unittest.TestCase):
-    def test_bodies_withheld_except_422(self):
-        e401 = http(401, "secret body")
-        self.assertEqual(e401.code, "AUTH.CREDENTIALS")
-        self.assertNotIn("secret", str(e401))
-        e422 = http(422, "x" * 400)
-        self.assertEqual(e422.code, "JEV.VALIDATION")
-        self.assertIn("x" * 300, str(e422))
-        self.assertNotIn("x" * 301, str(e422))
-        e500 = http(500, "stack trace")
-        self.assertEqual((e500.code, e500.recoverable, str(e500)), ("JEV.HTTP", True, "Jev HTTP 500; response body withheld"))
-        self.assertEqual((http(429).code, http(529).code, http(418).recoverable), ("JEV.RATE_LIMITED", "JEV.OVERLOADED", False))
-        self.assertTrue(jj.is_transient(e500))
-        self.assertFalse(jj.is_transient(http(418)))
-
-    def test_context_overflow_detected_by_body(self):
-        for body in ('{"error": "max_tokens_exceeded"}', "Token budget exceeded for state", "The TOKEN count EXCEEDS the limit"):
-            self.assertEqual(http(422, body).code, "JEV.CONTEXT_EXCEEDED", body)
-            self.assertEqual(http(400, body).code, "JEV.CONTEXT_EXCEEDED", body)
-        self.assertEqual(http(500, "max_tokens_exceeded").code, "JEV.HTTP")
-        self.assertEqual(http(422, "field 'questions.addressed.criteria' is invalid").code, "JEV.VALIDATION")
-
-    def test_retry_after_parsing(self):
-        self.assertEqual(jj.parse_retry_after("3"), 3.0)
-        self.assertEqual(jj.parse_retry_after("900"), jj.MAX_RETRY_AFTER)
-        self.assertIsNone(jj.parse_retry_after("Wed, 21 Oct 2026"))
-        self.assertIsNone(jj.parse_retry_after(None))
-        self.assertIsNone(jj.parse_retry_after("-1"))
 
 
 class OverrideTests(unittest.TestCase):
@@ -1444,26 +1376,26 @@ class JudgeFixtureTests(unittest.TestCase):
 
 
 class FailClosedTests(unittest.TestCase):
-    def test_missing_key_and_missing_consent(self):
+    def test_wheel_credential_failure_and_missing_consent(self):
         with tempfile.TemporaryDirectory() as d:
-            transport = Transport()
-            j = Judged(d, transport, env_values={})
+            refused = Transport(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))
+            j = Judged(d, refused, env_values={})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
+            transport = Transport()
             j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"}, consent=False,
                        extra_args=["--repository-root", unset_repo()])
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "POLICY.REMOTE_JUDGE_DISABLED"))
-            self.assertEqual(transport.bodies, [])  # nothing left the machine
+            self.assertEqual(transport.bodies, [])
             j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"})
             self.assertEqual((j.code, j.result["verdict"]), (0, "satisfied"))
             self.assertEqual(len(transport.bodies), 1)
 
-    def test_key_format_checked_and_never_echoed(self):
+    def test_wheel_auth_failure_does_not_echo_the_environment_key(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "sk-bad\nkey"})
+            j = Judged(d, Transport(jj.JudgeError("AUTH.CREDENTIALS", "invalid credential")),
+                       env_values={"TYPESAFE_API_KEY": "sk-bad\nkey"})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertNotIn("sk-bad", json.dumps(j.out))
-            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "  sk-ok  "})
-            self.assertEqual(j.code, 0)
 
     def test_fixture_and_dry_run_need_neither(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1677,46 +1609,36 @@ class TransportPolicyTests(unittest.TestCase):
         self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
         self.assertEqual(j.code, 0)
 
-    def test_rate_limited_twice_then_success(self):
+    def test_final_busy_failure_is_not_retried_by_the_consumer(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(429, retry_after=3.5), http(429))
+            t = Transport(http(429, retry_after=3.5))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (0, "satisfied", 3))
-        self.assertEqual(j.sleeps, [3.5, 2.0])
-        self.assertEqual(len(t.bodies), 3)
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(http(529), jj.JudgeError("JEV.NETWORK", "down", recoverable=True)))
-        self.assertEqual((j.result["attempts"], j.sleeps), (3, [1.0, 2.0]))
+        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (2, "error", 1))
+        self.assertEqual((len(t.bodies), j.sleeps), (1, []))
 
-    def test_three_failures_record_an_error_verdict(self):
+    def test_final_failure_records_an_error_verdict(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(529), http(529), http(529), http(529))
+            t = Transport(http(529))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 3))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 1))
         self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("JEV.OVERLOADED", "JEV.OVERLOADED"))
         self.assertTrue(j.result["error"]["recoverable"])
-        self.assertEqual(len(t.bodies), 3)
-        self.assertEqual(j.sleeps, [1.0, 2.0])
+        self.assertEqual((len(t.bodies), j.sleeps), (1, []))
         self.assertEqual(j.run["summary"]["errors"], ["ANC-001"])
-        self.assertFalse(j.run["summary"]["pass"])
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(http(503), http(503), http(503)))
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.HTTP", 3))
 
-    def test_invalid_response_is_retried_like_a_transport_failure(self):
-        good = {"model": "jev-1.13.0", "answers": plan_answers()}
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport({"answers": {}}, {"answers": plan_answers() | {"extra": answer("yes")}}, good))
-        self.assertEqual((j.result["verdict"], j.result["attempts"], j.sleeps), ("satisfied", 3, [1.0, 2.0]))
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport({"answers": {}}, {"answers": {}}, {"answers": {}}))
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.RESPONSE_INVALID", 3))
+    def test_invalid_response_is_rejected_without_consumer_retry(self):
+        for answers in ({}, plan_answers() | {"extra": answer("yes")}):
+            with self.subTest(answers=answers), tempfile.TemporaryDirectory() as d:
+                j = Judged(d, Transport({"answers": answers}))
+                self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]),
+                                 (2, "error", "JEV.RESPONSE_INVALID", 1))
+                self.assertEqual(j.sleeps, [])
 
     def test_credential_and_validation_errors_are_not_retried(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(401))
             j = Judged(d, t, anchors=[anchor(), anchor("ANC-002")])
-        self.assertEqual((j.code, j.out["error"]["code"], len(t.bodies)), (2, "AUTH.CREDENTIALS", 1))
+        self.assertEqual((j.code, j.out["error"]["code"], len(t.bodies)), (2, "AUTH.CREDENTIALS", 2))
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "questions.addressed.criteria must be an object"))
             j = Judged(d, t)
@@ -1726,7 +1648,7 @@ class TransportPolicyTests(unittest.TestCase):
 
     def test_one_anchor_failing_does_not_lose_the_others(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(529), http(529), http(529))  # first anchor exhausts; second anchor gets the default
+            t = Transport(http(529))  # final failure for the first anchor; the second succeeds
             j = Judged(d, t, anchors=[anchor(), anchor("ANC-002")])
             on_disk = json.loads(Path(j.run["run_path"]).read_text(encoding="utf-8"))
         verdicts = {r["anchor_id"]: r["verdict"] for r in j.run["results"]}
@@ -2122,16 +2044,16 @@ class CheckFixturesTests(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
 
     def test_live_check_uses_the_policy_and_opt_in(self):
-        with env():
+        with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
             code, out = self.check("--id", "ANC-001")
         self.assertEqual(out["error"]["code"], "AUTH.CREDENTIALS")
-        t = Transport(http(429), {"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
+        t = Transport({"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
                       {"model": "jev", "answers": plan_answers(conf="yes")})
-        with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+        with live(), mock.patch.object(jj, "call_jev", t):
             code, out = run_cli(["check-fixtures", "--anchors", self.anchors, "--gate", "plan", "--id", "ANC-001"])
         self.assertEqual(code, 0)
         self.assertEqual([c["verdict"] for c in out["data"]["checks"]], ["satisfied", "not_addressed", "contradicted"])
-        self.assertEqual(len(t.bodies), 4)
+        self.assertEqual(len(t.bodies), 3)
 
 
 class RetireUpdateTests(unittest.TestCase):
@@ -2530,7 +2452,6 @@ class ErrorHandlingTests(unittest.TestCase):
             self.assertIn(f"argument {flag}: invalid", out["error"]["message"])
         self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD, jj.DEFAULT_MAX_ITEM_CHARS, jj.DEFAULT_MAX_CODE_LINES),
                          ("jev-latest", 0.6, 24000, 8))
-        self.assertEqual(jj.JEV_URL, "https://api.typesafe.ai/v1/systemone")
         self.assertFalse(hasattr(jj, "parse_env_number") or hasattr(jj, "_env_number"))
 
     def test_exit_codes(self):

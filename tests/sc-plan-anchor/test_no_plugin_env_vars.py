@@ -113,7 +113,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
 
     def live(self, module, environment):
         answers = {"relevant": choice("yes", 0.9), "addressed": choice("yes", 0.65), "contradicted": choice("no", 0.9)}
-        reply = json.dumps({"model": "jev-1.13.0", "answers": answers}).encode("utf-8")
+        reply = {"response": {"model": "jev-1.13.0", "answers": answers}}
         buf = io.StringIO()
         with tempfile.TemporaryDirectory() as d:
             workspace(d)
@@ -121,24 +121,23 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
             os.chdir(d)
             try:
                 with mock.patch.dict(os.environ, dict(environment, TYPESAFE_API_KEY="sk-test-0001"), clear=True), \
-                        mock.patch.object(module.urllib.request, "urlopen", side_effect=lambda *a, **k: FakeResponse(reply)) as opened, \
+                        mock.patch.object(module.decidr_client, "send", return_value=reply) as opened, \
                         mock.patch.object(module, "remote_judge_consent", return_value=module.Ok(None)), \
-                        mock.patch.object(module, "_sleep", lambda _s: None), contextlib.redirect_stdout(buf):
+                        contextlib.redirect_stdout(buf):
                     code = module.main(list(JUDGE))
             finally:
                 os.chdir(cwd)
-        requests = [(call.args[0].full_url, json.loads(call.args[0].data)) for call in opened.call_args_list]
+        requests = [call.args[0] for call in opened.call_args_list]
         return code, scrub(json.loads(buf.getvalue())), requests
 
-    def test_live_request_url_and_behaviour_are_unchanged(self):
+    def test_live_request_model_and_behaviour_are_unchanged(self):
         baseline = self.live(load_judge("jev_judge_clean", clean_env()), clean_env())
         wild_env = dict(clean_env(), **WILD)
         planted = self.live(load_judge("jev_judge_wild", wild_env), wild_env)
         self.assertEqual(planted, baseline)
         code, out, requests = planted
         self.assertEqual(code, 0, out)
-        self.assertEqual({url for url, _ in requests}, {"https://api.typesafe.ai/v1/systemone"})
-        self.assertEqual({body["model"] for _, body in requests}, {"jev-latest"})
+        self.assertEqual({body["model"] for body in requests}, {"jev-latest"})
         result = out["data"]["results"][0]
         # 0.65 is within 0.10 of the default 0.6: confirmation stays on (CONFIRM_NEAR=0 ignored), the item
         # is sent (MAX_ITEM_CHARS=5 ignored) and the verdict uses 0.6 (THRESHOLD=0.01 ignored).

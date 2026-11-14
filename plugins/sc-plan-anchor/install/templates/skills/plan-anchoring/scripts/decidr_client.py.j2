@@ -1,0 +1,66 @@
+---
+name: sc-plan-anchor-script-decidr-client
+version: 1.0.0
+format: python
+description: Wheel boundary for the installed plan-anchoring skill.
+required_variables:
+  - tracker
+  - version
+---
+"""The installed skill's boundary to the published sc-decidr wheel.
+
+The wheel owns transport, credentials, logging defaults and retries. Consent,
+request sizing and judgment validation remain the caller's responsibility.
+"""
+from __future__ import annotations
+
+import json
+
+
+def send(body, timeout, *, general_log=None, cancel=None):
+    """Return the wheel's result object, retaining success and error details.
+
+    Import lazily so fixture and dry-run commands do not require the wheel.
+    The timeout keyword is required to preserve the skill's public CLI contract;
+    a wheel predating that keyword cannot silently substitute another timeout.
+    """
+    import sc_agent
+
+    result = sc_agent.send(
+        json.dumps(body, ensure_ascii=False),
+        model=body["model"], project="plan-anchor", agent_role="plan-anchor",
+        provider="typesafe", timeout_secs=timeout, general_log=general_log,
+        cancel=cancel,
+    )
+    parsed = json.loads(result)
+    if not isinstance(parsed, dict):
+        raise ValueError("sc-decidr returned a result that is not an object")
+    return parsed
+
+
+def send_batch(bodies, timeout, *, general_log=None, cancel=None, on_result=None):
+    """Send a same-model batch; return results in original request order.
+
+    The optional wheel callback still receives each result as it arrives. Position
+    is the wheel's zero-based request index, independent of completion order.
+    """
+    if not bodies:
+        return []
+    model = bodies[0]["model"]
+    if any(body.get("model") != model for body in bodies):
+        raise ValueError("all requests in a batch must select the same model")
+    import sc_agent
+
+    lines = sc_agent.send_batch(
+        [json.dumps(body, ensure_ascii=False) for body in bodies],
+        model=model, project="plan-anchor", agent_role="plan-anchor",
+        provider="typesafe", timeout_secs=timeout, general_log=general_log,
+        cancel=cancel, on_result=on_result,
+    )
+    results = [json.loads(line) for line in lines]
+    if any(not isinstance(result, dict) for result in results):
+        raise ValueError("sc-decidr returned a batch result that is not an object")
+    positions = [result.get("position") for result in results]
+    if any(type(position) is not int for position in positions) or sorted(positions) != list(range(len(bodies))):
+        raise ValueError("sc-decidr returned missing, duplicate or invalid batch positions")
+    return sorted(results, key=lambda result: result["position"])
