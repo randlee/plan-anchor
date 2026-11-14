@@ -526,7 +526,7 @@ class DedupeTests(unittest.TestCase):
             self.assertTrue(all(p["jev"] is None for p in out["data"]["pairs"]))
             self.assertEqual(sorted(Path(d).iterdir()), sorted(Path(d) / n for n in ("anchors.json", "answers.json", "partial.json")))  # no run files
             # live: key and opt-in are enforced before anything is sent
-            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
+            with env(), consented(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -758,7 +758,7 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--dry-run"])
             self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
+            with env(), consented(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -808,7 +808,7 @@ class RubricTests(unittest.TestCase):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The parser does not call the network.", "--quote", "no network in the parser"])
             self.assertEqual(code, 0)
             self.assertNotIn("rubric", out["data"])
-            with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
+            with env(), consented(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertEqual(len(json.loads(Path(path).read_text())["anchors"]), 3)
@@ -2044,7 +2044,7 @@ class CheckFixturesTests(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
 
     def test_live_check_uses_the_policy_and_opt_in(self):
-        with env(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
+        with env(), consented(), mock.patch.object(jj, "call_jev", return_value=jj.Err(jj.JudgeError("AUTH.CREDENTIALS", "controlled credential failure"))):
             code, out = self.check("--id", "ANC-001")
         self.assertEqual(out["error"]["code"], "AUTH.CREDENTIALS")
         t = Transport({"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
