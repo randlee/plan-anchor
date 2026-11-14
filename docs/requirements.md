@@ -222,9 +222,9 @@ Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.9 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
+**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
 Source: OPERATOR; ADR-006. Status: shipped.
-Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.9 floor rest on the CI `dependency-floor` job.
+Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.11 floor rest on the CI `dependency-floor` job.
 
 **REQ-048** Functions that can fail in an expected way shall return `Result[T, E]` (frozen `Ok`/`Err` with a literal `ok` discriminant) rather than raise; exceptions are for bugs and are converted to `SCRIPT.INTERNAL` at the CLI boundary.
 Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py` (`anchor_runner_contract.py` since 0.7.1; it keeps `SCRIPT.IO` for unreadable input).
@@ -244,7 +244,7 @@ Verified (0.8.3): `test_jev_failures.py::JudgeAndCheckFixtures` and `DedupeAndRu
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures". Status: shipped for runner contract failures; planned for stand-in launches.
 Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 
-**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.9 and 3.x, a Python 3.9 job without PyYAML and on the PyYAML 5.1 floor, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip.
+**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, a Python 3.11 job without PyYAML and on the PyYAML 6.0.1 floor, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip.
 Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
 Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml` only checks that the workflow installs PyYAML; the matrix itself is the workflow.
 

@@ -24,7 +24,7 @@ required for ANC anchors and defaults to the statement for REQ/ADR anchors
 (register text). A record whose anchor lacks `quote` is read as quote =
 statement; `validate` reports it.
 
-Standard library only. Python 3.9+. One exception: a live Jev call reads the
+Standard library only. Python 3.11+. One exception: a live Jev call reads the
 committed ``allow_remote_judge`` answer through ``plan_anchor_settings.py``
 (PyYAML when the settings file exists), imported lazily inside that check, so
 --dry-run, --answers-file and every offline subcommand stay stdlib-only.
