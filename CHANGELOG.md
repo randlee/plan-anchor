@@ -2,6 +2,10 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.1 — 2026-11-14
+
+- Raise the supported Python floor to 3.11 and route live Jev calls through the sc-decidr wheel, including position-correlated batches. The wheel owns credentials and provider retries; offline fixtures and consent checks remain local. Live calls require a wheel supporting per-call timeouts.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the

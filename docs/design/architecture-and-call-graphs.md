@@ -66,7 +66,7 @@ Responsibilities:
 | --- | --- | --- |
 | Skill (main session) | Detecting candidates, writing each as one testable statement with the verbatim quote kept, running the rubric and dedupe, locking through the script, spinning off the tuner, creating the bead tree, reading each sprint back from wherever it wrote the plan, deciding what to judge, posting reports, triaging verdicts and oversized beads | Judging text itself, locking a statement that is just the quote, computing coverage or size by hand, splitting a bead to pass |
 | Agents | Canonicalizing repository-local inputs through `agent-preflight`, resolving the tracker, passing the caller's sprint text unchanged (the sprint reviewer appends the evidence account), resolving question overrides from beads, invoking the script once, returning fenced JSON; an independent Opus/Sol tuner derives a frozen oracle from approved intent/anchors and iterates one question per Jev round | Editing beads, the record, the plan or code; posting comments; retrying around the script; tuning to make the plan pass; changing the oracle after seeing Jev; executing an untrusted script path or reading external evidence |
-| Script | IDs, agent path/identifier preflight, lint, rubric and dedupe requests, exclusions, the Jev request, output credential redaction, retries, response validation, gating, run files, coverage, verdict and item-size diffs, shape metrics, report rendering | Calling the tracker or `gh`; parsing or discovering plans; deciding what to judge; shortening plan prose |
+| Script | IDs, agent path/identifier preflight, lint, rubric and dedupe requests, exclusions, the Jev request, output credential redaction, domain size handling, response validation, gating, run files, coverage, verdict and item-size diffs, shape metrics, report rendering | Calling the tracker or `gh`; parsing or discovering plans; deciding what to judge; shortening plan prose |
 | Jev | Answering three or four independent typed questions about one anchor and one item | Counting, gating, explaining, seeing more than one item |
 
 ## 2. Planning gate call graph
@@ -160,7 +160,7 @@ The two gates are separate because they judge different things. An anchor that w
 
 ## 4. One judge invocation, with retries
 
-Every call to Jev goes through the script, which owns the attempt policy. Agents call the script once and never add a retry loop of their own, so the behavior is identical under Claude Code and Codex.
+Every call to Jev goes through sc-decidr, which owns the transport attempt policy under REQ-SAG-0601. The script and agents add no duplicate transport retries. Domain context shortening and near-threshold confirmation remain separate judgments. Phase B design (`agt-bpa-1`) authorizes this change; the final wheel behavior remains pending B-1.
 
 ```mermaid
 sequenceDiagram
@@ -171,12 +171,12 @@ sequenceDiagram
 
     Ag->>S: --gate, --item-file, --overrides-file, --all
     S->>S: validate anchors.json, load question set, merge overrides
-    S->>S: fail closed unless TYPESAFE_API_KEY and allow_remote_judge: true in the nearest settings.yaml
+    S->>S: fail closed unless allow_remote_judge: true in the nearest settings.yaml; sc-decidr resolves credentials
 
     loop for each locked or promoted anchor not excluding this item
         S->>S: build state {anchor, item}; plan: fit whole/reduce code or refuse; structural at plan: deterministic_only, no request<br/>dev: item already cut to 24,000 chars; halve to ≤64,000 bytes
-        loop up to 3 attempts
-            S->>J: POST /v1/systemone {model, state, questions}
+        loop when development context shortening is required
+            S->>J: sc-decidr sends {model, state, questions} and owns provider retries
             alt 200 and response validates
                 J-->>S: answers {choice, probabilities, confidence}
                 S->>S: decide() → verdict, min_confidence
@@ -185,7 +185,7 @@ sequenceDiagram
                 S->>S: plan: cell error PLAN.TOO_LARGE<br/>dev: halve evidence (keep head, mark truncation), retry; below 2,000 chars → JEV.CONTEXT_EXCEEDED
             else 429 / 529 / 5xx / network / invalid response
                 J-->>S: transient failure
-                S->>S: wait Retry-After or 1 s, then 2 s, next attempt<br/>after 3 attempts → cell error (JEV.*)
+                S->>S: sc-decidr applies REQ-SAG-0601; final failure → cell error
             else 401
                 J-->>S: unauthorized
                 S-->>Ag: abort run, AUTH.CREDENTIALS (never retried)
@@ -212,7 +212,7 @@ Policy summary:
 | Jev reports the context window exceeded | Planning: `PLAN.TOO_LARGE` for that cell; development: halve evidence and retry, stopping below 2,000 characters with `JEV.CONTEXT_EXCEEDED`; either way the run exits 2 | script, per anchor |
 | An answer within 0.10 of the threshold | Send the identical request once more; disagreement is `underspecified` with `unstable`; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 | script, per anchor |
 | Interrupt | `CANCELED` envelope, exit 130 | script |
-| 429, 529, 5xx, timeout, network error, malformed response | At least two more attempts (three total) with `Retry-After` or 1 s then 2 s backoff; then `verdict: error` for that anchor, the other anchors are still judged, and the run exits 2 with the first failure's code and `data.failures` | script, per anchor |
+| 429, 529, 5xx, timeout, network error, malformed response | sc-decidr applies amended REQ-SAG-0601; final failures produce `verdict: error`, preserve other anchors, and exit 2 with the first failure and `data.failures` | sc-decidr; script records the outcome |
 | 401, or `allow_remote_judge` absent or `false` (`POLICY.REMOTE_JUDGE_DISABLED`) | Abort the whole run immediately with exit 2; never retried; never bypassed by an agent | script pre-flight |
 | Anchor's `exclude` names the item | No Jev request; the cell is `excluded` with its reason and passes | script, per anchor |
 | Agent sees `success: false` | Return the script's error object in the fenced envelope; no second judge call | agent |

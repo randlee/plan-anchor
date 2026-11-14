@@ -21,15 +21,14 @@ Jev is TypeSafe's decision model: it answers typed questions about a piece of st
 
 A gate run sends the anchor statement and scope and the item text (a plan bead or an account of delivered work) off the machine. `rubric` also sends the verbatim quote; `dedupe --jev` sends pairs of statements and quotes. Sending a plan to TypeSafe is the user's decision, so the script fails closed:
 
-- `TYPESAFE_API_KEY`, when present, must be well-formed (non-empty, ASCII, no control characters); when it is absent the script tries the documented platform credential store, and
-- the repository's committed `.sc/plan-anchor/settings.yaml` must set `allow_remote_judge: true`. `false` is the user's no; an absent resolved credential means the live call is refused. Both are refused.
-
+- sc-decidr must find a TypeSafe credential (repository `.env`, then environment, then the default keyring entry), and
+- the repository's committed `.sc/plan-anchor/settings.yaml` must set `allow_remote_judge: true`. `false` is the user's no; an absent resolved credential means the live call is refused.
 Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --jev` return `AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED` and send nothing. The answer is recorded once per repository, never per session: ask the user, then `python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false` (or the installer's `--allow-remote-judge` / `--no-remote-judge`), and commit the file. Only the user decides it: agents never write it and never infer it from existing run files or past runs. The setting is found from `--repository-root` (default `.`) by the same lookup as `anchor_tracker.py`; reading a present settings file needs PyYAML (`DEPENDENCY.PYYAML`, exit 2, otherwise), and nothing else in `jev_judge.py` does. `--dry-run` writes the exact request bodies and `totals {requests, bytes}` to the run directory. `--answers-file` runs the gating with fixture answers, offline. The key is never printed, logged, written to a run file, or included in an error.
 
 ## Endpoint and auth
 
 - `POST https://api.typesafe.ai/v1/systemone`
-- `Authorization: Bearer $TYPESAFE_API_KEY`, `Content-Type: application/json`
+- sc-decidr resolves credentials and owns the request transport.
 
 ## Request
 
@@ -66,7 +65,7 @@ Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --
 }
 ```
 
-`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). The script validates every response before gating: answer IDs equal the question IDs, each `choice` is a criteria option, `confidence` and every probability lie in [0, 1], and probabilities sum to 1 within rounding. Anything else is `JEV.RESPONSE_INVALID`, retried as transient. The response read is bounded at 1 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
+`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). The script validates every response before gating: answer IDs equal the question IDs, each `choice` is a criteria option, `confidence` and every probability lie in [0, 1], and probabilities sum to 1 within rounding. Anything else is `JEV.RESPONSE_INVALID`; the consumer does not resend invalid answers. sc-decidr bounds the raw response using its transport limit (8 MiB). The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
 
 ## Size, context window, and shortening
 
@@ -77,17 +76,9 @@ Without both, `judge`, `check-fixtures`, `rubric`, `add --rubric` and `dedupe --
 
 ## Attempt policy
 
-Per anchor, per request:
+sc-decidr applies the provider retry policy in REQ-SAG-0601. The skill adds no transport retry loop. A final failure marks the anchor as an error while preserving other results. A context overflow may cause the development gate to shorten its evidence and make another judgment; a near-threshold confirmation is also a separate judgment. Neither is a transport retry.
 
-| Situation | Behaviour |
-| --- | --- |
-| 429, 529, any 5xx, timeout, network error, invalid response | Up to 3 attempts. Delay before the second: `Retry-After` if present (capped at 30 s), else 1 s; before the third: 2 s. Then `verdict: error` with the last code; other anchors continue |
-| 422 token limit | Shorten and retry as above (counts toward the 3 attempts) |
-| 422 other | Not retried; `JEV.VALIDATION` with up to 300 characters of the body, which names the bad field |
-| 401 | Not retried; the whole run aborts with `AUTH.CREDENTIALS` (body withheld) |
-| Missing key, or `allow_remote_judge` not `true` | Checked before any request; the run aborts |
-
-Agents and the skill never add a retry loop around the script. `attempts` is recorded on every result. Questions in one request are answered independently and in parallel: one round trip per anchor.
+The result's `attempts` counts consumer judgment calls, not the wheel's internal transport attempts.
 
 ## Models
 
@@ -175,7 +166,7 @@ TypeSafe prices input tokens only (output is free) at a fraction of a cent per m
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY` | none | Preferred TypeSafe credential for live runs; when absent, use the documented platform credential store |
+| `TYPESAFE_API_KEY` | none | Environment credential for live runs; repository `.env` takes precedence, followed by the default keyring entry |
 
 It is the only environment variable the plugin reads. Model, threshold, size limits and near-threshold confirmation are the flags above, with checked-in defaults. The installed troubleshooting reference specifies the Keychain, Credential Manager, and Secret Service fallback entries.
 

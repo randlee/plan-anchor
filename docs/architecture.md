@@ -121,20 +121,18 @@ children. Structural defects and copy drift fail before delegation.
 Consequences: `plan_source.py` and its contract are no longer shipped, and the
 installer removes them from earlier installs. REQ-027 to REQ-029 are retired.
 
-## ADR-006 Python: stdlib, 3.9 floor, Result for expected failures
+## ADR-006 Python: 3.11 floor, sc-decidr and Result for expected failures
 
 Status: accepted (was partial until 0.7.1). Date: 2026-10-17.
 
 Context: Scripts run inside agent sessions on any developer machine, and the
 calling agent needs a typed failure, not a traceback.
 
-Decision: Standard library only on Python 3.9+, except PyYAML for settings
-(`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily;
-`jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
+Decision: Python 3.11+; PyYAML for settings and the published sc-decidr wheel for live Jev judgments are imported lazily. The wheel owns provider transport, retries, and credential lookup (repository .env, environment, then default TypeSafe keyring entry). A consumer may inject its sc-observability general logger directly; otherwise the wheel uses its default logger. Offline modes do not need the wheel. Phase B design (`agt-bpa-1`) authorizes this revision; final published-wheel verification remains pending B-1. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and a `ToolError {code, message, action, data}`. Exceptions are
 for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
-unit-tested; CI runs ubuntu, macOS and Windows on 3.9 and 3.x, a no-PyYAML
+unit-tested; CI runs ubuntu, macOS and Windows on 3.11 and 3.x, a no-PyYAML
 and PyYAML-floor job, and a 3.11 installer job. The installer alone runs on a
 3.11 pin (ADR-015).
 
@@ -427,7 +425,7 @@ Decision:
   until 0.8.1 the scripts were copied verbatim too). Agent frontmatter and
   registries live in `install/harness/<target>/`. PEP 723 metadata supplies
   PyYAML and `sc-compose` >=1.7.0,<2 and pins Python 3.11 (the code runs on
-  3.9+).
+  3.11+).
 - **Destination.** `--dest` is any folder: a repository, a folder inside one,
   or a parent folder of many repositories (a non-repository with no `.beads/`
   needs `--tracker` or a settings file, else `TRACKER.REQUIRED`). Global

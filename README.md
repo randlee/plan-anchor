@@ -60,10 +60,10 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 
 | Need | For | Notes |
 | --- | --- | --- |
-| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
+| `python3` 3.11+ | everything | Offline scripts use the standard library; live judgments also use sc-decidr and PyYAML |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
-| `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |
+| `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | sc-decidr resolves repository `.env`, then the environment, then its default OS keyring entry. Cloud and remote agents use platform secrets; never commit a key. |
 | `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
@@ -83,13 +83,13 @@ That model applies to **any cloud or remote agent** that checks out the reposito
 
 **What does not go in git.**
 
-- `TYPESAFE_API_KEY` or a platform credential — never commit either. Configure cloud and remote agents with platform secrets or their environment; local interactive hosts may use the documented platform credential store when the environment key is absent.
+- `TYPESAFE_API_KEY` or a platform credential — never commit either. Configure cloud and remote agents with platform secrets or their environment; local interactive hosts may use the documented platform credential store.
 
 **Live Jev in cloud (same gate as local).**
 
 Both must be true before any live rubric, tuning, fixture check, or gate run sends text to TypeSafe:
 
-1. `TYPESAFE_API_KEY` is set in the agent's environment, or the host has the documented platform credential entry.
+1. sc-decidr can resolve the key from repository `.env`, the environment, or the documented platform credential entry.
 2. The repository's committed settings file sets `allow_remote_judge: true`.
 
 If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REMOTE_JUDGE_DISABLED`) and send nothing. Consent is **repository policy** (committed once per repo); the key is **runtime credentials** (injected per environment). Offline commands (`--dry-run`, `--answers-file`, lint, render) still work without the key.
@@ -97,7 +97,7 @@ If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REM
 **Runtime the worker must provide.**
 
 - A checkout that includes the vendored install above (gates walk up from the working directory, stopping before the home directory, to the nearest `<D>/.claude|.codex|.cursor/skills/plan-anchoring/scripts/jev_judge.py` whose `<D>/.sc/plan-anchor/install-lock.json` lists that script; a hand-copied, lock-less, `.agents/`, global or plugin-cache copy fails with `VALIDATION.PATH`).
-- `python3` 3.9+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
+- `python3` 3.11+, `sc-decidr`, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
 - Outbound HTTPS to the Jev endpoint (see the installed `references/jev-api.md`).
 
 **Operational notes.**
@@ -189,7 +189,7 @@ plugins/sc-plan-anchor/
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
-Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. Transient API failures get three attempts with backoff before an anchor is marked `error`; credential and consent failures abort immediately and are never retried.
+Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. sc-decidr owns provider retries; consent failures abort before any send, and a final judgment failure is recorded for the anchor.
 
 ## Development
 
@@ -201,7 +201,7 @@ Maintainer tests live outside the marketplace plugin so plugin consumers do not
 redistribute or inherit this repository's test suite. They use fixture answers
 and a stub transport; they cover ID allocation, gating, overrides, retries and
 context shortening, response validation, report format, coverage and diffs,
-not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.9
+not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.11
 and the latest 3.x, once against the br render of the scripts and once against the bd render
 (CONTRIBUTING.md). The scripts are templates, so a smoke run installs first (it needs the
 sc-compose wheel) and then runs the installed copy with no key (exits 0 with `data.summary.pass: false`,

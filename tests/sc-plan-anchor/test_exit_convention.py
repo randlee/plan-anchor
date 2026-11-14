@@ -166,7 +166,7 @@ class JevJudgeErrors(ConventionCase):
                                  "--anchors", path], None),
             "shape": (["shape", "--show-json", missing], None),
             "judge": (["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1",
-                       "--item-file", self.put("item.txt", ITEM)], "AUTH.CREDENTIALS"),  # no key in clean_env()
+                       "--item-file", self.put("item.txt", ITEM)], "REPO.NOT_FOUND"),  # consent requires a repository
             "check-fixtures": (["check-fixtures", "--anchors", path, "--gate", "plan", "--all", "--dry-run"], "FIXTURE.NONE"),
             "report": (["report", "--run", missing], None),
             "coverage": (["coverage", "--runs", str(self.d / "empty")], None),
@@ -182,11 +182,10 @@ class JevJudgeErrors(ConventionCase):
 
 
     def test_live_judge_refusals_are_typed(self):
-        """A live call that must not go out: AUTH.CREDENTIALS without a key, POLICY.REMOTE_JUDGE_DISABLED without consent."""
+        """A live call must have a repository and recorded consent before reaching the wheel."""
         path = self.put("anchors.json", record(anchor()))
         argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
-        error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
-        self.assertEqual(error["message"], "no TypeSafe API key was found")
+        self.failed(JJ, *argv, code="REPO.NOT_FOUND")
         try:
             import yaml  # noqa: F401
         except ImportError:

@@ -24,7 +24,7 @@ python3 "<skill dir>/scripts/anchor_tracker.py" resolve      # selected tracker,
 which {{ tracker }} && {{ tracker }} --version
 which sc-compose && sc-compose --version
 which jq && jq --version
-test -n "$TYPESAFE_API_KEY" && echo "environment key set (preferred)" || echo "environment key absent; check the documented platform credential store"
+python3 -c 'import sc_agent; print("sc-decidr available")'  # live Jev only
 ```
 
 If these checks succeed, skip to Validation. The environment-key message is informational: a documented local platform credential can also satisfy live Jev authentication.
@@ -83,7 +83,7 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 ## Install the CLIs
 
-**python3** (3.9 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
+**python3** (3.11 or newer; offline scripts use the standard library; live judging uses sc-decidr and PyYAML)
 
 - macOS: `brew install python` or the Xcode command line tools' `/usr/bin/python3`
 - Linux: `apt install python3` / `dnf install python3`
@@ -119,11 +119,7 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 **TypeSafe API key**
 
-The live judge looks for the key in this order: `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection.
-
-- macOS: Keychain generic-password item with service `plan-anchor` and account `typesafe-api-key`.
-- Windows: Credential Manager generic credential with target `plan-anchor:typesafe-api-key`.
-- Linux: Secret Service item returned by `secret-tool lookup service plan-anchor account typesafe-api-key`. Create it without putting the key on a command line with `secret-tool store --label="plan-anchor TypeSafe API key" service plan-anchor account typesafe-api-key` and enter the value on standard input.
+sc-decidr resolves the key from the repository `.env`, then `TYPESAFE_API_KEY` in the environment, then the default OS keyring entry. The keyring service is `TYPESAFE_API_KEY` and the account is the current OS user. Do not commit credentials.
 
 - Create a key at typesafe.ai. Read it silently so it does not appear in the command line, shell history, or terminal output, then export it in the shell that launches Claude Code or Codex:
   ```bash
@@ -157,7 +153,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 
 | Tool | Minimum | Why |
 | --- | --- | --- |
-| python3 | 3.9 | tested floor; standard library only, except `anchor_tracker.py` |
+| python3 | 3.11 | tested floor; live judging also uses sc-decidr and PyYAML |
 | PyYAML | 5.1 | `SafeLoader`-based strict reading of `.sc/plan-anchor/settings.yaml`; CI tests 5.1 and the latest release |
 {% if tracker != "bd" %}
 | br | 0.7.x | `init`, `show --json`, `sync --flush-only`; tested with 0.7.4 |
@@ -205,7 +201,7 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 - `JEV.CONTEXT_EXCEEDED`: the item could not be shortened below 2,000 characters and still fit. Shorten the evidence account; at the development gate drop the test section first.
 - `JEV.RESPONSE_INVALID` repeatedly: TypeSafe changed the response shape or a proxy is mangling it. Check for a proxy between you and `api.typesafe.ai`.
 - `VALIDATION.ANCHORS` from `judge`: run `validate` and fix the listed problems; the usual cause is a hand edit. Use `update`, `retire` and `promote`.
-- `JEV.RATE_LIMITED` under parallel gates: cap concurrency at 3 beads; the script already retries three times with backoff.
+- `JEV.RATE_LIMITED` under parallel gates: cap concurrency at 3 beads; sc-decidr owns provider retries.
 - Dates in reports show as "undated": `stated_at` is not an ISO date. Use `YYYY-MM-DD`.
 {% if tracker != "br" %}
 - `bd comment --body-file`: does not exist; use `--file` (or `--stdin`).

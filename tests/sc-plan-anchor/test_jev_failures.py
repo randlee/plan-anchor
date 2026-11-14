@@ -3,9 +3,8 @@
 Every case runs a real process. ``judge``, ``check-fixtures``, ``dedupe --jev``,
 ``rubric`` and ``add --rubric`` exit 2 with the typed envelope when any cell, pair
 or candidate has no answer, and keep the partial work in ``data``. Live failures
-use a refused connection (``urlopen`` patched to raise it; ``JEV_URL`` still points
-at the closed local port 127.0.0.1:9) with a dummy key in the child only, and
-consent recorded in a scratch repository; fixture failures use answers files. Jev
+use a controlled failed sc-decidr result in the child process and consent recorded
+in a scratch repository; no network request is sent. fixture failures use answers files. Jev
 is never called. Refusals and no-ops exit 0; run files are redacted; every CLI
 prints a CANCELED envelope and exits 130 on interrupt.
 """
@@ -26,19 +25,16 @@ JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "Sprint 2 copies the legacy runtime crates into crates/runtime and deletes the legacy-specific modules.\n"
 DUMMY_KEY = "sk-test-closed-port-0000"  # never a real key: nothing is ever sent with it
-# jev_judge.main with every Jev call refused and no back-off sleep; the retries themselves still run. urlopen
-# raises the refusal itself, so the result never depends on what listens on port 9 or how a firewall answers;
-# JEV_URL still names a closed local port, so even an unpatched call could not leave the host.
-# argv[1] is the scripts directory, the rest is the command line.
+# Run a real CLI process with a controlled wheel result. This exercises the
+# failure envelope without a network call or a timing-dependent socket.
 REFUSED_RUNNER = (
-    "import errno, sys, urllib.error, urllib.request\n"
+    "import sys\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
     "def refused(*args, **kwargs):\n"
-    "    raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused'))\n"
-    "urllib.request.urlopen = refused\n"
-    "jev_judge.JEV_URL = 'http://127.0.0.1:9/v1/systemone'\n"
-    "jev_judge._sleep = lambda seconds: None\n"
+    "    return {'error': {'id': 'JEV.NETWORK', 'message': 'controlled connection failure', 'recoverable': True}}\n"
+    "jev_judge.decidr_client.send = refused\n"
+    "jev_judge.decidr_client.send_batch = lambda bodies, *args, **kwargs: [dict(refused(), position=i) for i in range(len(bodies))]\n"
     "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
 )
 # Runs a CLI as __main__ and interrupts it exactly where it reads one input file: the first Path.read_text of
@@ -143,7 +139,7 @@ class JudgeAndCheckFixtures(ProcessCase):
         self.assertEqual(sorted(f["id"] for f in out["data"]["failures"]), ["ANC-001", "ANC-002"])
         on_disk = json.loads(Path(out["data"]["run_path"]).read_text(encoding="utf-8"))
         self.assertEqual({r["verdict"] for r in on_disk["results"]}, {"error"})
-        self.assertEqual({r["attempts"] for r in on_disk["results"]}, {3})  # retried, then failed
+        self.assertEqual({r["attempts"] for r in on_disk["results"]}, {1})  # one consumer call; sc-decidr owns transport retries
 
     def test_judge_with_a_missing_fixture_entry_exits_2_and_keeps_the_answered_cell(self):
         answers = self.put("a.json", {"ANC-001": plan_answers()})
