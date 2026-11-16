@@ -34,6 +34,13 @@ class DecidrClientTests(unittest.TestCase):
         else:
             sys.modules["sc_agent"] = self.old_agent
 
+    def test_client_records_exact_sc_agent_prerelease_source(self):
+        self.assertEqual(self.client.SC_DECIDR_VERSION, "0.2.0")
+        self.assertEqual(self.client.SC_AGENT_RELEASE_TAG, "prerelease/v0.2.0")
+        self.assertEqual(self.client.SC_AGENT_RELEASE_COMMIT, "e1f0bf94a10de80d908b1bacce86cee80ea29250")
+        self.assertEqual(self.client.SC_AGENT_RELEASE_URL,
+                         "https://github.com/randlee/sc-agent/releases/tag/prerelease/v0.2.0")
+
     def test_call_passes_model_keyring_timeout_and_logging(self):
         self.agent.send = Mock(return_value='{"response":{"text":"ok"}}')
         general_sink = Mock()

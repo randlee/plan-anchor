@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from sc_agent import CancelToken
 
 SC_DECIDR_VERSION = "0.2.0"
+# Exact sc-agent release used as the source contract for this consumer client.
+SC_AGENT_RELEASE_TAG = "prerelease/v0.2.0"
+SC_AGENT_RELEASE_COMMIT = "e1f0bf94a10de80d908b1bacce86cee80ea29250"
+SC_AGENT_RELEASE_URL = "https://github.com/randlee/sc-agent/releases/tag/prerelease/v0.2.0"
 LogSink = Callable[[dict], None]
 CategoryCodes = Mapping[str, str]
 AbortOn = frozenset[str]

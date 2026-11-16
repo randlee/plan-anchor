@@ -5,6 +5,8 @@
 - Add the shared `decidr_client.py` consumer template for sc-decidr 0.2.0:
   lazy wheel loading, model and keyring pass-through, typed category mapping,
   cancellation, batch callbacks, timeout/worker options and injected logging.
+- Pin the client to sc-agent `prerelease/v0.2.0` as the concrete starting
+  point for sc-agent's consumer template.
 - Raise the supported Python floor to 3.11, remove the Python 3.9 CI and
   dependency-floor jobs, and allow the installer to run on later Python versions.
 
