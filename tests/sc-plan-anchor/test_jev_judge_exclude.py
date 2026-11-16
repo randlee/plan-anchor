@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from test_jev_judge import (  # noqa: F401 - shared helpers
-    Judged, Transport, anchor, env, jj, live, plan_answers, record, run_cli, write,
+    Judged, Transport, anchor, env, http, jj, live, plan_answers, record, run_cli, stub_client, write,
 )
 
 REASON = "Data-only sprint; the skill CLI options belong to bi-3."
@@ -94,7 +94,7 @@ class JudgeExclusionTests(unittest.TestCase):
             j = Judged(d, t, anchors=[cli_anchor(exclude=excluded())], env_values={})
             self.assertEqual((j.code, j.result["verdict"], t.bodies), (0, "excluded", []))
             # with one anchor left to judge, the key and opt-in are required as before
-            t = Transport()
+            t = Transport(http(401))
             j = Judged(d, t, anchors=[anchor("ANC-001"), cli_anchor(exclude=excluded())], env_values={})
             self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "AUTH.CREDENTIALS", []))
 
@@ -116,7 +116,7 @@ class JudgeExclusionTests(unittest.TestCase):
             item = write(d, "i.txt", "Sprint bi-2 migrates the data tables.")
             t = Transport(FAILING)
             with live(), \
-                    mock.patch.object(jj, "call_jev", t):
+                    stub_client(t):
                 code, out = run_cli(["judge", "--anchors", anchors_path, "--gate", "plan", "--anchor", "ANC-011", "--item-id", "ex-42",
                                      "--item-file", item, "--run-dir", str(Path(d) / "runs")])
             self.assertEqual((code, out["data"]["results"][0]["verdict"], t.bodies), (0, "excluded", []))
@@ -154,7 +154,7 @@ class OutputTests(unittest.TestCase):
             path = write(d, "anchors.json", record(cli_anchor(exclude=excluded())))
             t = Transport()
             with live(), \
-                    mock.patch.object(jj, "call_jev", t):
+                    stub_client(t):
                 code, _ = run_cli(["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "ex-43",
                                    "--item-file", item, "--out", str(runs / "b.json")])
             self.assertEqual((code, sent_anchor_ids(t)), (0, ["ANC-011"]))

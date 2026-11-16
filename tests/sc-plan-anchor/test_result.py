@@ -72,8 +72,7 @@ class ScriptErrValueTests(unittest.TestCase):
     def test_jev_judge(self):
         missing = jj.load_json("/nonexistent/x.json", "thing")
         self.assertEqual((missing.error.code, missing.error.message), ("INPUT.MISSING", "thing not found: '/nonexistent/x.json'"))
-        self.assertEqual(jj.check_api_key("").error.code, "AUTH.CREDENTIALS")
-        self.assertEqual(jj.check_api_key("k"), Ok(None))
+        self.assertEqual(jj.DECIDR_CATEGORY_CODES["auth"], "AUTH.CREDENTIALS")
 
     def test_judge_error_is_a_value_not_an_exception(self):
         self.assertFalse(issubclass(jj.JudgeError, BaseException))
@@ -96,16 +95,16 @@ class JevPropagationTests(unittest.TestCase):
         self.assertEqual(out.error.meta["attempts"], 1)
         self.assertEqual(called.call_count, 1)
 
-    def test_transient_err_is_retried_then_returned(self):
+    def test_wheel_attempt_count_is_returned_without_consumer_retry(self):
         down = jj.JudgeError("JEV.NETWORK", "down", recoverable=True)
-        sleeps = []
-        with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called, mock.patch.object(jj, "_sleep", sleeps.append):
+        down.meta = {"attempts": 5}
+        with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called:
             out = jj.judge_with_policy(self.body(), "k", 1.0, 24000, 2000, {})
         self.assertIs(out.error, down)
-        self.assertEqual((called.call_count, out.error.meta["attempts"], len(sleeps)), (jj.MAX_ATTEMPTS, jj.MAX_ATTEMPTS, jj.MAX_ATTEMPTS - 1))
+        self.assertEqual((called.call_count, out.error.meta["attempts"]), (1, 5))
 
     def test_invalid_ok_response_becomes_err(self):
-        with mock.patch.object(jj, "call_jev", return_value=Ok({"answers": []})), mock.patch.object(jj, "_sleep", lambda s: None):
+        with mock.patch.object(jj, "call_jev", return_value=Ok({"answers": []})):
             out = jj.judge_with_policy(self.body(), "k", 1.0, 24000, 2000, {})
         self.assertEqual(out.error.code, "JEV.RESPONSE_INVALID")
 

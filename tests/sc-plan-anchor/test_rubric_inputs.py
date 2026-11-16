@@ -122,11 +122,10 @@ class RubricInputTests(unittest.TestCase):
             self.assertTrue(json.loads(proc.stdout)['success'])
 
     def assert_refused_before_credentials(self, args, pattern):
-        with env(), mock.patch.object(jj, 'resolved_api_key') as key, mock.patch.object(jj, 'call_jev') as transport:
+        with env(), mock.patch.object(jj.decidr_client, 'call') as transport:
             code, out = run_cli(args)
         self.assertEqual(code, 2, out)
         self.assertRegex(out['error']['code'], pattern)
-        key.assert_not_called()
         transport.assert_not_called()
 
     def test_bad_authority_descriptors(self):

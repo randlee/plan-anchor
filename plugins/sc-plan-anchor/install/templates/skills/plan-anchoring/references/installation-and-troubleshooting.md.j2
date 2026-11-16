@@ -83,7 +83,7 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 ## Install the CLIs
 
-**python3** (3.11 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
+**python3** (3.11 or newer; PyYAML supports tracker/settings lookup, and live Jev calls also need the sc-decidr 0.2.0 wheel in this interpreter; offline commands do not import that wheel)
 
 - macOS: `brew install python` or the Xcode command line tools' `/usr/bin/python3`
 - Linux: `apt install python3` / `dnf install python3`
@@ -92,6 +92,10 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 **PyYAML** (5.1 or newer; read only by `anchor_tracker.py` for `.sc/plan-anchor/settings.yaml`)
 
 - `python3 -m pip install pyyaml` (into the interpreter the skill runs). Without it `anchor_tracker.py` returns `DEPENDENCY.PYYAML` and exits 2; it never falls back to defaults.
+
+**sc-decidr 0.2.0** (only for live Jev calls; install the wheel matching this platform and interpreter from the [prerelease release](https://github.com/randlee/sc-agent/releases/tag/prerelease/v0.2.0))
+
+- Check with `python3 -c 'import sc_agent'`. Without the wheel, live calls return `DEPENDENCY.SC_DECIDR`; dry runs and fixture-answer commands remain available.
 {% if tracker != "bd" %}
 
 **br (beads_rust)**

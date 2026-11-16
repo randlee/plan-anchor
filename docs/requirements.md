@@ -63,8 +63,8 @@ Verified: `test_jev_judge.py::DecideTests` (all rows, including `test_row1_not_a
 Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. Status: shipped.
 Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_runs_ignored`, `DiffTests`.
 
-**REQ-011** The script alone shall own the retry policy: up to three attempts for 429, 529, 5xx, network and invalid responses, no retry on 401, and an error on one anchor shall not lose the others.
-Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
+**REQ-011** The shared sc-decidr client shall own provider retries and status classification. Plan-anchor shall make one client call per logical request and shall not resend provider failures; it shall record the wheel-reported attempt count on typed failures, abort on authentication failure, and continue judging other anchors after a non-authentication failure.
+Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018. Status: shipped.
 Verified: `test_jev_judge.py::TransportPolicyTests`.
 
 **REQ-012** Every Jev answer shall be checked by `validate_response`, which requires exactly the requested answer IDs.
