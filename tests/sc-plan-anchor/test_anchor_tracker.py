@@ -885,7 +885,7 @@ class RepositoryContractTests(unittest.TestCase):
                 self.assertNotIn("import sc_agent", script.read_text(encoding="utf-8"))
         offline = ("import sys\nsys.modules['sc_agent'] = None\n"
                    f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport decidr_client\n")
-        proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True)
+        proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         code = ("import sys\nsys.modules['yaml'] = None\n"
                 f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"
