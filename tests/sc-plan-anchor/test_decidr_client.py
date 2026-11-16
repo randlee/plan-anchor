@@ -139,6 +139,27 @@ class DecidrClientTests(unittest.TestCase):
         self.assertEqual(self.agent.send_batch.call_args.kwargs["workers"], 3)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["timeout_secs"], 30)
 
+    def test_invalid_limits_are_forwarded_once_and_reraised(self):
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={}, cancel=Mock())
+        cases = (("send", "timeout_secs", 9.99, "decidr.invalid_request_timeout"),
+                 ("send_batch", "timeout_secs", 9.99, "decidr.invalid_request_timeout"),
+                 ("send_batch", "workers", 0, "decidr.invalid_workers"),
+                 ("send_batch", "workers", 65, "decidr.invalid_workers"))
+        for operation, option, value, error_id in cases:
+            with self.subTest(operation=operation, option=option, value=value):
+                error = self.agent.SagError(error_id)
+                error.category = "validation"
+                method = Mock(side_effect=error)
+                setattr(self.agent, operation, method)
+                call_client = self.client.call if operation == "send" else self.client.call_batch
+                request = "request" if operation == "send" else ["request"]
+                with self.assertRaises(self.agent.SagError) as raised:
+                    call_client(request, **common, **{option: value})
+                self.assertIs(raised.exception, error)
+                self.assertEqual(method.call_count, 1)
+                self.assertEqual(method.call_args.kwargs[option], value)
+
     def test_keyboard_interrupt_cancels(self):
         self.agent.send = Mock(side_effect=KeyboardInterrupt)
         cancel = Mock()
