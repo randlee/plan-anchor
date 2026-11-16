@@ -495,6 +495,34 @@ class BatchTests(TournamentCase):
 
         self.assertEqual(jj.asyncio.run(consume()), ["c1", "c2", "c3"])
 
+    def test_fixture_auth_failure_stops_later_jobs(self):
+        line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
+
+        async def consume():
+            return [result async for result in jj.stream_batch(
+                [line], settings, {"c1": {"__error__": "AUTH.CREDENTIALS"}, "*": plan_answers()})]
+
+        with mock.patch.object(jj, "run_batch_job", wraps=jj.run_batch_job) as run_job:
+            results = jj.asyncio.run(consume())
+        self.assertEqual([r["candidate_id"] for r in results], ["c1"])
+        self.assertEqual(results[0]["error"]["code"], "AUTH.CREDENTIALS")
+        self.assertEqual(run_job.call_count, 1)
+
+    def test_stream_batch_refuses_live_calls_before_running_jobs(self):
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)
+
+        async def consume():
+            return [result async for result in jj.stream_batch(self.LINES, settings)]
+
+        with mock.patch.object(jj, "run_batch_job") as run_job, \
+                mock.patch.object(jj, "call_jev") as call:
+            with self.assertRaises(jj.BatchInputError) as raised:
+                jj.asyncio.run(consume())
+        self.assertEqual(raised.exception.error.code, "VALIDATION.INPUT")
+        run_job.assert_not_called()
+        call.assert_not_called()
+
     def test_failed_call_is_a_line_and_exit_2_with_the_error_on_stderr(self):
         self.FIXTURE = {"s1/cur": {"__error__": "JEV.OVERLOADED"}, "*": plan_answers()}
         proc = self.subprocess_batch("runs", "--repeat", "1", stdin=jsonl(self.LINES[:1]).encode("utf-8"))

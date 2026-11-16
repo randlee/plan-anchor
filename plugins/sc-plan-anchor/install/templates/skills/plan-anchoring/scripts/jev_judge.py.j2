@@ -116,8 +116,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import collections
-import concurrent.futures
 import datetime as _dt
 import hashlib
 import json
@@ -3676,10 +3674,12 @@ def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dr
 
 
 def run_batch_job(job: BatchJob, settings: BatchSettings, fixture) -> dict:
-    """Run one controlled fixture or an individual shared-client call; never resends a failed call."""
+    """Run one controlled fixture or dry-run job; live batches use the wheel."""
     if settings.dry_run:
         return _line(job, settings, None, [], None, True)
-    got = _fixture_attempt(job, fixture) if fixture is not None else call_jev(job.body, settings.timeout)
+    if fixture is None:
+        raise BatchInputError(fail("VALIDATION.INPUT", "run_batch_job requires fixture answers; use pump_batch for live calls").error)
+    got = _fixture_attempt(job, fixture)
     if isinstance(got, Ok):
         got = validate_response(got.value, job.questions)
     if isinstance(got, Ok):
@@ -3712,32 +3712,27 @@ class BatchInputError(Exception):
 
 
 async def stream_batch(source, settings: BatchSettings, fixture=None):
-    """Library API: an async iterator of result lines for an (async) iterable of request-line dicts.
+    """Yield fixture/dry-run results in request order; live batches use pump_batch.
 
-    At most ``settings.max_workers`` Jev calls run at once. Lines are yielded in request order (candidates,
-    then repeats, within each request line) as soon as each one and every line before it has an answer, so
-    the stream is deterministic for the same input; consumers still key lines by id, never by position.
-    Raises BatchInputError for an invalid request line.
+    Raises BatchInputError for live use or an invalid request line. An auth
+    failure is yielded once and stops consumption before any later job runs.
     """
-    loop = asyncio.get_running_loop()
+    if fixture is None and not settings.dry_run:
+        raise BatchInputError(fail("VALIDATION.INPUT", "stream_batch supports fixtures and dry runs only; use pump_batch for live calls").error)
     base = load_question_set(settings.gate)
     if isinstance(base, Err):
         raise BatchInputError(base.error)
-    pending = collections.deque()
-    window = settings.max_workers * 2
-    with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
-        number = 0
-        async for line in _aiter(source):
-            number += 1
-            jobs = batch_jobs(line, number, settings, base.value["roles"])
-            if isinstance(jobs, Err):
-                raise BatchInputError(jobs.error)
-            for job in jobs.value:
-                pending.append(loop.run_in_executor(pool, run_batch_job, job, settings, fixture))
-                while len(pending) >= window:
-                    yield await pending.popleft()
-        while pending:
-            yield await pending.popleft()
+    number = 0
+    async for line in _aiter(source):
+        number += 1
+        jobs = batch_jobs(line, number, settings, base.value["roles"])
+        if isinstance(jobs, Err):
+            raise BatchInputError(jobs.error)
+        for job in jobs.value:
+            result = run_batch_job(job, settings, fixture)
+            yield result
+            if result["error"] is not None and result["error"]["code"] == "AUTH.CREDENTIALS":
+                return
 
 
 def read_request_lines(path: str) -> Result[list, JudgeError]:
