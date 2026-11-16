@@ -60,6 +60,7 @@ class DecidrClientTests(unittest.TestCase):
             general_log=general_sink, timeout_secs=45,
         )
         self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
+        self.assertNotIn("provider", self.agent.send.call_args.kwargs)
         self.assertNotIn("api-key", result[0])
 
     def test_default_keyring_location_is_forwarded_for_both_calls(self):
@@ -76,10 +77,36 @@ class DecidrClientTests(unittest.TestCase):
 
     def test_invalid_abort_on_fails_before_import_or_send(self):
         self.agent.send = Mock()
-        with self.assertRaises(ValueError):
-            self.client.call("request", model="m", project="p", agent_role="r",
-                             abort_on=frozenset({"quota"}), category_codes={}, cancel=Mock())
+        self.agent.send_batch = Mock()
+        with patch.dict(sys.modules, {"sc_agent": None}):
+            for method, request in ((self.client.call, "request"), (self.client.call_batch, ["request"])):
+                with self.subTest(method=method.__name__), self.assertRaises(ValueError):
+                    method(request, model="m", project="p", agent_role="r",
+                           abort_on=frozenset({"quota"}), category_codes={}, cancel=Mock())
         self.agent.send.assert_not_called()
+        self.agent.send_batch.assert_not_called()
+
+    def test_batch_missing_wheel_and_error_paths(self):
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset({"auth"}),
+                      category_codes={}, cancel=Mock())
+        with patch.dict(sys.modules, {"sc_agent": None}):
+            with self.assertRaises(self.client.ClientError) as raised:
+                self.client.call_batch(["request"], **common)
+        self.assertEqual(raised.exception.code, "DEPENDENCY.SC_DECIDR")
+
+        error = self.agent.SagError("typed")
+        error.category = "auth"
+        self.agent.send_batch = Mock(side_effect=error)
+        with self.assertRaises(self.agent.SagError) as raised:
+            self.client.call_batch(["request"], **common)
+        self.assertIs(raised.exception, error)
+        common["cancel"].cancel.assert_called_once_with()
+
+        common["cancel"] = Mock()
+        self.agent.send_batch = Mock(side_effect=KeyboardInterrupt)
+        with self.assertRaises(KeyboardInterrupt):
+            self.client.call_batch(["request"], **common)
+        common["cancel"].cancel.assert_called_once_with()
 
     def test_sag_error_is_mapped_and_selected_category_cancels(self):
         error = self.agent.SagError("typed")
@@ -136,6 +163,7 @@ class DecidrClientTests(unittest.TestCase):
         cancel.cancel.assert_called_once_with()
         self.assertEqual(callback.call_args_list, [call(lines[1]), call(lines[0])])
         self.assertNotIn("session_log", self.agent.send_batch.call_args.kwargs)
+        self.assertNotIn("provider", self.agent.send_batch.call_args.kwargs)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["workers"], 3)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["timeout_secs"], 30)
 
