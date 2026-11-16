@@ -512,7 +512,8 @@ class BatchTests(TournamentCase):
                                               "attempts": 5, "retry_after_ms": 2500}})
         settings = jj.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
         log_path = self.d / "live.jsonl"
-        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+        cancel_token = mock.Mock()
+        with mock.patch.object(jj, "_new_cancel_token", return_value=cancel_token), \
                 mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wheel_error, "JEV.OVERLOADED")]) as send_batch:
             result = jj.pump_batch([request], settings, None, log_path, False)
         self.assertIsInstance(result, jj.Ok)
@@ -526,6 +527,7 @@ class BatchTests(TournamentCase):
                          ("jev-latest", "plan-anchor", "tournament", 2))
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
                          ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+        self.assertIs(kwargs["cancel"], cancel_token)
         self.assertNotIn("session_log", kwargs)
 
     def test_bad_input_is_refused_before_any_line(self):
