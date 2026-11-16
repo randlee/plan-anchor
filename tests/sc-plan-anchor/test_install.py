@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -87,6 +88,15 @@ def _git(*args, cwd=ROOT):
 def _has_commit(rev):
     return _run_subprocess(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
                            capture_output=True).returncode == 0
+
+
+class InstallerPythonFloorTests(unittest.TestCase):
+    def test_inline_script_metadata_requires_python_311_without_upper_cap(self):
+        source = INSTALLER.read_text(encoding="utf-8")
+        match = re.search(r"(?m)^# /// script\n((?:#.*\n)*?)# ///$", source)
+        self.assertIsNotNone(match, "installer must have a PEP 723 script block")
+        metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in match.group(1).splitlines()))
+        self.assertEqual(metadata["requires-python"], ">=3.11")
 
 
 class SubprocessRunnerTests(unittest.TestCase):
