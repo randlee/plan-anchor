@@ -66,10 +66,10 @@ def _result_category(line: str, sc_agent: Any) -> Optional[str]:
     return category
 
 
-def _decode(line: str, category_codes: CategoryCodes, sc_agent: Any) -> tuple[str, Optional[str]]:
-    """Return response JSON and the mapped code for an error result, if present."""
+def _decode(line: str, category_codes: CategoryCodes, sc_agent: Any) -> tuple[tuple[str, Optional[str]], Optional[str]]:
+    """Return the mapped result and its category from one classification."""
     category = _result_category(line, sc_agent)
-    return line, category_codes.get(category) if category is not None else None
+    return (line, category_codes.get(category) if category is not None else None), category
 
 
 def _cancel_if_selected(category: Optional[str], abort_on: AbortOn, cancel: Any) -> None:
@@ -115,8 +115,8 @@ def call(
         category = exc.category
         _cancel_if_selected(category, abort_on, cancel)
         raise
-    result = _decode(line, category_codes, sc_agent)
-    _cancel_if_selected(_result_category(line, sc_agent), abort_on, cancel)
+    result, category = _decode(line, category_codes, sc_agent)
+    _cancel_if_selected(category, abort_on, cancel)
     return result
 
 
@@ -143,9 +143,16 @@ def call_batch(
         import sc_agent
     except ImportError as exc:
         raise ClientError("DEPENDENCY.SC_DECIDR", f"sc-decidr 0.2.0 is required for live calls: {exc}") from exc
+    decoded: dict[str, tuple[tuple[str, Optional[str]], Optional[str]]] = {}
+
+    def classify(line: str) -> tuple[tuple[str, Optional[str]], Optional[str]]:
+        if line not in decoded:
+            decoded[line] = _decode(line, category_codes, sc_agent)
+        return decoded[line]
+
     def handle(line: str) -> None:
-        _decode(line, category_codes, sc_agent)
-        _cancel_if_selected(_result_category(line, sc_agent), abort_on, cancel)
+        _, category = classify(line)
+        _cancel_if_selected(category, abort_on, cancel)
         if on_result is not None:
             on_result(line)
 
@@ -166,4 +173,4 @@ def call_batch(
         _cancel_if_selected(category, abort_on, cancel)
         raise
     # The wheel returns input order; callbacks above retain finish order.
-    return [_decode(line, category_codes, sc_agent) for line in lines]
+    return [classify(line)[0] for line in lines]

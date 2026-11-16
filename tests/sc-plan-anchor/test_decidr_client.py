@@ -198,6 +198,22 @@ class DecidrClientTests(unittest.TestCase):
                 self.assertEqual(method.call_count, 1)
                 self.assertEqual(method.call_args.kwargs[option], value)
 
+    def test_each_distinct_error_line_is_classified_once(self):
+        line = '{"error":{"id":"auth","category":"auth"}}'
+        self.agent.category = Mock(wraps=self.agent.category)
+        self.agent.send = Mock(return_value=line)
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={"auth": "AUTH"}, cancel=Mock())
+        self.client.call("request", **common)
+        self.assertEqual(self.agent.category.call_count, 1)
+        self.agent.category.reset_mock()
+        def send_batch(requests, *, on_result, **kwargs):
+            on_result(line)
+            return [line]
+        self.agent.send_batch = Mock(side_effect=send_batch)
+        self.client.call_batch(["request"], **common)
+        self.assertEqual(self.agent.category.call_count, 1)
+
     def test_keyboard_interrupt_cancels(self):
         self.agent.send = Mock(side_effect=KeyboardInterrupt)
         cancel = Mock()
