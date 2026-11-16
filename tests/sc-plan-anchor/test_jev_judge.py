@@ -210,6 +210,7 @@ class CredentialLookupTests(unittest.TestCase):
             result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
         self.assertEqual(result, jj.Ok(response))
         args, kwargs = send.call_args
+        self.assertIsInstance(args[0], str)
         self.assertEqual(json.loads(args[0]), {"model": "jev-latest", "state": {}, "questions": {}})
         self.assertEqual((kwargs["project"], kwargs["agent_role"], kwargs["abort_on"]),
                          ("plan-anchor", "judge", frozenset({"auth"})))

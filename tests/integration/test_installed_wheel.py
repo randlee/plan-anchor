@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/sc-plan-anchor'))
 from layout_support import SCRIPTS, TEST_TRACKER
 from test_jev_judge import anchor, record, run_cli, write
-from test_tournament import BatchTests, PLAN_QS, jsonl
+import test_tournament as tournament_cases
 import jev_judge as jj
 
 if os.environ.get('PLAN_ANCHOR_LIVE_INTEGRATION') != '1':
@@ -60,7 +60,7 @@ def test_judge_writes_real_run_artifact(live, record_property):
 
 def test_batch_preserves_correlation_and_durable_log(live, record_property):
     # Reuse BatchTests' request/candidate inputs, with real answers instead of FIXTURE.
-    requests = write(str(live), 'requests.jsonl', jsonl(BatchTests.LINES))
+    requests = write(str(live), 'requests.jsonl', tournament_cases.jsonl(tournament_cases.BatchTests.LINES))
     code, output = run_cli(['batch', '--input', requests, '--run-dir', str(live / 'batch-runs'),
                             '--run-name', 'live', '--request-prefix', 'integration', '--repeat', '1',
                             '--model', 'jev-latest', '--max-workers', '2', '--timeout', '120',
@@ -81,7 +81,7 @@ def test_invalid_key_maps_auth_and_withholds_body(live, monkeypatch, record_prop
     monkeypatch.setenv(os.environ['PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE'], key)
     body = {'model': 'jev-latest', 'state': jj.build_state(anchor(),
             {'id': 's1', 'title': 'Sprint', 'text': 'Copy the legacy runtime crates.'}),
-            'questions': PLAN_QS['questions']}
+            'questions': tournament_cases.PLAN_QS['questions']}
     outcome = jj.call_jev(body, 120)
     assert isinstance(outcome, jj.Err)
     assert outcome.error.code == 'AUTH.CREDENTIALS' and outcome.error.status == 401

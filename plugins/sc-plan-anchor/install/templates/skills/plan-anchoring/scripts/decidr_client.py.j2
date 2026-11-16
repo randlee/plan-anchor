@@ -90,8 +90,8 @@ def call(
     config_dir: Optional[str] = None,
     keyring_service: Optional[str] = None,
     keyring_account: Optional[str] = None,
-    general_log: Optional[LogSink] = None,
-    timeout_secs: Optional[float] = None,
+general_log: Optional[LogSink] = None,
+timeout_secs: Optional[float] = None,
 ) -> tuple[str, Optional[str]]:
     """Send one decision request and return its result JSON and mapped error code."""
     _validate_abort_on(abort_on)
@@ -131,8 +131,8 @@ def call_batch(
     config_dir: Optional[str] = None,
     keyring_service: Optional[str] = None,
     keyring_account: Optional[str] = None,
-    general_log: Optional[LogSink] = None,
-    timeout_secs: Optional[float] = None,
+general_log: Optional[LogSink] = None,
+timeout_secs: Optional[float] = None,
     workers: Optional[int] = None,
     on_result: Optional[Callable[[str], None]] = None,
 ) -> list[tuple[str, Optional[str]]]:

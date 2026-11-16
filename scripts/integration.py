@@ -18,12 +18,15 @@ def main():
     parser.add_argument('--env-file', required=True, type=Path, help='Consumed and deleted, including on failure')
     parser.add_argument('--sc-agent-source', required=True, type=Path, help='Pinned sc-agent source providing its existing report renderer')
     parser.add_argument('--source-sha', required=True, help='plan-anchor revision under test')
-    parser.add_argument('--pin-tag', required=True)
+    parser.add_argument('--pin-tag', required=True, help='Published tag or explicit source-build label')
+    parser.add_argument('--wheel-version', help='Distribution version for a source-build label')
     parser.add_argument('--pin-sha', required=True, help='sc-agent wheel source revision')
     parser.add_argument('--platform', required=True, choices=('macos', 'colima'))
     parser.add_argument('--results', required=True, type=Path)
     args = parser.parse_args()
     try:
+        if not args.pin_tag.startswith('prerelease/v') and not args.wheel_version:
+            parser.error('--wheel-version is required for a source-build label')
         source = args.sc_agent_source.resolve()
         names = dict(re.findall(r'pub const ([A-Z_]+): &str = "([^"]+)";',
                                 (source / 'crates/sc-agent-secrets/src/vars.rs').read_text()))
@@ -35,15 +38,18 @@ def main():
         env = {k: v for k, v in os.environ.items() if k not in names.values() and not k.startswith('SC_AGENT__')}
         env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
                     'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
-                    'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.pin_tag.removeprefix('prerelease/v'),
+                    'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.wheel_version or args.pin_tag.removeprefix('prerelease/v'),
                     'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING': '1'})
         python = args.venv.resolve() / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         results = args.results.resolve()
         results.mkdir(parents=True, exist_ok=True)
         junit = results / f'{args.platform}.xml'
+        test_file = ROOT / 'tests/integration/test_installed_wheel.py'
+        cases = [f'{test_file}::{name}' for name in ('test_judge_writes_real_run_artifact',
+                 'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body')]
         with tempfile.TemporaryDirectory(prefix='plan-anchor-integration-') as scratch:
             try:
-                completed = subprocess.run([str(python), '-m', 'pytest', str(ROOT / 'tests/integration'), '-v',
+                completed = subprocess.run([str(python), '-m', 'pytest', *cases, '-v',
                                             '-o', 'junit_family=legacy', f'--junitxml={junit}'],
                                            env=env, cwd=scratch, timeout=600)
             except subprocess.TimeoutExpired as exc:

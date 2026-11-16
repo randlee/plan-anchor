@@ -1868,7 +1868,7 @@ def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
     """Call the shared transport once; credentials and provider retries belong to sc-decidr."""
     try:
         line, mapped_code = decidr_client.call(
-            encode_body(body), model=body["model"], project="plan-anchor", agent_role="judge",
+            encode_body(body).decode("utf-8"), model=body["model"], project="plan-anchor", agent_role="judge",
             abort_on=frozenset({"auth"}), category_codes=DECIDR_CATEGORY_CODES, cancel=_new_cancel_token(),
             keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
         )

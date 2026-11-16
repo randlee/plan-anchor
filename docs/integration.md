@@ -29,6 +29,11 @@ python scripts/integration.py --venv "$PRERELEASE_VENV" \
   --platform macos --results /tmp/plan-anchor-integration-macos
 ```
 
+For an authorized source build, build the wheel with maturin at the exact SDK
+commit and install that wheel into a fresh environment. Pass `--pin-tag source-build`
+and `--wheel-version` with its distribution version; `--pin-sha` remains the actual
+SDK source commit. The report identifies a source build rather than a published tag.
+
 Repeat the same command in a disposable Colima container with `--platform colima`
 and its Linux prerelease installation. Each run writes JUnit and renders
 `site/reports/integration/<platform>.xhtml` from that JUnit. The report records the
