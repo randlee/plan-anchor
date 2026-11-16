@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class IntegrationRunnerInputs(unittest.TestCase):
     def test_missing_renderer_names_file_and_consumes_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             credentials = root / 'credentials.env'
             credentials.write_text('EXPLICIT_TEST_KEY=synthetic-secret\n')
             source = root / 'absent-source'
