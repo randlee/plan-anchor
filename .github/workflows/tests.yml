@@ -35,6 +35,10 @@ jobs:
       - run: python scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Install pinned sc-decidr prerelease wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/install_sc_decidr_ci.py
       # The scripts are rendered for one tracker; the suite runs against each render.
       - name: suite against the br render
         run: python -m unittest discover -v -s tests/sc-plan-anchor

@@ -3,6 +3,7 @@
 The Jev transport (`jev_judge.call_jev`) is replaced with a stub, so these tests prove the deterministic
 half of the skill (IDs, gating, policy, coverage, diffs, reports), not Jev's own behaviour.
 """
+from jev_test_support import wheel_line, context_overflow_line
 import contextlib
 import datetime as _dt
 import hashlib
@@ -62,7 +63,7 @@ def env(**values):
     # Unit fixtures never load the wheel or access a developer's platform credential store.
     missing_key = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
     with mock.patch.dict(os.environ, values, clear=True), \
-            mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
             mock.patch.object(jj.decidr_client, "call", return_value=(missing_key, "AUTH.CREDENTIALS")):
         yield
 
@@ -119,7 +120,7 @@ class Transport:
             return jj.Err(step)
         if isinstance(step, Exception):
             raise step
-        return jj.Ok(step)
+        return jj.Ok(jj._JevResponse(step, 1))
 
     def default(self):
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
@@ -131,17 +132,19 @@ def client_transport(transport):
         key = os.environ.get("TYPESAFE_API_KEY", "").strip()
         if not key or any(ord(char) < 33 or ord(char) > 126 for char in key):
             detail = {"id": "auth.credentials", "category": "auth", "message": "missing or invalid key", "attempts": 0}
-            return json.dumps({"error": detail}), "AUTH.CREDENTIALS"
+            return wheel_line({"error": detail}), "AUTH.CREDENTIALS"
         got = transport(json.loads(request), timeout_secs)
         if isinstance(got, jj.Ok):
-            return json.dumps({"response": got.value}), None
+            return wheel_line({"response": got.value}), None
         error = got.error
         category = {
             "AUTH.CREDENTIALS": "auth", "JEV.RATE_LIMITED": "quota", "JEV.OVERLOADED": "busy",
             "JEV.NETWORK": "network", "JEV.RESPONSE_INVALID": "response_invalid",
             "JEV.CONTEXT_EXCEEDED": "validation", "JEV.VALIDATION": "validation", "JEV.HTTP": "other",
         }.get(error.code, "other")
-        identifier = "decision.context_exceeded" if error.code == "JEV.CONTEXT_EXCEEDED" else {
+        if error.code == "JEV.CONTEXT_EXCEEDED":
+            return context_overflow_line(sends=error.meta["attempts"]), "JEV.CONTEXT_EXCEEDED"
+        identifier = {
             "AUTH.CREDENTIALS": "auth.credentials", "JEV.RATE_LIMITED": "http.quota_exhausted",
             "JEV.OVERLOADED": "http.provider_busy", "JEV.NETWORK": "http.network",
             "JEV.RESPONSE_INVALID": "decision.response_parse", "JEV.VALIDATION": "decision.api_validation",
@@ -152,14 +155,14 @@ def client_transport(transport):
             detail["status"] = error.status
         if "retry_after_ms" in (error.meta or {}):
             detail["retry_after_ms"] = error.meta["retry_after_ms"]
-        return json.dumps({"error": detail}), jj.DECIDR_CATEGORY_CODES.get(category)
+        return wheel_line({"error": detail}), jj.decidr_client.DECIDR_CATEGORY_CODES.get(category)
     return send
 
 
 @contextlib.contextmanager
 def stub_client(transport):
     with mock.patch.object(jj.decidr_client, "call", side_effect=client_transport(transport)), \
-            mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()):
+            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()):
         yield
 
 
@@ -173,8 +176,8 @@ class CredentialLookupTests(unittest.TestCase):
         for category, (code, action) in cases.items():
             with self.subTest(category=category):
                 detail = {"id": "example.error", "category": category, "message": "controlled failure"}
-                with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
-                        mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": detail}), code)):
+                with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                        mock.patch.object(jj.decidr_client, "call", return_value=(wheel_line({"error": detail}), code)):
                     result = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
                 self.assertEqual(result.code, code)
                 self.assertIn(action, result.action)
@@ -184,13 +187,13 @@ class CredentialLookupTests(unittest.TestCase):
     def test_client_errors_have_correct_actions_for_single_and_batch(self):
         cases = {
             "DECIDR.INVALID_RESULT": "invalid sc-decidr result",
-            "DEPENDENCY.SC_DECIDR": "Install the sc-decidr",
+            "DEPENDENCY.SC_DECIDR": "Install sc-decidr",
         }
         settings = mock.Mock(gate="plan", model="jev", timeout=30, max_workers=1)
         for code, action in cases.items():
             for batch in (False, True):
                 with self.subTest(code=code, batch=batch), \
-                        mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                        mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                         mock.patch.object(jj, "load_question_set", return_value=jj.Ok({"roles": {}})), \
                         mock.patch.object(jj.decidr_client, "call_batch" if batch else "call",
                                           side_effect=jj.decidr_client.ClientError(code, "controlled failure")):
@@ -210,8 +213,8 @@ class CredentialLookupTests(unittest.TestCase):
     def test_call_forwards_keyring_overrides_to_shared_client_without_forwarding_a_key_or_session_log(self):
         token = mock.Mock()
         response = {"model": "jev-x", "answers": plan_answers()}
-        with mock.patch.object(jj, "_new_cancel_token", return_value=token), \
-                mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"response": response}), None)) as send:
+        with mock.patch("sc_agent.CancelToken", return_value=token), \
+                mock.patch.object(jj.decidr_client, "call", return_value=(wheel_line({"response": response}), None)) as send:
             result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
         self.assertEqual(result, jj.Ok(response))
         args, kwargs = send.call_args
@@ -235,8 +238,8 @@ class CredentialLookupTests(unittest.TestCase):
                 detail = {"id": identifier, "category": category, "message": "provider detail",
                           "attempts": attempts, "status": status}
                 token = mock.Mock()
-                with mock.patch.object(jj, "_new_cancel_token", return_value=token), \
-                        mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": detail}), code)) as send:
+                with mock.patch("sc_agent.CancelToken", return_value=token), \
+                        mock.patch.object(jj.decidr_client, "call", return_value=(wheel_line({"error": detail}), code)) as send:
                     result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
                 send.assert_called_once()
                 self.assertIsInstance(result, jj.Err)
@@ -251,8 +254,8 @@ class CredentialLookupTests(unittest.TestCase):
 
     def test_missing_key_is_the_wheels_typed_auth_error(self):
         auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
-        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": auth}), "AUTH.CREDENTIALS")):
+        with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call", return_value=(wheel_line({"error": auth}), "AUTH.CREDENTIALS")):
             error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
         self.assertEqual((error.code, error.message, error.meta["attempts"]),
                          ("AUTH.CREDENTIALS", "Jev authentication failed; response body withheld", 0))
@@ -267,7 +270,13 @@ def wheel_error(identifier, category, message, *, status=None, attempts=None, re
         error["attempts"] = attempts
     if retry_after_ms is not None:
         error["retry_after_ms"] = retry_after_ms
-    return json.dumps({"error": error}), jj.DECIDR_CATEGORY_CODES.get(category)
+    return wheel_line({"error": error}), jj.decidr_client.DECIDR_CATEGORY_CODES.get(category)
+
+
+def shared_error(code, detail):
+    record = jj.decidr_client.decode_result(wheel_line({"error": detail}), code,
+        category_codes=jj.DECIDR_CODE_OVERRIDES, error_actions=jj.DECIDR_ACTION_OVERRIDES)
+    return jj._judge_failure(record["error"])
 
 
 def http(status, text="", retry_after=None, attempts=1):
@@ -280,12 +289,13 @@ def http(status, text="", retry_after=None, attempts=1):
               "status": status, "attempts": attempts}
     if retry_after is not None:
         detail["retry_after_ms"] = int(retry_after * 1000)
-    return jj._wheel_error(jj.DECIDR_CATEGORY_CODES[category], detail)
+    return shared_error(jj.decidr_client.DECIDR_CATEGORY_CODES[category], detail)
 
 
 def context_overflow(attempts=1):
-    return jj._wheel_error("JEV.VALIDATION", {"id": "decision.context_exceeded", "category": "validation",
-                                               "message": "request context exceeded", "attempts": attempts})
+    record = jj.decidr_client.decode_result(context_overflow_line(sends=attempts),
+        category_codes=jj.DECIDR_CODE_OVERRIDES, error_actions=jj.DECIDR_ACTION_OVERRIDES)
+    return jj._judge_failure(record["error"])
 
 
 class Judged:
@@ -303,7 +313,7 @@ class Judged:
             if consent:
                 stack.enter_context(consented())
             stack.enter_context(mock.patch.object(jj.decidr_client, "call", side_effect=client_transport(transport)))
-            stack.enter_context(mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()))
+            stack.enter_context(mock.patch("sc_agent.CancelToken", return_value=mock.Mock()))
             self.code, self.out = run_cli(argv)
         self.run = self.out.get("data") if isinstance(self.out, dict) else None
         self.result = self.run["results"][0] if self.run and self.run.get("results") else None
@@ -1317,15 +1327,14 @@ class WheelErrorMappingTests(unittest.TestCase):
                     ("response_invalid", "JEV.RESPONSE_INVALID"), ("validation", "JEV.VALIDATION"))
         for category, code in examples:
             with self.subTest(category=category):
-                error = jj._wheel_error(None, {"id": "provider.error", "category": category, "message": "typed message"})
+                error = shared_error(None, {"id": "provider.error", "category": category, "message": "typed message"})
                 self.assertEqual(error.code, code)
-        context = jj._wheel_error("JEV.VALIDATION", {
-            "id": "decision.context_exceeded", "category": "validation", "message": "context", "attempts": 4,
-        })
+        context = jj._judge_failure(jj.decidr_client.decode_result(context_overflow_line(sends=4),
+            category_codes=jj.DECIDR_CODE_OVERRIDES, error_actions=jj.DECIDR_ACTION_OVERRIDES)["error"])
         self.assertEqual((context.code, context.meta["attempts"]), ("JEV.CONTEXT_EXCEEDED", 4))
 
     def test_retry_after_metadata_comes_from_wheel_detail(self):
-        error = jj._wheel_error("JEV.OVERLOADED", {
+        error = shared_error("JEV.OVERLOADED", {
             "id": "http.provider_busy", "category": "busy", "message": "busy",
             "attempts": 5, "retry_after_ms": 1250,
         })

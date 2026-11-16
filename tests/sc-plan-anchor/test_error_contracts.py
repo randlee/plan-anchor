@@ -5,6 +5,7 @@ every case asserts the exact JSON envelope (code, message, recoverable,
 suggested_action, data) and exit code a caller sees. The shared client seam is
 driven with typed results; no wheel, keyring or network is touched.
 """
+from jev_test_support import wheel_line, context_overflow_line
 import contextlib
 import hashlib
 import io
@@ -96,7 +97,7 @@ def call_main(main, argv, *, env=None, stdin=None, client_calls=None):
     missing = (json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}}),
                "AUTH.CREDENTIALS")
     with mock.patch.dict(os.environ, environment, clear=True), contextlib.redirect_stdout(buf), \
-            mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
             mock.patch.object(jj.decidr_client, "call", side_effect=client_calls if client_calls is not None else None,
                               return_value=missing), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
@@ -346,10 +347,10 @@ class JevTransportErrorContracts(unittest.TestCase):
             detail["status"] = status
         if retry_after_ms is not None:
             detail["retry_after_ms"] = retry_after_ms
-        return json.dumps({"error": detail}), jj.DECIDR_CATEGORY_CODES.get(category)
+        return wheel_line({"error": detail}), jj.decidr_client.DECIDR_CATEGORY_CODES.get(category)
 
     def ok_response(self, comp="yes"):
-        return json.dumps({"response": {"model": "jev-x", "answers": plan_answers(comp)}}), None
+        return wheel_line({"response": {"model": "jev-x", "answers": plan_answers(comp)}}), None
 
     def judge(self, calls, extra=(), gate="plan", item=ITEM):
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
@@ -385,7 +386,7 @@ class JevTransportErrorContracts(unittest.TestCase):
         self.assertEqual((code, calls, out["error"]["code"], result["attempts"]), (2, 1, "JEV.VALIDATION", 1))
 
     def test_planning_gate_refuses_context_overflow_and_dev_gate_halves(self):
-        overflow = self.wheel_error("decision.context_exceeded", "validation", "context exceeded")
+        overflow = (context_overflow_line(), "JEV.CONTEXT_EXCEEDED")
         code, out, calls = self.judge([overflow])
         error = out["data"]["results"][0]["error"]
         self.assertEqual((code, calls, error["code"], out["error"]["code"]), (2, 1, "PLAN.TOO_LARGE", "PLAN.TOO_LARGE"))

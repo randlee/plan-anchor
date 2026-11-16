@@ -32,9 +32,8 @@ REFUSED_RUNNER = (
     "import json, sys\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
-    "jev_judge._new_cancel_token = lambda: object()\n"
     "def refused(*args, **kwargs):\n"
-    "    return json.dumps({'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}}), 'JEV.NETWORK'\n"
+    "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}}), 'JEV.NETWORK'\n"
     "jev_judge.decidr_client.call = refused\n"
     "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
 )

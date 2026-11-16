@@ -17,7 +17,9 @@ class DecidrWheelInstallerTests(unittest.TestCase):
         for runner, suffix in ((('Linux', 'X64'), 'manylinux_2_28_x86_64'),
                                (('Linux', 'ARM64'), 'manylinux_2_28_aarch64'),
                                (('macOS', 'X64'), 'macosx_11_0_x86_64'),
-                               (('macOS', 'ARM64'), 'macosx_11_0_arm64')):
+                               (('macOS', 'ARM64'), 'macosx_11_0_arm64'),
+                               (('Windows', 'X64'), 'win_amd64'),
+                               (('Windows', 'ARM64'), 'win_arm64')):
             with self.subTest(runner=runner), mock.patch.dict('os.environ', {'RUNNER_OS': runner[0], 'RUNNER_ARCH': runner[1]}), \
                     mock.patch.object(installer.subprocess, 'run') as run:
                 installer.main()
@@ -54,8 +56,8 @@ class DecidrWheelInstallerTests(unittest.TestCase):
                         installer.client_version()
 
     def test_unsupported_runner_is_refused_before_download(self):
-        with mock.patch.dict('os.environ', {'RUNNER_OS': 'Windows', 'RUNNER_ARCH': 'X64'}), \
+        with mock.patch.dict('os.environ', {'RUNNER_OS': 'Unsupported', 'RUNNER_ARCH': 'X64'}), \
                 mock.patch.object(installer.subprocess, 'run') as run:
-            with self.assertRaisesRegex(SystemExit, 'Windows/X64'):
+            with self.assertRaisesRegex(SystemExit, 'Unsupported/X64'):
                 installer.main()
         run.assert_not_called()

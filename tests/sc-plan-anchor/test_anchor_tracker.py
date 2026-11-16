@@ -877,9 +877,9 @@ class RepositoryContractTests(unittest.TestCase):
         client = ast.parse((SCRIPTS / "decidr_client.py").read_text(encoding="utf-8"))
         runtime_imports = [node for node in ast.walk(client)
                            if isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names)]
-        calls = [node for node in client.body if isinstance(node, ast.FunctionDef) and node.name in {"call", "call_batch"}]
-        self.assertEqual(len(runtime_imports), 2)
-        self.assertEqual(len(calls), 2)
+        calls = [node for node in client.body if isinstance(node, ast.FunctionDef) and node.name == "_load_wheel"]
+        self.assertEqual(len(runtime_imports), 1)
+        self.assertEqual(len(calls), 1)
         self.assertEqual({node for call in calls for node in ast.walk(call) if node in runtime_imports}, set(runtime_imports))
         for script in SCRIPTS.glob("*.py"):
             if script.name != "decidr_client.py":
@@ -887,16 +887,7 @@ class RepositoryContractTests(unittest.TestCase):
                 imports = [node for node in ast.walk(tree)
                            if (isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names))
                            or (isinstance(node, ast.ImportFrom) and node.module == "sc_agent")]
-                if script.name == "jev_judge.py":
-                    # CancelToken is public wheel API, loaded only for an opted-in live call.
-                    factory, = (node for node in tree.body if isinstance(node, ast.FunctionDef)
-                                and node.name == "_new_cancel_token")
-                    self.assertEqual(len(imports), 1)
-                    self.assertTrue(all(node in set(ast.walk(factory)) for node in imports))
-                    self.assertEqual([node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-                                      and isinstance(node.value, ast.Name) and node.value.id == "sc_agent"], ["CancelToken"])
-                else:
-                    self.assertEqual(imports, [])
+                self.assertEqual(imports, [])
         offline = ("import sys\nsys.modules['sc_agent'] = None\n"
                    f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport decidr_client\n")
         proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
