@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -16,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--venv', required=True, type=Path)
     parser.add_argument('--env-file', required=True, type=Path, help='Consumed and deleted, including on failure')
+    parser.add_argument('--key-variable', required=True, help='TypeSafe credential variable name from the sc-agent export')
     parser.add_argument('--sc-agent-source', required=True, type=Path, help='Pinned sc-agent source providing its existing report renderer')
     parser.add_argument('--source-sha', required=True, help='plan-anchor revision under test')
     parser.add_argument('--pin-tag', required=True, help='Published tag or explicit source-build label')
@@ -28,14 +28,15 @@ def main():
         if not args.pin_tag.startswith('prerelease/v') and not args.wheel_version:
             parser.error('--wheel-version is required for a source-build label')
         source = args.sc_agent_source.resolve()
-        names = dict(re.findall(r'pub const ([A-Z_]+): &str = "([^"]+)";',
-                                (source / 'crates/sc-agent-secrets/src/vars.rs').read_text()))
-        variable = names["TYPESAFE_API_KEY"]
+        renderer = source / 'templates/integration-report/render.py'
+        if not renderer.is_file():
+            parser.error(f'missing sc-agent report renderer: {renderer}')
+        variable = args.key_variable
         values = dict(line.split('=', 1) for line in args.env_file.read_text().splitlines()
                       if line.strip() and not line.lstrip().startswith('#'))
         if not values.get(variable):
             raise RuntimeError('TypeSafe key is required; no integration tests run')
-        env = {k: v for k, v in os.environ.items() if k not in names.values() and not k.startswith('SC_AGENT__')}
+        env = {k: v for k, v in os.environ.items() if k != variable and not k.endswith('_API_KEY') and not k.startswith('SC_AGENT__')}
         env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
                     'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
                     'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.wheel_version or args.pin_tag.removeprefix('prerelease/v'),
@@ -54,7 +55,7 @@ def main():
                                            env=env, cwd=scratch, timeout=600)
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(f'{args.platform}: plan-anchor integration timed out after 600s') from exc
-        subprocess.run([str(python), str(source / 'templates/integration-report/render.py'), str(junit),
+        subprocess.run([str(python), str(renderer), str(junit),
                         '--platform', args.platform, '--mode', 'live', '--source-revision', args.source_sha,
                         '--wheel-revision', f'{args.pin_tag}@{args.pin_sha}', '--output',
                         str(ROOT / f'site/reports/integration/{args.platform}.xhtml')], check=True, timeout=60)

@@ -10,8 +10,9 @@ Use the canonical sc-agent prerelease installer to checksum-verify and install
 the chosen matched wheels in a fresh Python 3.11+ environment. Install pytest,
 jsonschema, PyYAML and the supported sc-compose Python package there; put the
 released sc-compose CLI on PATH. Keep a source archive at the wheel's exact
-sc-agent commit: the command reuses its report renderer and credential catalog,
-so plan-anchor carries neither a second renderer nor another credential catalog.
+sc-agent commit: the command reuses its report renderer. Pass the TypeSafe credential variable
+name from the sc-agent export explicitly; plan-anchor does not parse SDK source
+for credential names. A missing renderer fails before any live test runs.
 
 Export credentials with sc-agent's existing `scripts/integration.py --export-env`
 to a new temporary mode-0600 `.env` outside a checkout. The integration command
@@ -24,7 +25,8 @@ installed prerelease and source revision:
 
 ```sh
 python scripts/integration.py --venv "$PRERELEASE_VENV" \
-  --env-file "$TEMP_CREDENTIALS" --sc-agent-source "$SC_AGENT_SOURCE" \
+  --env-file "$TEMP_CREDENTIALS" --key-variable "$TYPESAFE_KEY_VARIABLE" \
+  --sc-agent-source "$SC_AGENT_SOURCE" \
   --source-sha "$PLAN_ANCHOR_SHA" --pin-tag "$SC_AGENT_TAG" --pin-sha "$SC_AGENT_SHA" \
   --platform macos --results /tmp/plan-anchor-integration-macos
 ```
