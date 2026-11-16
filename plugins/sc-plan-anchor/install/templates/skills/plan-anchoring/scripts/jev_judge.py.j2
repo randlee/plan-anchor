@@ -1771,6 +1771,7 @@ DECIDR_CATEGORY_CODES = {
     "auth": "AUTH.CREDENTIALS", "quota": "JEV.RATE_LIMITED", "busy": "JEV.OVERLOADED",
     "network": "JEV.NETWORK", "response_invalid": "JEV.RESPONSE_INVALID",
     "validation": "JEV.VALIDATION", "cancelled": "CANCELED",
+    "config": "DECIDR.CONFIG", "log": "DECIDR.LOG", "other": "DECIDR.ERROR",
 }
 DECIDR_ERROR_CODES = {
     "decision.context_exceeded": "JEV.CONTEXT_EXCEEDED",
@@ -1787,6 +1788,11 @@ DECIDR_ERROR_ACTIONS = {
     "JEV.NETWORK": "Check network access and retry.",
     "JEV.RESPONSE_INVALID": "Check the model and question ids, then retry.",
     "JEV.HTTP": "Check the request and the provider error details.",
+    "DECIDR.CONFIG": "Check the sc-decidr configuration and correct the reported setting.",
+    "DECIDR.LOG": "Check the sc-decidr log location and write permissions.",
+    "DECIDR.ERROR": "Inspect the sc-decidr error details and correct the cause.",
+    "DECIDR.INVALID_RESULT": "Inspect the invalid sc-decidr result and check the wheel and client versions.",
+    "DEPENDENCY.SC_DECIDR": "Install the sc-decidr 0.2 wheel in the active Python environment.",
     "CANCELED": "Retry the command when ready.",
 }
 
@@ -1862,6 +1868,11 @@ def _sag_error(exc: Exception) -> JudgeError:
                                   message=getattr(exc, "message", str(exc))))
 
 
+def _client_error(exc: decidr_client.ClientError) -> Result[dict, JudgeError]:
+    return fail(exc.code, str(exc), action=DECIDR_ERROR_ACTIONS.get(
+        exc.code, "Inspect the sc-decidr client error and correct its cause."))
+
+
 def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
     """Call the shared transport once; credentials and provider retries belong to sc-decidr."""
     try:
@@ -1871,7 +1882,7 @@ def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
             keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
         )
     except decidr_client.ClientError as exc:
-        return fail(exc.code, str(exc), action="Install the sc-decidr 0.2 wheel in the active Python environment.")
+        return _client_error(exc)
     except Exception as exc:
         if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
             return Err(_sag_error(exc))
@@ -3801,7 +3812,7 @@ def encode_result_line(line: dict) -> str:
 
 
 def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, JudgeError]:
-    """Use the wheel batch API, then append its input-ordered results to the durable stream."""
+    """Flush completion callbacks immediately; return results in input order."""
     base = load_question_set(settings.gate)
     if isinstance(base, Err):
         return base
@@ -3811,25 +3822,12 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
         if isinstance(built, Err):
             return built
         jobs.extend(built.value)
-    try:
-        results = decidr_client.call_batch(
-            [encode_body(job.body).decode("utf-8") for job in jobs],
-            model=settings.model, project="plan-anchor", agent_role="tournament",
-            abort_on=frozenset({"auth"}), category_codes=DECIDR_CATEGORY_CODES, cancel=_new_cancel_token(),
-            keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT,
-            timeout_secs=settings.timeout, workers=settings.max_workers,
-        )
-    except decidr_client.ClientError as exc:
-        return fail(exc.code, str(exc), action="Install the sc-decidr 0.2 wheel in the active Python environment.")
-    except Exception as exc:
-        if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
-            return Err(_sag_error(exc))
-        raise
-    if len(results) != len(jobs):
-        return fail("JEV.RESPONSE_INVALID", f"sc-decidr returned {len(results)} results for {len(jobs)} batch requests",
-                    recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
-    result_lines = []
-    for job, (wire_line, mapped_code) in zip(jobs, results):
+    completed = {}
+
+    def persist(position, wire_line, mapped_code):
+        if position in completed:
+            return completed[position]
+        job = jobs[position]
         decoded = _decode_wheel_result(wire_line, mapped_code)
         if isinstance(decoded, Ok):
             checked = validate_response(decoded.value, job.questions)
@@ -3847,19 +3845,54 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
             attempts = [{"attempt": wheel_attempts, "ok": False,
                          "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}}]
             line = _line(job, settings, None, attempts, error, False, wheel_attempts)
-        result_lines.append(line)
-    try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8", newline="\n") as log:
-            for line in result_lines:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8", newline="\n") as log:
                 text = encode_result_line(line)
                 log.write(text)
                 log.flush()
                 if echo:
                     write_stdout_line(text)
-    except OSError as exc:
-        return fail("SCRIPT.IO", f"batch result log could not be written: {exc}", action="Check the run directory is writable.")
-    return Ok(result_lines)
+        except OSError as exc:
+            raise BatchInputError(fail("SCRIPT.IO", f"batch result log could not be written: {exc}",
+                                       action="Check the run directory is writable.").error) from exc
+        completed[position] = line
+        return line
+
+    def received(wire_line):
+        try:
+            value = json.loads(wire_line)
+        except (TypeError, ValueError) as exc:
+            raise BatchInputError(fail("JEV.RESPONSE_INVALID", f"sc-decidr callback is not valid JSON: {exc}",
+                                       recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"]).error) from exc
+        position = value.get("position") if isinstance(value, dict) else None
+        if type(position) is not int or not 0 <= position < len(jobs):
+            raise BatchInputError(fail("JEV.RESPONSE_INVALID", "sc-decidr callback has no valid input position",
+                                       recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"]).error)
+        persist(position, wire_line, None)
+
+    try:
+        results = decidr_client.call_batch(
+            [encode_body(job.body).decode("utf-8") for job in jobs],
+            model=settings.model, project="plan-anchor", agent_role="tournament",
+            abort_on=frozenset({"auth"}), category_codes=DECIDR_CATEGORY_CODES, cancel=_new_cancel_token(),
+            keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT,
+            timeout_secs=settings.timeout, workers=settings.max_workers, on_result=received,
+        )
+        if len(results) != len(jobs):
+            return fail("JEV.RESPONSE_INVALID", f"sc-decidr returned {len(results)} results for {len(jobs)} batch requests",
+                        recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
+        # The returned list is input ordered. Callback rows are already durable;
+        # persist only rows not delivered by the callback, never write twice.
+        return Ok([persist(position, wire, code) for position, (wire, code) in enumerate(results)])
+    except BatchInputError as exc:
+        return Err(exc.error)
+    except decidr_client.ClientError as exc:
+        return _client_error(exc)
+    except Exception as exc:
+        if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
+            return Err(_sag_error(exc))
+        raise
 
 
 def batch_settings(args, prefix: str) -> Result[BatchSettings, JudgeError]:
