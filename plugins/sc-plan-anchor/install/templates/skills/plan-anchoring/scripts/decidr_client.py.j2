@@ -90,7 +90,6 @@ def call(
     keyring_service: Optional[str] = None,
     keyring_account: Optional[str] = None,
     general_log: Optional[LogSink] = None,
-    session_log: Optional[LogSink] = None,
     timeout_secs: Optional[float] = None,
 ) -> tuple[str, Optional[str]]:
     """Send one decision request and return its result JSON and mapped error code."""
@@ -102,7 +101,7 @@ def call(
     kwargs = dict(model=model, project=project, agent_role=agent_role, cancel=cancel,
                   images=images, long_context=long_context, config_dir=config_dir,
                   keyring_service=keyring_service, keyring_account=keyring_account,
-                  general_log=general_log, session_log=session_log)
+                  general_log=general_log)
     if timeout_secs is not None:
         kwargs["timeout_secs"] = timeout_secs
     try:
@@ -132,7 +131,6 @@ def call_batch(
     keyring_service: Optional[str] = None,
     keyring_account: Optional[str] = None,
     general_log: Optional[LogSink] = None,
-    session_log: Optional[LogSink] = None,
     timeout_secs: Optional[float] = None,
     workers: Optional[int] = None,
     on_result: Optional[Callable[[str], None]] = None,
@@ -151,7 +149,7 @@ def call_batch(
 
     kwargs = dict(model=model, project=project, agent_role=agent_role, cancel=cancel,
                   on_result=handle, config_dir=config_dir, keyring_service=keyring_service,
-                  keyring_account=keyring_account, general_log=general_log, session_log=session_log)
+                  keyring_account=keyring_account, general_log=general_log)
     if timeout_secs is not None:
         kwargs["timeout_secs"] = timeout_secs
     if workers is not None:

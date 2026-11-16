@@ -44,22 +44,22 @@ class DecidrClientTests(unittest.TestCase):
     def test_call_passes_model_keyring_timeout_and_logging(self):
         self.agent.send = Mock(return_value='{"response":{"text":"ok"}}')
         general_sink = Mock()
-        session_sink = Mock()
         cancel = self.agent.CancelToken()
         result = self.client.call(
             "request", model="model-selector", project="demo", agent_role="planner",
             abort_on=frozenset(), category_codes={}, cancel=cancel,
             config_dir="/tmp/config", keyring_service="plan-anchor",
             keyring_account="typesafe-api-key", general_log=general_sink,
-            session_log=session_sink, timeout_secs=45,
+            timeout_secs=45,
         )
         self.assertEqual(result, ('{"response":{"text":"ok"}}', None))
         self.agent.send.assert_called_once_with(
             "request", model="model-selector", project="demo", agent_role="planner",
             cancel=cancel, images=None, long_context=False, config_dir="/tmp/config",
             keyring_service="plan-anchor", keyring_account="typesafe-api-key",
-            general_log=general_sink, session_log=session_sink, timeout_secs=45,
+            general_log=general_sink, timeout_secs=45,
         )
+        self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
         self.assertNotIn("api-key", result[0])
 
     def test_invalid_abort_on_fails_before_import_or_send(self):
@@ -123,6 +123,7 @@ class DecidrClientTests(unittest.TestCase):
         self.assertEqual(out, [(lines[0], None), (lines[1], "AUTH")])
         cancel.cancel.assert_called_once_with()
         self.assertEqual(callback.call_args_list, [call(lines[1]), call(lines[0])])
+        self.assertNotIn("session_log", self.agent.send_batch.call_args.kwargs)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["workers"], 3)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["timeout_secs"], 30)
 
