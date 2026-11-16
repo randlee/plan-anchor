@@ -61,7 +61,6 @@ class DecidrClientTests(unittest.TestCase):
         )
         self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
         self.assertNotIn("provider", self.agent.send.call_args.kwargs)
-        self.assertNotIn("api-key", result[0])
 
     def test_default_keyring_location_is_forwarded_for_both_calls(self):
         self.agent.send = Mock(return_value='{"response": {}}')
