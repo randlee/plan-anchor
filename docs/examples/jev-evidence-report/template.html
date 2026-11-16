@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev evidence report: phase-bo plan anchoring</title>
+<style>
+.viz-root{
+  color-scheme:light;
+  --surface-0:#f4f3f0; --surface-1:#fcfcfb; --surface-2:#f0efec; --line:#e2e1dc; --grid:#ebeae6;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a7974;
+  --series-1:#2a78d6; --series-2:#eb6834;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --seq-100:#cde2fb; --seq-250:#86b6ef; --seq-400:#3987e5; --seq-550:#1c5cab; --seq-700:#0d366b;
+  --chip-ink:#0b0b0b;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])) .viz-root{
+    color-scheme:dark;
+    --surface-0:#121211; --surface-1:#1a1a19; --surface-2:#242422; --line:#33332f; --grid:#2a2a27;
+    --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8e86;
+    --series-1:#3987e5; --series-2:#d95926;
+    --seq-100:#1c2a3c; --seq-250:#184f95; --seq-400:#2a78d6; --seq-550:#5598e7; --seq-700:#9ec5f4;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+.viz-root{background:var(--surface-0);color:var(--text-primary);min-height:100vh;padding:20px 16px 60px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:17px;margin:0 0 4px}
+h3{font-size:14px;margin:18px 0 6px;color:var(--text-secondary);font-weight:600}
+p{margin:6px 0}
+.sub{color:var(--text-secondary)}
+.muted{color:var(--text-muted)}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+nav{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 18px}
+nav a{font-size:12.5px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text-secondary);text-decoration:none;background:var(--surface-1)}
+nav a:hover{color:var(--text-primary)}
+.card{background:var(--surface-1);border:1px solid var(--line);border-radius:12px;padding:16px 16px 18px;margin:0 0 16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--surface-1);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.tile .k{font-size:12px;color:var(--text-secondary)}
+.tile .v{font-size:24px;font-weight:650;letter-spacing:-.02em;margin-top:2px}
+.tile .n{font-size:12px;color:var(--text-muted)}
+.callout{border-left:3px solid var(--series-1);background:var(--surface-2);padding:10px 12px;border-radius:0 8px 8px 0;margin:10px 0}
+.status{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600}
+.status i{font-style:normal;display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;color:#fff;font-size:11px}
+.s-good i{background:var(--good)} .s-warn i{background:var(--warning);color:#111} .s-crit i{background:var(--critical)} .s-none i{background:var(--text-muted)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{text-align:left;font-weight:600;color:var(--text-secondary);font-size:12px;border-bottom:1px solid var(--line);padding:6px 8px}
+td{border-bottom:1px solid var(--grid);padding:6px 8px;vertical-align:middle}
+tr.hl td{background:var(--surface-2)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.bar{position:relative;height:10px;background:var(--surface-2);border-radius:4px;min-width:120px}
+.bar span{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--series-1)}
+.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text-primary)}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 10px}
+.tabs button{font:inherit;font-size:12.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface-1);color:var(--text-secondary);cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1);border-color:var(--text-primary)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text-secondary);margin:4px 0 8px}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.legend .ln{display:inline-block;width:14px;height:0;border-top:2px dashed var(--text-muted);margin-right:5px;vertical-align:3px}
+svg text{fill:var(--text-secondary);font-size:11px}
+svg .lbl{fill:var(--text-primary);font-size:11.5px}
+.rowhit{cursor:pointer}
+.rowhit:hover rect.bg{fill:var(--surface-2)}
+.detail{background:var(--surface-2);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:13px;min-height:44px}
+.detail .q{color:var(--text-secondary);font-style:italic}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;padding:3px 7px;border-radius:6px;border:1px solid var(--line);background:var(--surface-1);cursor:default;font-family:ui-monospace,Menlo,monospace}
+.chip .dot{width:8px;height:8px;border-radius:2px}
+.chip.det{color:var(--text-muted)} .chip.exc{color:var(--text-muted);text-decoration:line-through}
+details{border-top:1px solid var(--grid);padding:6px 0}
+details summary{cursor:pointer;font-size:13px}
+.diff{display:grid;grid-template-columns:1fr;gap:4px;margin:6px 0 4px}
+.diff div{font-size:12.5px;padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-word}
+.diff .old{background:color-mix(in oklab,var(--critical) 10%,transparent)}
+.diff .new{background:color-mix(in oklab,var(--good) 12%,transparent)}
+.gaps li{margin:6px 0}
+#tip{position:fixed;pointer-events:none;z-index:9;max-width:300px;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 24px rgba(0,0,0,.18);display:none}
+#tip .t{font-weight:600;margin-bottom:3px}
+.two{display:grid;grid-template-columns:1fr;gap:16px}
+@media(min-width:760px){.two{grid-template-columns:1fr 1fr}.diff{grid-template-columns:1fr 1fr}}
+.foot{font-size:12px;color:var(--text-muted);margin-top:20px}
+</style>
+</head>
+<body>
+<div class="viz-root"><div class="wrap">
+
+<h1>Jev evidence report: phase-bo plan anchoring</h1>
+<div class="sub">Built from the run files deleted in atm-core PR #2331. Mockup of a report generated from the Jev run ledger.</div>
+<div class="muted mono" id="src"></div>
+
+<nav>
+  <a href="#tuner">Question tuning</a><a href="#rubric">Anchor rubric</a><a href="#fixtures">Fixture calibration</a>
+  <a href="#gate">Plan gate</a><a href="#triage">Triage</a><a href="#gaps">Ledger gaps</a>
+</nav>
+
+<div class="tiles" id="tiles"></div>
+
+<section class="card" id="tuner">
+  <h2>1 · Question tuning: what the tuner was working on</h2>
+  <div class="sub" id="tunerSub"></div>
+  <div class="callout" id="tunerCallout"></div>
+
+  <h3>Candidate question sets, ranked</h3>
+  <p class="sub">Score = cells (17 cases × 5 roles) whose answer was exact, confident and stable. B0 is the incumbent; B1–B3 rewrote every role; C, D and E rounds changed only <b>faithful</b>. Hover a row's failures for the full list.</p>
+  <div class="scroll"><table id="rank"></table></div>
+
+  <h3>Best candidate E1: each case run twice, then replicated twice</h3>
+  <p class="sub">Pick a role. Each row is one test case; dots are the four Jev calls. Tap a row to see what the case asks.</p>
+  <div class="tabs" id="roleTabs"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--series-1)"></span>Primary pair</span><span><span class="sw" style="background:var(--series-2)"></span>Replication pair</span><span><span class="ln"></span>0.6 production threshold</span><span><span class="ln" style="border-color:var(--seq-250)"></span>0.8 reference</span></div>
+  <div id="dots"></div>
+  <div class="detail" id="caseDetail"><span class="muted">Tap a case to see its quote, statement and expected answer.</span></div>
+
+  <h3>Weakest answer per role (E1, all 4 calls)</h3>
+  <div class="scroll"><table id="roles"></table></div>
+</section>
+
+<section class="card" id="rubric">
+  <h2>2 · Anchor rubric: which question blocked anchors</h2>
+  <div class="sub">Each draft anchor is judged on five roles; any role not confidently "yes" leaves it inconclusive. Count of anchors failing each role.</div>
+  <div class="two" id="rubricCharts"></div>
+</section>
+
+<section class="card" id="fixtures">
+  <h2>3 · Fixture calibration: how close each anchor came to flipping</h2>
+  <div class="sub">Every anchor has a <b>pass</b> sentence and a <b>fail</b> sentence. Dots show the <i>weakest</i> answer in each run. A correct verdict that rests on an answer near 0.6 is fragile.</div>
+  <div class="tabs" id="gateTabs"></div>
+  <div class="legend"><span><span class="sw" style="background:var(--series-1)"></span>Pass fixture</span><span><span class="sw" style="background:var(--series-2)"></span>Fail fixture</span><span><span class="sw" style="background:none;border:1.5px solid var(--text-muted)"></span>Earlier run of the same fixture</span><span><span class="ln"></span>0.6 threshold</span></div>
+  <p class="sub" style="font-size:12.5px">Latest run per fixture is solid; ×N marks anchors re-run while they were being tuned. The summary.json in the PR covered only the first round (21:29 UTC), so this view reads every run file.</p>
+  <div id="fixDots"></div>
+  <h3>Which question was the weakest answer</h3>
+  <div id="weakQ"></div>
+</section>
+
+<section class="card" id="gate">
+  <h2>4 · Plan gate: beads judged against locked anchors</h2>
+  <div class="sub">One row per bead. Each chip is an anchor the bead was judged against; fill shows the weakest answer's confidence. Hover or tap a chip for its answers.</div>
+  <div class="legend"><span class="status s-good"><i>✓</i>satisfied</span><span class="status s-none"><i>D</i>deterministic check only</span><span class="status s-none"><i>–</i>excluded by triage</span></div>
+  <div class="legend">Chip fill = weakest answer: <span><span class="sw" style="background:var(--seq-550);border-radius:2px"></span>≥ 0.9</span><span><span class="sw" style="background:var(--seq-400);border-radius:2px"></span>0.8–0.9</span><span><span class="sw" style="background:var(--seq-250);border-radius:2px"></span>0.7–0.8</span><span><span class="sw" style="background:var(--warning);border-radius:2px"></span>&lt; 0.7</span></div>
+  <div class="scroll"><table id="gateTbl"></table></div>
+</section>
+
+<section class="card" id="triage">
+  <h2>5 · Triage: the bead edits that made the gate pass</h2>
+  <div class="sub" id="triageSub"></div>
+  <div id="triageList"></div>
+</section>
+
+<section class="card" id="gaps">
+  <h2>6 · What the ledger needs that these files lack</h2>
+  <ul class="gaps" id="gapList"></ul>
+</section>
+
+<div class="foot" id="foot"></div>
+</div></div>
+<div id="tip"></div>
+
+<script>
+const D = /*DATA*/null;
+const $ = s => document.querySelector(s);
+const el = (t, a = {}, h = '') => { const e = document.createElement(t); for (const k in a) e.setAttribute(k, a[k]); if (h) e.innerHTML = h; return e; };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const f2 = v => v == null ? '–' : (+v).toFixed(2);
+const shortCase = id => id.replace(/^a0-\d+-/, '').replace(/-/g, ' ');
+const NS = 'http://www.w3.org/2000/svg';
+const sv = (t, a = {}) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+
+// tooltip
+const tip = $('#tip');
+function showTip(ev, html) { tip.innerHTML = html; tip.style.display = 'block'; moveTip(ev); }
+function moveTip(ev) { const x = ev.clientX ?? (ev.touches && ev.touches[0].clientX) ?? 0, y = ev.clientY ?? (ev.touches && ev.touches[0].clientY) ?? 0; const w = tip.offsetWidth, h = tip.offsetHeight; tip.style.left = Math.min(window.innerWidth - w - 8, x + 12) + 'px'; tip.style.top = (y + h + 20 > window.innerHeight ? y - h - 12 : y + 14) + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+function bindTip(node, html) { node.addEventListener('mouseenter', e => showTip(e, html())); node.addEventListener('mousemove', moveTip); node.addEventListener('mouseleave', hideTip); node.addEventListener('click', e => { showTip(e, html()); e.stopPropagation(); }); }
+document.addEventListener('click', hideTip);
+
+const T = D.tuning;
+$('#src').textContent = `${D.source.repo} @ ${D.source.commit} · ${D.source.path} · removed by ${D.source.deleted_by}`;
+
+// ---------- tiles
+const fx = D.fixtures;
+const latestRows = g => fx[g].rows.filter(r => r.latest);
+const judged = g => latestRows(g).filter(r => r.expected_ok !== null);
+const okCount = g => judged(g).filter(r => r.expected_ok).length;
+const edits = D.triage.rounds.reduce((n, r) => n + r.edits.length, 0);
+const best = T.rankings.reduce((m, r) => Math.max(m, r.exact_confident_stable_cells), 0);
+const tiles = [
+  ['Question set sealed', T.accepted ? 'Yes' : 'No', `${T.candidate_count} candidates tried`],
+  ['Jev calls in tuning', T.jev_calls, `${T.corpus_case_count} cases × 5 roles`],
+  ['Best candidate', `${best}/85`, 'cells exact + confident + stable'],
+  ['Dev fixtures correct', `${okCount('dev')}/${judged('dev').length}`, `${fx.dev.rows.length} runs, latest per fixture`],
+  ['Plan fixtures correct', `${okCount('plan')}/${judged('plan').length}`, `+${latestRows('plan').length - judged('plan').length} deterministic only`],
+  ['Beads passing gate', `${D.gate.filter(b => b.pass).length}/${D.gate.length}`, `after ${edits} triage edits`],
+];
+for (const [k, v, n] of tiles) $('#tiles').append(el('div', {class:'tile'}, `<div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div>`));
+
+// ---------- tuner
+$('#tunerSub').innerHTML = `Tournament protocol over a frozen ${T.corpus_case_count}-case oracle. Model <code>${esc(T.jev_model)}</code> at <code>${esc(T.jev_endpoint)}</code>. Production threshold ${T.production_threshold}, reference ${T.reference_threshold}.`;
+$('#tunerCallout').innerHTML = `<b>Outcome: nothing sealed.</b> Four of five roles were exact, confident and stable on every case with the incumbent wording. <b>faithful</b> was the only role short, and the shortfall was confidence, not direction. E1 scored 85/85 on its first pair, but its byte-identical replication dropped <code>a0-09</code> faithful to 0.58, below 0.6. Sealing it would have meant selecting on noise.`;
+
+const rank = $('#rank');
+rank.innerHTML = '<tr><th>#</th><th>Set</th><th>From</th><th>Changed</th><th>Score</th><th>≥0.8</th><th>Chars</th><th>Regr.</th><th style="min-width:200px">Cells that failed</th></tr>';
+for (const r of T.rankings) {
+  const tr = el('tr', r.candidate_id === T.best ? {class:'hl'} : {});
+  const repl = r.rejection_reason.startsWith('replication');
+  const fails = repl ? [r.rejection_reason.match(/: (\S+)/)[1]] : r.rejection_reason.replace('cells not exact+confident+stable: ', '').split('; ');
+  const byRole = {}; for (const f of fails) { const ro = f.split('/')[1].split(':')[0].split(' ')[0]; byRole[ro] = (byRole[ro] || 0) + 1; }
+  const short = r.total_cells - r.exact_confident_stable_cells;
+  const failTxt = repl ? `replication fell below 0.6: <span class="mono">${esc(fails[0].replace(/^a0-/, ''))}</span>` : Object.entries(byRole).map(([k, n]) => `<span class="mono">${k}</span> ×${n}`).join(', ');
+  tr.innerHTML = `<td class="muted">${r.rank}</td><td class="mono"><b>${r.candidate_id}</b></td><td class="mono muted">${r.derived_from ?? 'incumbent'}</td><td class="mono">${r.changed_roles.join(', ') || '–'}</td>
+    <td class="mono"><b>${r.exact_confident_stable_cells}</b><span class="muted">/85</span></td>
+    <td class="mono">${r['cells_at_or_above_0.8']}</td><td class="mono muted">${r.complexity_chars}</td><td class="mono">${r.regressions_vs_incumbent}</td><td style="font-size:12.5px">${short ? `<span class="status s-crit"><i>${short}</i></span> ` : ''}${failTxt}</td>`;
+  bindTip(tr.lastElementChild, () => `<div class="t">${r.candidate_id}: ${fails.length} failing cell${fails.length > 1 ? 's' : ''}</div>${fails.slice(0, 12).map(f => '<span class="mono">' + esc(f) + '</span>').join('<br>')}${fails.length > 12 ? '<br>…' : ''}`);
+  rank.append(tr);
+}
+
+const roles = ['faithful', 'single_constraint', 'observable', 'scoped', 'self_contained'];
+const caseById = Object.fromEntries(T.cases.map(c => [c.id, c]));
+let role = 'faithful';
+function drawDots() {
+  const cells = T.cells.filter(c => c.role === role);
+  const W = Math.max(320, Math.min(1040, $('#dots').clientWidth || 700)), labW = W < 560 ? 112 : 210, rowH = 22, top = 22;
+  const H = top + cells.length * rowH + 8, x0 = labW + 8, x1 = W - 14;
+  const lo = 0.4, sx = v => x0 + (v - lo) / (1 - lo) * (x1 - x0);
+  const s = sv('svg', {width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Confidence of four Jev calls per case for role ${role}`});
+  for (const v of [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) {
+    s.append(sv('line', {x1: sx(v), x2: sx(v), y1: top - 4, y2: H - 6, stroke: 'var(--grid)', 'stroke-width': 1}));
+    const t = sv('text', {x: sx(v), y: 12, 'text-anchor': 'middle'}); t.textContent = v.toFixed(1); s.append(t);
+  }
+  s.append(sv('line', {x1: sx(.6), x2: sx(.6), y1: top - 4, y2: H - 6, stroke: 'var(--text-muted)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5}));
+  s.append(sv('line', {x1: sx(.8), x2: sx(.8), y1: top - 4, y2: H - 6, stroke: 'var(--seq-250)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5}));
+  cells.forEach((c, i) => {
+    const y = top + i * rowH + rowH / 2, g = sv('g', {class: 'rowhit'});
+    g.append(sv('rect', {class: 'bg', x: 0, y: y - rowH / 2, width: W, height: rowH, fill: 'transparent', rx: 4}));
+    const lab = sv('text', {x: labW, y: y + 4, 'text-anchor': 'end', class: 'lbl'}); const nm = shortCase(c.case), num = c.case.match(/^a0-(\d+)/)[1];
+    lab.textContent = (c.accepted ? '' : '⚠ ') + (W < 560 ? num + ' ' + (nm.length > 13 ? nm.slice(0, 12) + '…' : nm) : nm); g.append(lab);
+    const all = [...c.primary.calls.map(x => ['p', x]), ...c.replication.calls.map(x => ['r', x])];
+    const mn = Math.min(...all.map(a => a[1][1])), mx = Math.max(...all.map(a => a[1][1]));
+    g.append(sv('line', {x1: sx(Math.max(lo, mn)), x2: sx(mx), y1: y, y2: y, stroke: 'var(--line)', 'stroke-width': 2}));
+    all.forEach(([k, [ch, cf]], j) => {
+      const off = (j % 2 ? 2.5 : -2.5);
+      g.append(sv('circle', {cx: sx(Math.max(lo, cf)), cy: y + off, r: 4.5, fill: k === 'p' ? 'var(--series-1)' : 'var(--series-2)', stroke: 'var(--surface-1)', 'stroke-width': 2}));
+    });
+    bindTip(g, () => `<div class="t">${esc(c.case)} · ${role}</div>Expected <b>${c.expected}</b><br>Primary: ${c.primary.calls.map(x => x[0] + ' ' + f2(x[1])).join(', ')} → ${c.primary.outcome}<br>Replication: ${c.replication.calls.map(x => x[0] + ' ' + f2(x[1])).join(', ')} → ${c.replication.outcome}`);
+    g.addEventListener('click', () => {
+      const k = caseById[c.case];
+      $('#caseDetail').innerHTML = `<b class="mono">${esc(c.case)}</b> · role <b>${role}</b> · expected <b>${c.expected}</b> · ${c.accepted ? '<span class="status s-good"><i>✓</i>accepted</span>' : '<span class="status s-crit"><i>!</i>not reproducible above 0.6</span>'}
+        <div style="margin-top:6px"><span class="muted">Quote:</span> <span class="q">“${esc(k.quote)}”</span></div>
+        <div><span class="muted">Statement:</span> ${esc(k.statement)}</div><div class="muted">Why this case exists: ${esc(k.rationale)}</div>`;
+    });
+    s.append(g);
+  });
+  $('#dots').replaceChildren(s);
+}
+for (const r of roles) {
+  const b = el('button', {'aria-pressed': r === role}, r);
+  b.onclick = () => { role = r; [...$('#roleTabs').children].forEach(x => x.setAttribute('aria-pressed', x === b)); drawDots(); };
+  $('#roleTabs').append(b);
+}
+drawDots();
+
+const rt = $('#roles');
+rt.innerHTML = '<tr><th>Role</th><th style="min-width:160px">Weakest call</th><th>Cases &lt; 0.8</th><th>Cases &lt; 0.6</th></tr>';
+for (const r of roles) {
+  const cs = T.cells.filter(c => c.role === r);
+  const mins = cs.map(c => Math.min(c.primary.min_confidence, c.replication.min_confidence));
+  const w = Math.min(...mins), b8 = mins.filter(v => v < .8).length, b6 = mins.filter(v => v < .6).length;
+  rt.append(el('tr', {}, `<td class="mono">${r}</td><td><div style="display:flex;gap:8px;align-items:center"><div class="bar" style="flex:1"><span style="width:${w * 100}%;background:${w < .6 ? 'var(--critical)' : 'var(--series-1)'}"></span><b style="left:60%"></b></div><span class="mono">${f2(w)}</span></div></td><td class="mono">${b8}</td><td class="mono">${b6 ? `<span class="status s-crit"><i>!</i>${b6}</span>` : '0'}</td>`));
+}
+
+// ---------- rubric
+const rubricRoles = ['faithful', 'self_contained', 'single_constraint', 'observable'];
+for (const [key, name] of [['round0', 'Round 0: original anchors'], ['round2', 'Round 2: rewritten candidates']]) {
+  const R = D.rubric[key], max = R.n;
+  const box = el('div');
+  const v = Object.entries(R.verdicts).map(([k, n]) => `${n} ${k}`).join(', ');
+  box.append(el('h3', {}, `${name} <span class="muted" style="font-weight:400">· ${R.n} anchors · ${v}</span>`));
+  const t = el('table');
+  for (const rr of rubricRoles) {
+    const n = R.failing[rr] || 0;
+    const tr = el('tr', {}, `<td class="mono" style="width:130px">${rr}</td><td><div style="display:flex;gap:8px;align-items:center"><div class="bar" style="flex:1"><span style="width:${n / max * 100}%"></span></div><span class="mono">${n}/${max}</span></div></td>`);
+    bindTip(tr, () => `<div class="t">${rr}</div>${n} of ${max} anchors failed this role<br>${R.anchors.filter(a => a.failing.includes(rr)).slice(0, 6).map(a => '<span class="mono">' + esc(a.id) + '</span>').join(', ')}${n > 6 ? '…' : ''}`);
+    t.append(tr);
+  }
+  const other = Object.entries(R.failing).filter(([k]) => !rubricRoles.includes(k));
+  box.append(t);
+  if (other.length) box.append(el('p', {class: 'muted', style: 'font-size:12px'}, 'Also flagged by lint: ' + other.map(([k, n]) => `“${esc(k)}” (${n})`).join(', ')));
+  $('#rubricCharts').append(box);
+}
+
+// ---------- fixtures
+let gateKey = 'plan';
+function weakest(answers) { if (!answers) return null; let b = null; for (const [q, a] of Object.entries(answers)) if (!b || a.conf < b[1]) b = [q, a.conf, a.choice]; return b; }
+function drawFix() {
+  const rows = fx[gateKey].rows;
+  const anchors = [...new Set(rows.map(r => r.anchor))].sort();
+  const W = Math.max(320, Math.min(1040, $('#fixDots').clientWidth || 700)), labW = 92, rowH = 20, top = 22;
+  const H = top + anchors.length * rowH + 8, x0 = labW + 8, x1 = W - 14, lo = 0.2, sx = v => x0 + (v - lo) / (1 - lo) * (x1 - x0);
+  const s = sv('svg', {width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Weakest answer confidence for pass and fail fixtures per anchor'});
+  for (const v of [0.2, 0.4, 0.6, 0.8, 1.0]) { s.append(sv('line', {x1: sx(v), x2: sx(v), y1: top - 4, y2: H - 6, stroke: 'var(--grid)'})); const t = sv('text', {x: sx(v), y: 12, 'text-anchor': 'middle'}); t.textContent = v.toFixed(1); s.append(t); }
+  s.append(sv('line', {x1: sx(.6), x2: sx(.6), y1: top - 4, y2: H - 6, stroke: 'var(--text-muted)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5}));
+  const tally = {};
+  anchors.forEach((a, i) => {
+    const y = top + i * rowH + rowH / 2, g = sv('g', {class: 'rowhit'});
+    g.append(sv('rect', {class: 'bg', x: 0, y: y - rowH / 2, width: W, height: rowH, fill: 'transparent', rx: 4}));
+    const p = rows.find(r => r.anchor === a && r.kind === 'pass' && r.latest), f = rows.find(r => r.anchor === a && r.kind === 'fail' && r.latest);
+    const older = rows.filter(r => r.anchor === a && !r.latest);
+    for (const o of older) { const w = weakest(o.answers); if (w) g.append(sv('circle', {cx: sx(Math.max(lo, w[1])), cy: y, r: 3.5, fill: 'none', stroke: o.kind === 'pass' ? 'var(--series-1)' : 'var(--series-2)', 'stroke-width': 1.5, opacity: .7})); }
+    const nRuns = rows.filter(r => r.anchor === a && r.kind === 'pass').length;
+    const wp = weakest(p && p.answers), wf = weakest(f && f.answers);
+    const lab = sv('text', {x: labW, y: y + 4, 'text-anchor': 'end', class: 'lbl'}); lab.textContent = (nRuns > 1 ? `×${nRuns} ` : '') + a; g.append(lab);
+    if (!wp && !wf) { const t = sv('text', {x: x0 + 4, y: y + 4}); t.textContent = 'deterministic check only (no Jev call)'; g.append(t); }
+    else {
+      const vs = [wp, wf].filter(Boolean).map(w => w[1]);
+      g.append(sv('line', {x1: sx(Math.min(...vs)), x2: sx(Math.max(...vs)), y1: y, y2: y, stroke: 'var(--line)', 'stroke-width': 2}));
+      for (const [w, col, r] of [[wp, 'var(--series-1)', p], [wf, 'var(--series-2)', f]]) if (w) {
+        g.append(sv('circle', {cx: sx(Math.max(lo, w[1])), cy: y, r: 5, fill: col, stroke: 'var(--surface-1)', 'stroke-width': 2}));
+        if (!r.expected_ok) g.append(sv('circle', {cx: sx(w[1]), cy: y, r: 8, fill: 'none', stroke: 'var(--critical)', 'stroke-width': 2}));
+        tally[w[0]] = (tally[w[0]] || 0) + 1;
+      }
+    }
+    const desc = r => r ? `<b>${r.kind}</b> → ${r.verdict}${r.expected_ok === null ? '' : r.expected_ok ? ' ✓' : ' ✗ expected ' + r.expected.join('/')}${r.sentence ? `<br><span class="muted">${esc(r.sentence).slice(0, 140)}</span>` : ''}<br>${r.answers ? Object.entries(r.answers).map(([q, x]) => `${q}: ${x.choice} ${f2(x.conf)}`).join(' · ') : 'deterministic only'}` : '';
+    bindTip(g, () => `<div class="t">${a} · anchor v${(p || f).anchor_version}${nRuns > 1 ? ` · run ${nRuns}×, latest ${(p || f).created_at.slice(5, 16).replace('T', ' ')}` : ''}</div><span class="muted">${esc((p || f).statement || '').slice(0, 160)}</span><br><br>${desc(p)}<br><br>${desc(f)}`);
+    s.append(g);
+  });
+  $('#fixDots').replaceChildren(s);
+  const tot = Object.values(tally).reduce((a, b) => a + b, 0);
+  const t = el('table');
+  for (const [q, n] of Object.entries(tally).sort((a, b) => b[1] - a[1]))
+    t.append(el('tr', {}, `<td class="mono" style="width:120px">${q}</td><td><div style="display:flex;gap:8px;align-items:center"><div class="bar" style="flex:1"><span style="width:${n / tot * 100}%"></span></div><span class="mono">${n}/${tot}</span></div></td>`));
+  $('#weakQ').replaceChildren(t);
+}
+for (const [k, name] of [['plan', 'Plan gate'], ['dev', 'Dev gate']]) {
+  const b = el('button', {'aria-pressed': k === gateKey}, `${name} · ${okCount(k)}/${judged(k).length} correct`);
+  b.onclick = () => { gateKey = k; [...$('#gateTabs').children].forEach(x => x.setAttribute('aria-pressed', x === b)); drawFix(); };
+  $('#gateTabs').append(b);
+}
+drawFix();
+
+// ---------- plan gate
+const seq = v => v == null ? 'var(--surface-2)' : v >= .9 ? 'var(--seq-550)' : v >= .8 ? 'var(--seq-400)' : v >= .7 ? 'var(--seq-250)' : 'var(--warning)';
+const gt = $('#gateTbl');
+gt.innerHTML = '<tr><th>Bead</th><th>Result</th><th>Anchors judged</th><th>Weakest</th></tr>';
+for (const b of D.gate) {
+  const tr = el('tr');
+  const confs = b.results.map(r => r.min_conf).filter(v => v != null);
+  const chips = el('div', {class: 'chips'});
+  for (const r of b.results) {
+    const cls = r.verdict === 'deterministic_only' ? 'chip det' : r.verdict === 'excluded' ? 'chip exc' : 'chip';
+    const c = el('span', {class: cls}, `<span class="dot" style="background:${r.verdict === 'satisfied' ? seq(r.min_conf) : 'transparent'};border:1px solid var(--line)"></span>${r.anchor.replace('ANC-', '')}${r.verdict === 'deterministic_only' ? ' D' : ''}`);
+    bindTip(c, () => `<div class="t">${r.anchor} · ${r.verdict}</div><span class="muted">${esc(r.statement || '').slice(0, 160)}</span>${r.answers ? '<br><br>' + Object.entries(r.answers).map(([q, x]) => `${q}: <b>${x.choice}</b> ${f2(x.conf)}`).join('<br>') : ''}`);
+    chips.append(c);
+  }
+  tr.innerHTML = `<td><b class="mono">${b.bead}</b><div class="muted" style="font-size:12px;max-width:260px">${esc(b.title.replace(/^bo-\d+:\s*/, ''))}</div></td><td>${b.pass ? '<span class="status s-good"><i>✓</i>pass</span>' : '<span class="status s-crit"><i>!</i>fail</span>'}</td><td></td><td class="mono">${confs.length ? f2(Math.min(...confs)) : '–'}</td>`;
+  tr.children[2].append(chips);
+  gt.append(tr);
+}
+
+// ---------- triage
+$('#triageSub').innerHTML = `${esc(D.triage.run)}. ${edits} edits to bead text across ${D.triage.rounds.length} rounds, plus ${D.triage.exclude.length} anchor exclusions. Each edit names the anchor that forced it.`;
+const tl = $('#triageList');
+for (const r of D.triage.rounds) {
+  tl.append(el('h3', {}, `${r.name} · ${r.edits.length} edit${r.edits.length === 1 ? '' : 's'}${r.note ? ' · <span class="muted" style="font-weight:400">' + esc(r.note) + '</span>' : ''}`));
+  for (const e of r.edits) {
+    const d = el('details');
+    d.innerHTML = `<summary><b class="mono">${e.bead}</b> · <span class="mono">${e.anchor}</span> · ${e.action} ${e.field ? 'in ' + e.field : ''}</summary><div class="diff"><div class="old">${esc(e.old)}</div><div class="new">${esc(e.new)}</div></div>`;
+    tl.append(d);
+  }
+}
+tl.append(el('h3', {}, 'Excluded'));
+for (const x of D.triage.exclude) tl.append(el('p', {style: 'font-size:13px'}, `<b class="mono">${x.item}</b> × <span class="mono">${x.anchor}</span>: ${esc(x.reason)}`));
+
+// ---------- gaps
+const gaps = [
+  ['No commit on any run.', 'Runs carry <code>created_at</code> but not the repo SHA, so you cannot plot a question across commits. The tuner noted HEAD moved from <code>1428d86</code> to <code>31a8f8c</code> during calibration.'],
+  ['Inputs live in scratch.', '<code>anchors_path</code>, bead text and the oracle point at <code>/private/tmp/…/scratchpad</code>. The hashes are recorded, but the content Jev saw is gone.'],
+  ['No Jev run ID.', 'Jev returns only model, answers and usage. The tuner built deterministic correlation IDs (<code>corr:candidate:case:call-N</code>); make that the ledger key.'],
+  ['No reviewer link.', 'Nothing ties a Jev answer to the Haiku/Luna session that explained it, so the “why” behind a low-confidence answer is not recoverable.'],
+  ['Evidence was committed, then deleted.', 'These ~25k lines only survive in git history. An out-of-repo, append-only ledger (JSONL, with SQLite built from it) keeps them across cleanups and makes the timeline view possible.'],
+  ['What already works.', '<code>questions_sha256</code> is a stable question ID; full probabilities, threshold, model version, token usage and request bytes are all recorded. Keep those fields as they are.'],
+];
+for (const [h, b] of gaps) $('#gapList').append(el('li', {}, `<b>${h}</b> ${b}`));
+$('#foot').textContent = `Generated from ${D.source.repo}@${D.source.commit}. Tuning: 489 calls; fixtures: ${fx.dev.rows.length + fx.plan.rows.length} runs; plan gate: ${D.gate.length} beads.`;
+
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawDots(); drawFix(); }, 150); });
+</script>
+</body>
+</html>

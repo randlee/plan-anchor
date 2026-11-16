@@ -1,0 +1,186 @@
+---
+metadata:
+  name: change-report
+  description: Top-level shell of the plan-anchoring change report; receives top-level arrays and pre-rendered panels only.
+required_variables:
+  - title
+  - status
+  - generated_at
+  - item_rows
+  - anchor_rows
+  - toc_rows
+  - sections
+  - metadata_rows
+defaults:
+  subtitle: ""
+  drift_rows: []
+  summary_copy_json: ""
+  summary_copy_context: ""
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title | e }}</title>
+  <style type="text/css">
+    :root { --bg: #ffffff; --fg: #1f2937; --muted: #6b7280; --line: #e5e7eb; --head: #f3f4f6; --panel: #ffffff; --code: #f3f4f6;
+            --del-bg: #fde2e1; --del-fg: #8a1c14; --ins-bg: #d9f5df; --ins-fg: #0b5d1e; --ch-bg: #fff7d6; --diff-bg: #fafafa; --link: #1d4ed8; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --bg: #0b1220; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --head: #1f2937; --panel: #111827; --code: #1f2937;
+            --del-bg: #4c1d1d; --del-fg: #fecaca; --ins-bg: #14361f; --ins-fg: #bbf7d0; --ch-bg: #3b3414; --diff-bg: #0f172a; --link: #93c5fd; }
+    }
+    :root[data-theme="dark"] { --bg: #0b1220; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --head: #1f2937; --panel: #111827; --code: #1f2937;
+            --del-bg: #4c1d1d; --del-fg: #fecaca; --ins-bg: #14361f; --ins-fg: #bbf7d0; --ch-bg: #3b3414; --diff-bg: #0f172a; --link: #93c5fd; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0 auto; max-width: 1280px; padding: 24px; color: var(--fg); background: var(--bg); line-height: 1.5; }
+    a { color: var(--link); }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 20px; position: relative; }
+    h1 { margin: 0 0 6px 0; font-size: 1.6rem; padding-right: 48px; }
+    h3 { font-size: 1rem; margin: 16px 0 6px 0; }
+    .subtitle, .generated-at, .small { color: var(--muted); font-size: 0.85rem; margin: 2px 0; }
+    .theme-toggle { position: absolute; top: 0; right: 0; }
+    .status { font-weight: 700; padding: 2px 10px; border-radius: 999px; display: inline-block; font-size: 0.8em; border: 1px solid transparent; vertical-align: middle; }
+    .status-pass, .status-locked { color: #065f46; background: #d1fae5; border-color: #6ee7b7; }
+    .status-drift, .status-proposed, .status-owner_decision { color: #92400e; background: #fef3c7; border-color: #f59e0b; }
+    .status-fail, .status-error { color: #991b1b; background: #fee2e2; border-color: #ef4444; }
+    .status-info, .status-retired, .status-absent { color: #1e40af; background: #dbeafe; border-color: #3b82f6; }
+    nav.toc, .summary-block, .section { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 16px 0; background: var(--panel); }
+    nav.toc ul { margin: 8px 0 0 0; padding-left: 20px; columns: 2; }
+    .section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .section-head h2 { margin: 0; font-size: 1.15rem; }
+    .unit-title { font-weight: 400; }
+    .section-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .icon-button { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 14px; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; display: block; overflow-x: auto; }
+    th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; font-size: 0.88rem; }
+    thead th { background: var(--head); }
+    code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 0.85em; word-break: break-word; }
+    del { background: var(--del-bg); color: var(--del-fg); text-decoration: line-through; }
+    ins { background: var(--ins-bg); color: var(--ins-fg); text-decoration: none; }
+    .diff { font: 12px/1.5 ui-monospace, Menlo, monospace; background: var(--diff-bg); border: 1px solid var(--line); padding: 8px; white-space: pre-wrap; }
+    .rm { background: var(--del-bg); } .ad { background: var(--ins-bg); } .ch { background: var(--ch-bg); } .eq { color: var(--muted); }
+    .statement { font-weight: 600; margin: 8px 0 2px 0; } .quote { color: var(--muted); font-style: italic; margin: 0 0 8px 0; }
+    .note { border-left: 4px solid #f59e0b; padding-left: 8px; }
+    details { margin: 6px 0; } summary { cursor: pointer; font-weight: 600; }
+    footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ title | e }}</h1>
+    <button type="button" class="icon-button theme-toggle" title="Toggle dark mode" data-theme-toggle="1">&#x25D0;</button>
+{% if subtitle %}
+    <p class="subtitle">{{ subtitle | e }}</p>
+{% endif %}
+    <p class="generated-at">Generated: {{ generated_at | e }}</p>
+    <div><span class="status status-{{ status | lower | e }}">{{ status | e }}</span></div>
+  </header>
+
+  <section class="summary-block" id="summary">
+    <div class="section-head">
+      <h2>Plan items: gate before and after</h2>
+{% if summary_copy_json or summary_copy_context %}
+      <div class="section-actions" role="group" aria-label="Copy summary data">
+{% if summary_copy_json %}
+        <button class="icon-button" type="button" title="Copy JSON" data-copy-text="{{ summary_copy_json | e }}">{}</button>
+{% endif %}
+{% if summary_copy_context %}
+        <button class="icon-button" type="button" title="Copy Context" data-copy-text="{{ summary_copy_context | e }}">&#x2398;</button>
+{% endif %}
+      </div>
+{% endif %}
+    </div>
+    <p class="small">Score = applicable anchors satisfied / applicable anchors (not-applicable and excluded anchors left out). An exclusion says the item does not touch that anchor; each reason is in the item's panel.</p>
+    <table class="item-summary">
+      <thead><tr><th scope="col">Item</th><th scope="col">Title</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Excluded now (not judged)</th><th scope="col">Runs</th><th scope="col">Failing before</th><th scope="col">Text changed</th></tr></thead>
+      <tbody>
+{% for row in item_rows %}
+        <tr>
+          <th scope="row">{% if row.url %}<a href="{{ row.url | e }}">{{ row.id | e }}</a>{% else %}{{ row.id | e }}{% endif %}</th>
+          <td><a href="#{{ row.dom | e }}">{{ row.title | e }}</a></td>
+          <td><span class="status status-{{ row.before_status | e }}">{{ row.before_status | upper | e }}</span> {{ row.before_score | e }}</td>
+          <td><span class="status status-{{ row.after_status | e }}">{{ row.after_status | upper | e }}</span> {{ row.after_score | e }}</td>
+          <td class="small">{{ row.excluded_now | e }}</td>
+          <td>{{ row.runs | e }}</td>
+          <td class="small">{{ row.failing_before | e }}</td>
+          <td class="small">{{ row.changed | e }}</td>
+        </tr>
+{% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Anchors</h2>
+    <table class="anchor-summary">
+      <thead><tr><th scope="col">Anchor</th><th scope="col">Bead</th><th scope="col">Status</th><th scope="col">Version</th><th scope="col">Fixture checks before &#x2192; after</th><th scope="col">Questions: default &#x2192; tuned (oracle cases matched)</th><th scope="col">Exclusions now</th><th scope="col">Changed</th></tr></thead>
+      <tbody>
+{% for row in anchor_rows %}
+        <tr>
+          <th scope="row"><a href="#{{ row.dom | e }}">{{ row.id | e }}</a></th>
+          <td>{% if row.url %}<a href="{{ row.url | e }}">{{ row.bead | e }}</a>{% else %}{{ row.bead | e }}{% endif %}</td>
+          <td>{% if row.status_before != row.status %}{{ row.status_before | e }} &#x2192; {% endif %}<span class="status status-{{ row.status | e }}">{{ row.status | e }}</span></td>
+          <td>{{ row.version | e }}</td>
+          <td>{{ row.fixtures | e }}</td>
+          <td>{{ row.questions | e }}</td>
+          <td>{{ row.exclusions | e }}</td>
+          <td class="small">{{ row.changed | e }}</td>
+        </tr>
+{% endfor %}
+      </tbody>
+    </table>
+
+{% if drift_rows %}
+    <h2><a href="#drift-review">Drift review</a></h2>
+    <table class="drift-summary"><tbody>
+{% for row in drift_rows %}
+      <tr><th scope="row">{{ row.label | e }}</th><td>{{ row.value | e }}</td></tr>
+{% endfor %}
+    </tbody></table>
+{% endif %}
+  </section>
+
+  <nav class="toc">
+    <strong>Panels</strong>
+    <ul>
+{% for row in toc_rows %}
+      <li><a href="#{{ row.id | e }}">{{ row.title | e }}</a> <span class="status status-{{ row.status | lower | e }}">{{ row.status | e }}</span></li>
+{% endfor %}
+    </ul>
+  </nav>
+
+{% for section in sections %}
+{{ section | safe }}
+{% endfor %}
+
+  <section class="section metadata">
+    <h2>Metadata</h2>
+    <table><tbody>
+{% for row in metadata_rows %}
+      <tr><th scope="row">{{ row.label | e }}</th><td>{{ row.value | e }}</td></tr>
+{% endfor %}
+    </tbody></table>
+  </section>
+
+  <footer>Generated by plan-anchoring change_report.py; the JSON sidecar beside this page holds the same data.</footer>
+
+  <script>
+    document.addEventListener("click", async function (event) {
+      var toggle = event.target.closest("[data-theme-toggle]");
+      if (toggle) {
+        var root = document.documentElement;
+        var dark = root.getAttribute("data-theme") === "dark" ||
+          (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        root.setAttribute("data-theme", dark ? "light" : "dark");
+        return;
+      }
+      var button = event.target.closest("[data-copy-text]");
+      if (!button) return;
+      try {
+        await navigator.clipboard.writeText(button.getAttribute("data-copy-text") || "");
+        button.setAttribute("title", "Copied");
+      } catch (err) {
+        button.setAttribute("title", "Copy failed");
+      }
+    });
+  </script>
+</body>
+</html>

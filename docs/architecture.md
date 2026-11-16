@@ -426,7 +426,7 @@ Decision:
   and the skill's runtime `templates/*.md.j2` are copied verbatim (0.8.2;
   until 0.8.1 the scripts were copied verbatim too). Agent frontmatter and
   registries live in `install/harness/<target>/`. PEP 723 metadata supplies
-  PyYAML and `sc-compose` >=1.7.0,<2 and pins Python 3.11 (the code runs on
+  PyYAML and `sc-compose` >=1.8.0,<2 and pins Python 3.11 (the code runs on
   3.9+).
 - **Destination.** `--dest` is any folder: a repository, a folder inside one,
   or a parent folder of many repositories (a non-repository with no `.beads/`

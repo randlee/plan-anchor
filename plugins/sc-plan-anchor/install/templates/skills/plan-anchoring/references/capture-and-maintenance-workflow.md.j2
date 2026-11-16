@@ -21,8 +21,9 @@ version: {{ version }}
 | Anchor | ANC-NNN | One testable requirement written from something the user said; the exact words are kept as its `quote` | The user, via the orchestrator, approved by the user |
 | Requirement | REQ-* | A numbered technical requirement | Existing register |
 | ADR | ADR-* | A numbered architectural decision record | Existing register |
+| Repository guidelines | none | Optional owner notes for plan-anchor work in this repository | `.sc/plan-anchor/plan-anchor-repo-guidelines.md` |
 
-All three ID'd kinds become Jev questions and are judged the same way. Details: `references/anchor-document.md`.
+All three ID'd kinds become Jev questions and are judged the same way. Details: `references/anchor-document.md`. Follow the repository guidelines, when present, while capturing and maintaining (`references/anchor-document.md`, Repository guidelines).
 
 ## Layout
 
@@ -54,11 +55,11 @@ python3 "$S" add --anchors "$A" --quote "<the user's exact words>" \
   --deterministic-check "<diff, git log, grep or test that proves it literally>" --status locked   # first add creates anchors.json
   # add runs the testability lint and refuses near-duplicates (data.added false, data.refused.code ANCHOR.DUPLICATE_CANDIDATE); see references/anchor-capture.md
 python3 "$S" update --anchors "$A" --id ANC-001 --fixture-pass "<a sentence a bead would say if it satisfied this>" \
-  --fixture-fail "<a sentence that would violate it>"                                              # draft, then get the user's approval
+  --fixture-fail "<a sentence that would violate it>"                                              # draft and record; no approval wait, the drift review checks them
 python3 "$S" validate --anchors "$A" && python3 "$S" render --anchors "$A"
 ```
 
-Then create the bead tree and record its IDs with `set-beads` (`references/bead-layout.md`). Requirements and ADRs governing this plan are added the same way with `--source-type REQ|ADR --source-ref <ID>`; they keep their register ID. Fill in `intent.md` if just created. Before the first gate run, every locked anchor must be `lint` clean, have approved fixtures, and pass `check-fixtures` with the default questions; otherwise tune first (B2). Periodically run `dedupe --anchors "$A"` and fold duplicates (`retire --replaced-by`).
+Then create the bead tree and record its IDs with `set-beads` (`references/bead-layout.md`). Requirements and ADRs governing this plan are added the same way with `--source-type REQ|ADR --source-ref <ID>`; they keep their register ID. Fill in `intent.md` if just created. Tune each locked anchor (`lint` clean, recorded fixtures, `check-fixtures` passing with the default questions, B2) concurrently with gate runs; the rubric qualifies an anchor's wording and does not gate running `judge`. Periodically run `dedupe --anchors "$A"` and fold duplicates (`retire --replaced-by`).
 
 ### F. Maintain
 

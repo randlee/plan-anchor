@@ -1,0 +1,82 @@
+---
+metadata:
+  name: change-report-drift-panel
+  description: The drift review's copyable XHTML panel in the plan-anchoring change report.
+required_variables:
+  - dom
+  - findings
+  - acceptable_choices
+  - confirmations
+  - open_count
+  - copy_json
+  - context_text
+defaults:
+  reviewed_at: ""
+  compared: ""
+  not_reviewed: ""
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section unit unit-drift" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>Drift review{% if reviewed_at %} <span class="small">{{ reviewed_at | e }}</span>{% endif %} {% if open_count %}<span class="status status-drift">{{ open_count | e }} OPEN</span>{% else %}<span class="status status-pass">NONE OPEN</span>{% endif %}</h2>
+    <div class="section-actions" role="group" aria-label="Copy drift review">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+      <button type="button" class="icon-button" title="Copy Context" data-copy-text="{{ context_text | e }}">&#x2398;</button>
+    </div>
+  </div>
+{% if compared %}
+  <p class="small">Compared: {{ compared | e }}</p>
+{% endif %}
+
+  <h3>Findings ({{ findings | length }})</h3>
+{% if findings %}
+  <table class="findings">
+    <thead><tr><th scope="col">Id</th><th scope="col">Severity</th><th scope="col">Where</th><th scope="col">What changed</th><th scope="col">Authority</th><th scope="col">Suggested fix</th><th scope="col">Status</th></tr></thead>
+    <tbody>
+{% for f in findings %}
+      <tr>
+        <th scope="row">{{ f.id | e }}</th>
+        <td><span class="status status-{{ f.severity_pill | e }}">{{ f.severity | e }}</span></td>
+        <td>{{ f.location | e }}</td>
+        <td>{{ f.what_changed | e }}</td>
+        <td><div><b>{{ f.authority_ref | e }}</b></div><div class="quote">&#x201C;{{ f.authority_quote | e }}&#x201D;</div></td>
+        <td>{{ f.suggested_fix | e }}</td>
+        <td><span class="status status-{{ f.pill | e }}">{{ f.status | replace("_", " ") | e }}</span>{% if f.fix_note %}<div class="small">{{ f.fix_note | e }}</div>{% endif %}</td>
+      </tr>
+{% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="small">No drift found.</p>
+{% endif %}
+
+{% if acceptable_choices %}
+  <details open="open">
+    <summary>Acceptable choices the owner should know ({{ acceptable_choices | length }})</summary>
+    <table>
+      <thead><tr><th scope="col">Where</th><th scope="col">Note</th></tr></thead>
+      <tbody>
+{% for c in acceptable_choices %}
+        <tr><th scope="row">{{ c.location | e }}</th><td>{{ c.note | e }}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+{% endif %}
+
+{% if confirmations %}
+  <details>
+    <summary>No-drift confirmations ({{ confirmations | length }})</summary>
+    <table>
+      <thead><tr><th scope="col">Area</th><th scope="col">Confirmed</th></tr></thead>
+      <tbody>
+{% for c in confirmations %}
+        <tr><th scope="row">{{ c.area | e }}</th><td>{{ c.note | e }}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </details>
+{% endif %}
+{% if not_reviewed %}
+  <p class="small">Not reviewed: {{ not_reviewed | e }}</p>
+{% endif %}
+</section>

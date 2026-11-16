@@ -3,7 +3,7 @@
 # requires-python = ">=3.11,<3.12"
 # dependencies = [
 #   "pyyaml>=5.1",
-#   "sc-compose>=1.7.0,<2",
+#   "sc-compose>=1.8.0,<2",
 # ]
 # ///
 """Install plan-anchor (the plan-anchoring skill and its agents) into a folder, rendered for one tracker.
@@ -17,9 +17,9 @@ The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
 this script.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
-sc-compose wheel. sc-compose 1.7.0 publishes CPython 3.11 wheels only, so the
-header pins 3.11 (uv downloads it when needed); the code itself runs on
-Python 3.9+, so ``python3 install.py`` works wherever both packages import.
+sc-compose wheel. The header pins Python 3.11 (uv downloads it when needed);
+the code itself runs on Python 3.9+, so ``python3 install.py`` works wherever
+both packages import.
 
 What it reads:
   - Its package files, under this plugin directory: ``plugin.json`` (the
@@ -57,16 +57,29 @@ itself, anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``,
 ``~/.agents``, ``/etc/codex`` or Claude Code's managed-settings directory
 (which covers every plugin cache), and this plugin's own directory.
 
-What it writes, per target (default ``claude``; a rerun keeps every target the
-lock records):
+Targets. The harnesses written are the union of: the targets the lock records;
+every harness whose ``.<target>/skills/plan-anchoring/`` exists (an install,
+locked or not); every harness directory (``.claude/``, ``.codex/``,
+``.cursor/``) present at the destination; and any ``--target``. ``--target``
+only adds; it never removes. With none of these, the target is ``claude``. So
+an upgrade upgrades every harness the folder uses. ``data.target_reasons``
+gives each chosen target's reasons (``locked``, ``installed``, ``present``,
+``requested``, ``default``); ``--status`` lists in ``missing_targets`` the
+harness directories present with no plan-anchoring install.
+
+What it writes, per target:
   <dest>/.<target>/skills/plan-anchoring/...   the skill (and registry.yaml for the agents)
   <dest>/.<target>/agents/anchor-*.md          the agents
 and once per destination:
   <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
                                                ``allow_remote_judge`` when a flag gives it;
                                                written when either value changes; a
-                                               ``plan_dir`` it holds is kept
+                                               ``plan_dir`` or ``issue_url_template``
+                                               it holds is kept
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
+  <dest>/.sc/plan-anchor/triage/              triage defaults (plan-questions.jsonl, rules.json,
+                                               README.md), written only when the folder is
+                                               absent; the repository owns it, never overwritten
   <dest>/.backup/<UTC>/<path>                  files ``--overwrite`` moved aside, and
   <dest>/.backup/.gitignore                    ``*``, so the backups are not committed
   <repository>/.beads/                         created by ``br init`` (``--init-br``)
@@ -193,9 +206,9 @@ TRACKERS = ("br", "bd")
 RENDERINGS = TRACKERS
 REGISTRY = "registry.yaml"   # per-target file installed in the skill directory
 TEMPLATE_NAME_PREFIX = "name: sc-plan-anchor-"
-SC_COMPOSE_FLOOR = (1, 7, 0)
+SC_COMPOSE_FLOOR = (1, 8, 0)
 SC_COMPOSE_CEILING_MAJOR = 2
-SC_COMPOSE_SPEC = "sc-compose>=1.7.0,<2"
+SC_COMPOSE_SPEC = "sc-compose>=1.8.0,<2"
 IGNORED = frozenset({"__pycache__", ".DS_Store"})
 ERROR_EXIT = 2
 NO_DATA_MIGRATION = (
@@ -417,6 +430,36 @@ def read_lock(root: Path) -> Result[Optional[Lock], ToolError]:
     return Ok(Lock(str(d.get("version")), d["tracker"], tuple(d["targets"]), dict(d["files"])))
 
 
+# ---------------------------------------------------------------- targets
+
+# Why a harness is a target: "locked" (the lock records it), "installed" (its
+# skills/plan-anchoring/ exists, locked or not), "present" (its .<target>/
+# directory exists at the destination), "requested" (--target), "default"
+# (none of these, so claude).
+TargetReasons = Dict[str, List[str]]
+
+
+def harness_present(root: Path, target: str) -> bool:
+    return (root / f".{target}").is_dir()
+
+
+def harness_installed(root: Path, target: str) -> bool:
+    return (root / f".{target}" / "skills" / SKILL_NAME).exists()
+
+
+def choose_targets(root: Path, lock: Optional[Lock], requested: List[str]) -> TargetReasons:
+    """Every harness the destination uses, plus the requested ones; --target only adds (#81)."""
+    reasons: TargetReasons = {}
+    for target in TARGETS:
+        why = [name for name, hit in (("locked", lock is not None and target in lock.targets),
+                                      ("installed", harness_installed(root, target)),
+                                      ("present", harness_present(root, target)),
+                                      ("requested", target in requested)) if hit]
+        if why:
+            reasons[target] = why
+    return reasons or {"claude": ["default"]}
+
+
 def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, str]) -> str:
     body = {"package": PACKAGE, "version": version, "tracker": tracker, "targets": targets,
             "files": dict(sorted(files.items()))}
@@ -433,7 +476,7 @@ def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, s
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
-SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir")
+SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "issue_url_template")
 PLAN_DIR_CONVENTION = "docs/plans/phase-<current>"
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
@@ -451,6 +494,9 @@ PLAN_DIR_LINES = """\
 # plan_dir: the current phase's plan folder (anchors.json, intent.md, anchor-runs/). Set it again when the phase changes.
 plan_dir: {value}
 """
+ID_TOKEN = "{id}"
+ISSUE_URL_COMMENT = ("# issue_url_template: link for tracker ids in the change report; the id replaces "
+                     + ID_TOKEN + ".\n")
 DOLT_OUT_OF_SCOPE = (
     "bd is supported only where a Dolt-backed .beads/ already exists; "
     "provisioning Dolt (DoltHub or a Dolt server) is outside this skill."
@@ -467,6 +513,20 @@ class Settings:
     anchor_tracker: Optional[str]
     allow_remote_judge: Optional[bool] = None
     plan_dir: Optional[str] = None
+    issue_url_template: Optional[str] = None
+
+
+def issue_url_problem(value: Any) -> Optional[str]:
+    """Why ``value`` is not a usable ``issue_url_template``, or None (the installed plan_anchor_settings.py rule)."""
+    if not isinstance(value, str):
+        return "must be a string such as 'https://tracker.example/issues/" + ID_TOKEN + "', got " + type(value).__name__
+    if value != value.strip() or any(c.isspace() for c in value):
+        return "must hold no spaces"
+    if not (value.startswith("https://") or value.startswith("http://")):
+        return "must start with https:// or http://"
+    if value.count(ID_TOKEN) != 1:
+        return "must hold " + ID_TOKEN + " exactly once, where the tracker id goes"
+    return None
 
 
 def plan_dir_problem(value: Any) -> Optional[str]:
@@ -540,7 +600,13 @@ def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
     problem = plan_dir_problem(plan_dir) if "plan_dir" in data else None
     if problem:
         return err("SETTINGS.INVALID_PLAN_DIR", f"{path} plan_dir is {plan_dir!r}: it {problem}", fix)
-    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir))
+    link = data.get("issue_url_template")
+    problem = issue_url_problem(link) if "issue_url_template" in data else None
+    if problem:
+        return err("SETTINGS.INVALID_ISSUE_URL", f"{path} issue_url_template is {link!r}: it {problem}",
+                   f"Edit {path}: set issue_url_template to an http(s) URL holding " + ID_TOKEN + ", or remove the key.")
+    return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir,
+                       issue_url_template=link))
 
 
 def settings_path(root: Path) -> Path:
@@ -571,6 +637,8 @@ def render_settings(settings: Settings) -> str:
         raise ValueError(f"render_settings got allow_remote_judge {settings.allow_remote_judge!r}")  # caller bug
     if settings.plan_dir is not None and plan_dir_problem(settings.plan_dir):
         raise ValueError(f"render_settings got plan_dir {settings.plan_dir!r}")  # caller bug
+    if settings.issue_url_template is not None and issue_url_problem(settings.issue_url_template):
+        raise ValueError(f"render_settings got issue_url_template {settings.issue_url_template!r}")  # caller bug
     text = SETTINGS_HEADER.format(schema_version=settings.schema_version)
     if settings.anchor_tracker is not None:
         text += TRACKER_LINE.format(anchor_tracker=settings.anchor_tracker)
@@ -578,6 +646,8 @@ def render_settings(settings: Settings) -> str:
         text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
     if settings.plan_dir is not None:
         text += PLAN_DIR_LINES.format(value=json.dumps(settings.plan_dir, ensure_ascii=False))  # quoted: always a string
+    if settings.issue_url_template is not None:
+        text += ISSUE_URL_COMMENT + "issue_url_template: " + json.dumps(settings.issue_url_template, ensure_ascii=False) + "\n"
     return text
 
 
@@ -802,6 +872,7 @@ class Plan:
     version: str
     tracker: str
     targets: List[str]
+    target_reasons: TargetReasons = field(default_factory=dict)
     writes: Dict[str, Tuple[bytes, bool]] = field(default_factory=dict)  # key -> (bytes, executable)
     create: List[str] = field(default_factory=list)
     replace: List[str] = field(default_factory=list)
@@ -815,7 +886,9 @@ class Plan:
     remote_judge_change: Optional[dict] = None
     allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
     plan_dir: Optional[str] = None  # kept from the destination's own settings file
+    issue_url_template: Optional[str] = None  # kept likewise
     br_init: bool = False
+    triage_seed: Dict[str, bytes] = field(default_factory=dict)  # key -> bytes; written only when the folder is absent
 
 
 def _skill_prefix(target: str) -> str:
@@ -883,8 +956,10 @@ def _problem(plan: Plan, code: str, key: str, message: str) -> None:
 def build_plan(root: Path, package: Package, renderer: Renderer, choice: TrackerChoice, lock: Optional[Lock],
                requested_targets: List[str], overwrite: bool) -> Result[Plan, ToolError]:
     """Everything the install would do. Reads the repository; writes nothing."""
-    targets = [t for t in TARGETS if t in requested_targets or (lock is not None and t in lock.targets)]
-    plan = Plan(root=root, version=package.version, tracker=choice.tracker, targets=targets, br_init=choice.init_br)
+    reasons = choose_targets(root, lock, requested_targets)
+    targets = list(reasons)
+    plan = Plan(root=root, version=package.version, tracker=choice.tracker, targets=targets,
+                target_reasons=reasons, br_init=choice.init_br)
     wanted = wanted_files(package, renderer, targets, choice.tracker)
     if isinstance(wanted, Err):
         return wanted
@@ -1011,6 +1086,7 @@ def build_plan(root: Path, package: Package, renderer: Renderer, choice: Tracker
         plan.settings_change = {"path": SETTINGS_RELPATH, "from": configured, "to": choice.tracker}
     plan.allow_remote_judge = choice.settings.allow_remote_judge if choice.settings is not None else None
     plan.plan_dir = choice.settings.plan_dir if choice.settings is not None else None
+    plan.issue_url_template = choice.settings.issue_url_template if choice.settings is not None else None
     plan.backup = sorted(set(plan.backup))
     plan.remove = sorted(set(plan.remove))
     return Ok(plan)
@@ -1034,6 +1110,26 @@ def _prune(root: Path, start: Path, stop: Path) -> None:
                 e.unlink()
         current.rmdir()
         current = current.parent
+
+
+TRIAGE_RELDIR = ".sc/plan-anchor/triage"
+TRIAGE_FILES = ("plan-questions.jsonl", "rules.json", "README.md")
+
+
+def triage_seed(root: Path, renderer: "Renderer", tracker: str, target: str) -> Result[Dict[str, bytes], ToolError]:
+    """The repository's triage defaults, from the shipped assets: only when .sc/plan-anchor/triage/ is absent.
+
+    The folder then belongs to the repository: it is not in the lock, and no rerun or upgrade overwrites it.
+    """
+    if (root / TRIAGE_RELDIR).exists() or (root / TRIAGE_RELDIR).is_symlink():
+        return Ok({})
+    seed = {}
+    for name in TRIAGE_FILES:
+        data = renderer.skill_file(f"assets/triage/{name}", tracker, target)
+        if isinstance(data, Err):
+            return data
+        seed[f"{TRIAGE_RELDIR}/{name}"] = data.value
+    return Ok(seed)
 
 
 def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[str], ToolError]:
@@ -1067,6 +1163,11 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
                 path.unlink()
             target_root = root / key.split("/", 1)[0]
             _prune(root, path.parent, target_root)
+        if plan.triage_seed and not (root / TRIAGE_RELDIR).exists():
+            for key, data in sorted(plan.triage_seed.items()):
+                path = root / key
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
         lock_path = root.joinpath(*LOCK_RELPATH.split("/"))
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = lock_path.with_name(lock_path.name + ".tmp")
@@ -1077,7 +1178,8 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
                    "Fix the reported path (permissions, disk space), then rerun; the lock file is written last.")
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker,
-                                              allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir))
+                                              allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir,
+                                              issue_url_template=plan.issue_url_template))
         if isinstance(saved, Err):
             return saved
     changed = plan.create + plan.replace + plan.remove
@@ -1086,6 +1188,8 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
         commit.append(LOCK_RELPATH)
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         commit.append(SETTINGS_RELPATH)
+    if plan.triage_seed:
+        commit.append(TRIAGE_RELDIR + "/")
     if plan.br_init:
         commit.append(".beads/" if beads_root == root else Path(os.path.relpath(beads_root / ".beads", root)).as_posix() + "/")
     return Ok(commit)
@@ -1098,7 +1202,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
 class Options:
     dest: Path
     tracker: Optional[str]
-    targets: List[str]
+    targets: List[str]  # --target: added to the harnesses the folder uses; may be empty
     init_br: bool = False
     overwrite: bool = False
     dry_run: bool = False
@@ -1149,6 +1253,7 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
             covering = {"root": str(parent_root), "version": found.value.version if isinstance(found, Ok) and found.value else None,
                         "valid": isinstance(found, Ok)}
     installed = lock.value.version if lock.value is not None else None
+    missing = [t for t in TARGETS if harness_present(root.value, t) and not harness_installed(root.value, t)]
     have, want = version_tuple(installed), version_tuple(mine)
     if installed is None:
         state, message = "not_installed", f"not installed in {root.value}, installer {mine}"
@@ -1160,6 +1265,9 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
         state, message = "current", f"installed {installed}, installer {mine}"
     else:
         state, message = "newer", f"installed {installed} is newer than installer {mine}"
+    if missing:
+        message += ("; no plan-anchoring in " + ", ".join(f".{t}/" for t in missing)
+                    + " (rerun the installer without --target to install every harness)")
     return Ok({
         "package": PACKAGE,
         "dest": str(root.value),
@@ -1167,6 +1275,7 @@ def status(dest: Path, plugin_dir: Path = PLUGIN_DIR) -> Result[dict, ToolError]
         "installed_version": installed,
         "installed_tracker": lock.value.tracker if lock.value is not None else None,
         "installed_targets": list(lock.value.targets) if lock.value is not None else [],
+        "missing_targets": missing,
         "covering_install": covering,
         "state": state,
         "message": message,
@@ -1196,6 +1305,10 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
     if isinstance(planned, Err):
         return planned
     plan = planned.value
+    seeded = triage_seed(root.value, renderer, choice.value.tracker, plan.targets[0])
+    if isinstance(seeded, Err):
+        return seeded
+    plan.triage_seed = seeded.value
     if opts.allow_remote_judge is not None and opts.allow_remote_judge != plan.allow_remote_judge:
         plan.remote_judge_change = {"path": SETTINGS_RELPATH, "from": plan.allow_remote_judge, "to": opts.allow_remote_judge}
         plan.allow_remote_judge = opts.allow_remote_judge
@@ -1238,6 +1351,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "switched": switched,
         "allow_remote_judge": plan.allow_remote_judge,
         "targets": plan.targets,
+        "target_reasons": plan.target_reasons,
         "dry_run": opts.dry_run,
         "migration": lock.value is None,
         "plan": {
@@ -1249,6 +1363,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
             "settings": plan.settings_change,
             "allow_remote_judge": plan.remote_judge_change,
             "br_init": plan.br_init,
+            "triage_seed": sorted(plan.triage_seed),
             "lock": LOCK_RELPATH,
         },
         "warnings": plan.warnings,
@@ -1295,7 +1410,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--tracker", choices=TRACKERS,
                    help="render for this tracker and record it (default: the settings file, else detection)")
     p.add_argument("--target", type=_targets, action="append", default=None, metavar="claude,codex,cursor",
-                   help="harness directories to install into (repeatable or comma-separated; default claude)")
+                   help="harness directories to add (repeatable or comma-separated); every harness the folder "
+                        "uses is always included: locked, installed or present (default claude when none)")
     p.add_argument("--init-br", action="store_true", help="run 'br init' when the repository has no .beads/")
     p.add_argument("--overwrite", action="store_true",
                    help=f"move modified or foreign files in the way to {BACKUP_DIR}/<UTC>/ and install over them")
@@ -1319,7 +1435,7 @@ def main(argv: Optional[List[str]] = None, *, which: Which = shutil.which, run: 
          plugin_dir: Path = PLUGIN_DIR) -> int:
     try:
         args = _parser().parse_args(argv)
-        targets = [t for group in (args.target or [["claude"]]) for t in group]
+        targets = [t for group in (args.target or []) for t in group]
         opts = Options(dest=Path(args.dest), tracker=args.tracker, targets=list(dict.fromkeys(targets)),
                        init_br=args.init_br, overwrite=args.overwrite, dry_run=args.dry_run,
                        allow_remote_judge=args.allow_remote_judge)

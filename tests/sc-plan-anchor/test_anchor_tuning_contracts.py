@@ -55,7 +55,7 @@ class AnchorTuningContractTests(unittest.TestCase):
         binary = shutil.which("sc-compose")
         template_path = SKILL / "templates" / template
         if not binary:
-            self.fail("sc-compose 1.7.0 is required for strict contract rendering")
+            self.fail("sc-compose 1.8.0 is required for strict contract rendering")
         with tempfile.TemporaryDirectory() as td:
             if isinstance(variables, dict):
                 variables_path = Path(td) / "variables.json"
@@ -281,6 +281,36 @@ class AnchorTuningContractTests(unittest.TestCase):
         invalid = json.loads(json.dumps(result))
         invalid["data"]["sealed_question_set_digest_after"] = "f" * 64
         self.violation(self.contract.validate_result(invalid))
+
+    def test_optional_request_intent_is_bound_to_exact_authority(self):
+        request, _ = self._testability_triage_pair()
+        state = request["review"]["canonical_request"]["state"]
+        state["intent"] = copy.deepcopy(request["authority"]["intent"])
+        self.validate(request, "anchor-tuning-request.schema.json")
+        self.valid(self.contract.validate_request(request))
+        for key, value in (("id", "another"), ("version", "another"), ("content", "different approved text")):
+            with self.subTest(key=key):
+                invalid = copy.deepcopy(request)
+                descriptor = invalid["review"]["canonical_request"]["state"]["intent"]
+                descriptor[key] = value
+                descriptor["sha256"] = hashlib.sha256(descriptor["content"].encode()).hexdigest()
+                self.validate(invalid, "anchor-tuning-request.schema.json")
+                self.violation(self.contract.validate_request(invalid), "TRIAGE.INTENT_AUTHORITY")
+        for change in ({"version": True}, {"version": " "}, {"id": " "}, {"extra": "untrusted"}, {"content": ""}):
+            with self.subTest(change=change):
+                invalid = copy.deepcopy(request)
+                invalid["review"]["canonical_request"]["state"]["intent"].update(change)
+                with self.assertRaises(self.jsonschema.ValidationError):
+                    self.validate(invalid, "anchor-tuning-request.schema.json")
+                self.violation(self.contract.validate_request(invalid), "RUBRIC.INTENT")
+        invalid = copy.deepcopy(request)
+        invalid["review"]["canonical_request"]["state"]["intent"]["sha256"] = "0" * 64
+        self.violation(self.contract.validate_request(invalid), "RUBRIC.INTENT_DIGEST")
+        # JSON numeric encodings are bound exactly, even though Python compares them equal.
+        request["authority"]["intent"]["version"] = 1
+        state["intent"]["version"] = 1.0
+        self.validate(request, "anchor-tuning-request.schema.json")
+        self.violation(self.contract.validate_request(request), "TRIAGE.INTENT_AUTHORITY")
 
     def _testability_triage_pair(self):
         variables = json.loads(

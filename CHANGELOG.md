@@ -2,6 +2,242 @@
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
+## 0.11.2 — 2026-11-16
+
+- Triage guide (`triage-and-iteration.md`): the opening section is now "Ask
+  Jev first, edit once, then review drift". The first move on a failing cell
+  is to read the default triage answers and ask Jev with `--extra-questions`
+  until the cause is located, then make one edit. Both instructions already
+  existed (`question-tuning.md`, section 2 of the guide) but sat behind a
+  section that said to apply many small clarity changes and re-run. States the
+  cost (about $10 per 100,000 queries) and the budget (a few thousand queries
+  per gate run).
+- Drift review never loosens: a passage is judged against every locked anchor
+  that applies, a fix that would loosen is `owner_decision` and never `minor`,
+  and a fix that turns a pass into a fail is reverted.
+- Roles: the planner converges with Jev; the lead reviews the result for drift
+  and does not send replacement wording.
+- Stop condition: three consecutive failed runs of one bead, whether or not the
+  failing set is the same (was: identical sets only), and the response is to
+  ask Jev, not to ask the user.
+- The owner reviews once, at the end, with final approval of plan, ADRs,
+  requirements and anchors. The loop makes the changes, finds and corrects
+  drift, and reports what changed, significant drift and conflicts resolved.
+  No questions mid-loop; an unresolved cell is reported, not asked about.
+- Editing requirements and ADRs is part of planning: amend them explicitly,
+  never work around one.
+- The change report is mandatory: a round is not finished until the user has
+  been shown the HTML page, and the final message lists every ADR, REQ, NFR
+  and ANC change by id in prose (`change-report.md`, triage step 7).
+- Every failure list has a why column, and each `to_fix` record carries its own
+  `why` (failing run, question, answer and confidence, cause) and a specific
+  authority. Records are committed beside the plan, and the message announcing
+  a batch of fixes carries a table of item, anchor, run, why and action.
+- `SKILL.md` and `planning-review-workflow.md` say the same in their summaries.
+
+## 0.11.1 — 2026-11-12
+
+- Optional repository guidelines: `.sc/plan-anchor/plan-anchor-repo-guidelines.md`,
+  written and committed by the repository owner beside `settings.yaml`, holds
+  repository-specific notes for plan-anchor work (conflict resolution, triage,
+  plan fixes, question tuning, drift review, vocabulary, pitfalls). When
+  present, `SKILL.md`, the capture, tuning, planning-review and
+  development-review workflows, triage, the drift review and the
+  `anchor-tuning` agent read it; it supplements the approved intent, anchors
+  and quotes and never overrides them, and is never sent to Jev whole
+  (`references/anchor-document.md`, `references/jev-api.md`). Absent, nothing
+  changes. `plan_anchor_paths.find_guidelines` finds it and
+  `plan_anchor_settings.py show` reports it as `data.repo_guidelines_path`.
+  The installer never creates, changes or deletes it. Example:
+  `assets/examples/plan-anchor-repo-guidelines.example.md`.
+
+## 0.11.0 — 2026-11-09
+
+- sc-compose 1.8.0 is the minimum: `install.py` (PEP 723 header and the
+  installer's version check), the skill's dependency notes and the change
+  report require `>=1.8.0,<2`, and CI installs the released 1.8.0 CLI
+  (`scripts/install_sc_compose_ci.py`, sha256 per platform from the release's
+  `checksums.txt`). Rendered output is byte-identical to 1.7.0.
+- Change report (`scripts/change_report.py`, `references/change-report.md`):
+  after fast iteration and the drift review, one HTML page for the owner with
+  every anchor and plan-item change of the round and its scores before and
+  after (gate pass and satisfied/applicable per item, first run to last;
+  statement, scope, status, fixture and exclusion changes per anchor; fixture
+  checks and default versus tuned question scores), plus a JSON sidecar. Item
+  text before the round is the version the first run judged (tracker history,
+  or the committed item file for a Markdown plan). Rendered with the
+  sc-compose two-template pattern: one strict XHTML panel per item, anchor and
+  drift review (`templates/sprint-panel.xhtml.j2`, `anchor-panel.xhtml.j2`,
+  `drift-panel.xhtml.j2`) and one page shell (`templates/change-report.html.j2`)
+  that receives only top-level arrays and the rendered panels; Copy JSON and
+  Copy Context per panel, status pills, a table of contents and dark mode.
+  Reads only local files, git and the tracker; never calls Jev.
+- The drift review is data, not prose: the reviewer returns JSON matching
+  `assets/schemas/drift-review.schema.json` (`findings[]` with severity,
+  location, what changed, authority ref and quote, suggested fix, status and
+  fix note; `acceptable_choices[]`; `confirmations[]`), the planner updates
+  each finding's status after fixing, and the report renders it as a table
+  (`triage-and-iteration.md`, `planning-review-workflow.md`, `SKILL.md`).
+- Optional `issue_url_template` in `.sc/plan-anchor/settings.yaml` (an http(s)
+  URL holding `{id}`; `plan_anchor_settings.py set issue_url_template`): when
+  set, tracker ids in the change report are links. Unset by default; the
+  installer and `anchor_tracker.py write` keep it. A bad value is
+  `SETTINGS.INVALID_ISSUE_URL`.
+
+## 0.10.2 — 2026-11-09
+
+- Tuning and both gates now mandate fast iteration
+  (`triage-and-iteration.md`, "Iterate fast, then review drift"): the driver
+  applies small clarity changes itself (plan text, anchor statement wording,
+  scope, fixtures, exclusions, the tuner's authority recommendations), batches
+  every fix a run found, and re-runs at once, with no user approval before
+  testing and no issue-by-issue reports. Once anchors and gates pass, a
+  mandatory drift review compares every changed anchor and plan passage with
+  the approved intent and verbatim quotes, reverts or escalates material drift,
+  and reports the findings with a summary of changes.
+- Replaced "frozen, user-approved fixture or expected verdict before tuning or
+  rescoping" with apply, test, then drift-review in `SKILL.md`,
+  `triage-and-iteration.md`, `question-tuning.md`,
+  `question-tuning-workflow.md`, `planning-review-workflow.md`,
+  `capture-and-maintenance-workflow.md`, `anchor-capture.md`,
+  `anchor-document.md` and the `anchor-tuning` agent. "One class of change per
+  iteration" becomes one batch per run. Kept: immutable quotes, the tuner's
+  frozen oracle as the only authority for a question change, never tuning to
+  pass one bead, the `PLAN.TOO_LARGE` order, and the three-identical-failures
+  stop; the anchor-churn stop now triggers a drift review first.
+
+## 0.10.1 — 2026-11-07
+
+- `install.py` (#81): an upgrade covers every harness the folder uses. Without
+  `--target` the targets are the union of the lock's targets, every harness
+  whose `skills/plan-anchoring/` exists (locked or not) and every `.claude/`,
+  `.codex/` or `.cursor/` directory present at the destination; `claude` only
+  when there is none. `--target` adds to that set and never removes from it.
+  Before, `--target` defaulted to `claude`, so an unlocked install left
+  `.codex/` and `.cursor/` without plan-anchoring and with no warning.
+- The install JSON gains `target_reasons` (`locked`, `installed`, `present`,
+  `requested`, `default` per target); `--status` gains `missing_targets`, the
+  harness directories present with no install, and names them in `message`.
+- The installer docstring and help, the installer `SKILL.md`, the README and
+  `installation-and-troubleshooting.md` describe the new default.
+
+## 0.10.0 — 2026-11-07
+
+One release for the #77 (triage pointer), #79 (tournament runner) and #62
+(approved rubric inputs) stack.
+
+- `SKILL.md`: one line under "Select the workflow" points to `judge` triage
+  answers and `report --run <run>` for why an anchor fails.
+- `capture-and-maintenance-workflow.md` (B): tuning runs concurrently with
+  gate runs; the rubric no longer reads as a precondition of `judge`.
+- `rubric`: an anchor whose verdict is not `testable` carries a `next` field
+  naming `judge`/`report` and anchor-tuning `triage` (`gate: testability`).
+  Absent on `testable`. Add only.
+- `jev_judge.py batch` (new, the low layer): reads JSONL request lines, each
+  `{item, anchor, questions: [{candidate_id, questions, roles?}]}`, from stdin
+  or `--input` through one parser, and writes one JSONL result line per
+  (item, candidate, repeat) to stdout as soon as that line and every line
+  before it have an answer. Each line carries the request id, run id, request
+  digest, raw response, answers with probabilities, verdict, leaning, retry
+  count and attempts. Every line is also teed, unchanged and flushed, to the
+  append-only log `anchor-runs/tournament-<run>.jsonl`. At most 4 parallel
+  calls, one recorded retry per failed call, every line validated before the
+  first call, `allow_remote_judge` checked before any live call. The library
+  API is the async iterator `stream_batch`. Schemas:
+  `assets/schemas/jev-batch-request.schema.json`, `jev-batch-result.schema.json`.
+- `jev_judge.py bead-batch` (new, the high layer): turns item beads, an
+  anchor's gate question bead and (with `--candidates`) its open child
+  candidate beads into `batch` request lines; `--emit` prints them, otherwise
+  they run through `batch` in-process. It only reads beads.
+- `jev_judge.py tournament` (new): runs a tune tournament (frozen oracle x
+  candidate bundles x repeats) through `batch`, refuses a contract-invalid
+  request or a changed oracle, scores with protocol
+  `plan-anchor/question-tournament/2.0.0` (lexicographic ranking, acceptance
+  table, smallest accepted role-complete set; candidates tied on every key but
+  complexity and id all come back as co-leaders with nothing sealed, for the
+  anchor-tuning agent to choose) and writes `result_vars.json`
+  for `anchor-tuning-result.md.j2`. Schemas: `assets/schemas/tune-oracle.schema.json`,
+  `tune-candidates.schema.json`. The runner writes nothing to the tracker.
+- `anchor-tuning` agent, tune steps 5–6: run `jev_judge.py tournament`; never
+  hand-roll the tournament. `references/question-tuning.md` documents the
+  tournament and both file formats; `references/jev-api.md` the commands,
+  outcomes and error codes.
+- Add optional repository-confined approved-intent and sealed-question inputs to `rubric`, with strict integrity checks, request provenance, and unchanged default questions and confidence rules.
+- Bind context-bearing testability triage to the exact approved intent, preserving legacy requests without context.
+
+## 0.9.2 — 2026-11-07
+
+- `plan-anchoring/references/bead-layout.md`: the read-only rule is scoped to
+  the gate agents ("All read-only for these gate agents: they never create,
+  update, close or comment on beads. The planner in the main session writes
+  beads as planning happens."), the wording sc-lint f4cc339c carried before
+  the 0.9.1 install replaced it. `report-format.md`,
+  `development-review-workflow.md` and `planning-review-workflow.md` say
+  "the gate agents never write to beads" for the same rule. Docs only.
+
+## 0.9.1 — 2026-11-05
+
+- `report --format md` shows a failed cell's triage answers on a `Triage:`
+  line under it (`owns` no (0.90), `specific` yes (0.85), ...), in question
+  order, so the reader sees what `triage/rules.json` routes the cell on. A
+  triage request that failed is shown as `Triage error <code>`, and extras
+  dropped over the size cap are listed. `judge` records which answers are
+  triage in the cell's new `triage_questions` field; run files written by
+  0.9.0 have no such field and report as before. Verdicts are unchanged.
+
+## 0.9.0 — 2026-11-04
+
+- The planning gate ships default triage questions (`owns`, `specific`,
+  `stated`, `paraphrase`, `partial`) with routing rules (`rules.json`) and a
+  README of the measurements behind them, under `assets/triage/`. `judge --gate
+  plan` asks them automatically for each cell that fails, in a second request
+  after the verdict is decided (the gate request, and so every verdict, is the
+  same with or without them; measured: adding them to the gate request moved
+  near-threshold verdicts); `--no-triage-questions` skips them. The installer
+  seeds them once into `.sc/plan-anchor/triage/`, which the repository owns:
+  later installs never overwrite or record it, and `judge` prefers that copy
+  over the shipped one. `judge --help` and `triage/README.md` describe what the
+  questions are for and how to edit, add or drop one. Questions passed with
+  `--extra-questions` stay in the gate request, as in 0.8.8.
+- Extra-question answers are optional: a response or fixture that omits one is
+  accepted (a missing gate answer or an unknown id is still refused). Over
+  `--max-request-bytes`, extras are dropped and listed in
+  `extra_questions_dropped` instead of the item being refused (a triage request
+  that is too large is dropped the same way).
+- `questions_sha256` covers the gate questions only; extras get their own
+  `extra_questions_sha256`, so digests of existing runs are unchanged.
+
+## 0.8.8 — 2026-11-04
+
+- `exclude --from <file.jsonl>` records many exclusions in one call: one
+  `{id, item, reason}` or `{id, item, remove: true}` per line, applied all or
+  nothing. A bad line, a duplicate pair or an unknown anchor saves nothing,
+  and the error names `file:line`. Each line behaves as the single-cell form:
+  no version bump, a history event, `remove` of nothing is a no-op. `--id` and
+  `--item` are no longer argparse-required; omitting them without `--from`
+  returns `VALIDATION.INPUT`.
+- Fix: the planning and development gate agents give each question-bead
+  `show` 3 attempts (1 s, then 2 s apart) before stopping with
+  `TRACKER.SHOW_FAILED`. A transient tracker failure, such as a database
+  timeout, no longer aborts the gate. The error now says it failed after 3
+  attempts and keeps the last error text.
+- Fix: `coverage` takes the latest result per anchor and item, not the latest
+  run per item, so re-running some anchors no longer drops the others'
+  results. Cells taken from an earlier run are listed in
+  `carried_from_earlier_run`.
+- Fix: `coverage --anchors <anchors.json>` applies the record's current
+  exclusions. An exclusion recorded after a run shows as `excluded` with its
+  reason; one removed since is listed in `exclusion_removed_rejudge` and does
+  not count as covered. Without `--anchors`, runs are read as written.
+- `judge` and `check-fixtures` take `--extra-questions <file.jsonl>`
+  (repeatable): consumer questions, one `{id, type, instructions, criteria}`
+  per line, asked in the same request as the gate questions and recorded with
+  each cell. They never gate: `decide()` ignores them, an id already in the
+  set is refused, and a role mapped to one (for example by an override) is
+  refused with `QUESTIONS.ROLES` before any call. The run records each file's
+  path, sha256 and ids in `extra_questions`. Default questions, roles and
+  verdicts are unchanged.
+
 ## 0.8.7 — 2026-11-02
 
 - Independent triage now accepts disputed testability-rubric results with the

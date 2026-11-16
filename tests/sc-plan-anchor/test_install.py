@@ -52,12 +52,12 @@ def _missing_deps():
         except ImportError:
             missing.append(module)
     if "sc_compose" not in missing and isinstance(inst.check_sc_compose(), inst.Err):
-        missing.append("sc_compose (version outside >=1.7.0,<2)")
+        missing.append("sc_compose (version outside >=1.8.0,<2)")
     return missing
 
 
 MISSING = _missing_deps()
-SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.7.0,<2' "
+SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.8.0,<2' "
                "(sc-compose publishes CPython 3.11 wheels); CI's installer job runs these")
 
 
@@ -192,17 +192,18 @@ class RenderingTests(unittest.TestCase):
         copied_py = [rel for rel in self.package.skill if rel.endswith(".py") and rel not in self.package.rendered]
         self.assertEqual(copied_py, [])
         source = TEMPLATES / "skills" / "plan-anchoring"
-        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md"}
+        expected = {"SKILL.md", "assets/templates/anchor-questions-bead.md", "assets/templates/intent.md", "assets/triage/README.md",
+                    "assets/examples/plan-anchor-repo-guidelines.example.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
-        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 7)
+        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 8)
         self.assertEqual(set(self.package.rendered), expected)
-        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 22)
+        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 23)
         self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 3 + 22 + 7)  # agents, SKILL.md + 2 assets templates, references, scripts
+        self.assertEqual(len(templates), 3 + 5 + 23 + 8)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -268,13 +269,15 @@ class RenderingTests(unittest.TestCase):
                 self.assertEqual(installed["bad"], sorted(("docs/plans/phase-<current>", "../x", "/x", "x/", "a\\b")))
 
     def test_runtime_templates_are_copied_verbatim(self):
-        """The skill's own templates/*.md.j2 are sc-compose inputs at run time, not install templates."""
+        """The skill's own templates/*.j2 are sc-compose inputs at run time, not install templates."""
         source = TEMPLATES / "skills" / "plan-anchoring"
         runtime = sorted(t.relative_to(source).as_posix() for t in TEMPLATES.rglob("*.j2") if not inst.is_install_template(t))
-        self.assertEqual(runtime, [f"templates/{n}.md.j2" for n in ("agent-invocation", "anchor-tuning-result",
-                                                                     "anchor-tuning-review-feedback",
-                                                                     "anchor-tuning-testability-request",
-                                                                     "anchor-tuning-tune-request")])
+        self.assertEqual(runtime, sorted([f"templates/{n}.md.j2" for n in ("agent-invocation", "anchor-tuning-result",
+                                                                            "anchor-tuning-review-feedback",
+                                                                            "anchor-tuning-testability-request",
+                                                                            "anchor-tuning-tune-request")]
+                                         + ["templates/change-report.html.j2"]
+                                         + [f"templates/{n}-panel.xhtml.j2" for n in ("anchor", "drift", "sprint")]))
         for rel in runtime:
             for tracker in inst.TRACKERS:
                 self.assertEqual(self.renderer.skill_file(rel, tracker, "claude").value, (source / rel).read_bytes(), rel)
@@ -368,6 +371,45 @@ class GeneratedDataTests(unittest.TestCase):
         self.assertFalse([p for p in package.skill if p.startswith("tests/")])
 
 
+# ---------------------------------------------------------------- harness targets (#81)
+
+
+class HarnessTargetTests(unittest.TestCase):
+    """Target selection and --status need neither sc-compose nor a tracker."""
+
+    def test_status_flags_present_harnesses_with_no_install(self):
+        repo = TempRepo(self)
+        repo.path(".claude/skills/plan-anchoring").mkdir(parents=True)
+        repo.path(".codex").mkdir()
+        repo.path(".cursor").mkdir()
+        result = inst.status(repo.root)
+        self.assertIsInstance(result, inst.Ok, getattr(result, "error", None))
+        self.assertEqual(result.value["missing_targets"], ["codex", "cursor"])
+        self.assertIn("no plan-anchoring in .codex/, .cursor/", result.value["message"])
+
+    def test_status_reports_nothing_missing_when_every_harness_is_installed(self):
+        repo = TempRepo(self)
+        repo.path(".claude/skills/plan-anchoring").mkdir(parents=True)
+        result = inst.status(repo.root)
+        self.assertIsInstance(result, inst.Ok, getattr(result, "error", None))
+        self.assertEqual(result.value["missing_targets"], [])
+        self.assertNotIn("no plan-anchoring", result.value["message"])
+
+    def test_choose_targets_unions_lock_installs_present_and_requested(self):
+        repo = TempRepo(self)
+        repo.path(".codex/skills/plan-anchoring").mkdir(parents=True)
+        lock = inst.Lock("0.9.2", "br", ("claude",), {})
+        self.assertEqual(inst.choose_targets(repo.root, lock, ["cursor"]),
+                         {"claude": ["locked"], "codex": ["installed", "present"], "cursor": ["requested"]})
+
+    def test_cli_without_target_requests_nothing(self):
+        seen = []
+        with mock.patch.object(inst, "install", side_effect=lambda opts, **kw: seen.append(opts) or inst.Ok({})), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(inst.main(["--dest", ".", "--tracker", "br"]), 0)
+        self.assertEqual(seen[0].targets, [])
+
+
 # ---------------------------------------------------------------- install
 
 
@@ -428,6 +470,48 @@ class InstallTests(unittest.TestCase):
             registry = repo.path(f".{target}/skills/plan-anchoring/registry.yaml").read_text(encoding="utf-8")
             self.assertIn(f"path: .{target}/agents/anchor-tuning.md", registry)
 
+    # #81: an upgrade covers every harness the folder uses; --target only adds.
+    def test_unlocked_claude_install_upgrades_every_present_harness(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo))
+        repo.path(inst.LOCK_RELPATH).unlink()  # an install from before the lock existed
+        repo.path(".codex").mkdir()
+        repo.path(".cursor").mkdir()
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["targets"], ["claude", "codex", "cursor"])
+        self.assertEqual(data["target_reasons"], {"claude": ["installed", "present"], "codex": ["present"],
+                                                  "cursor": ["present"]})
+        self.assert_installed(repo, "br", ["claude", "codex", "cursor"])
+
+    def test_locked_targets_are_kept(self):
+        repo = TempRepo(self, beads="sqlite")
+        self.ok(run_install(repo, targets=("claude", "codex")))
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["locked", "installed", "present"],
+                                                  "codex": ["locked", "installed", "present"]})
+        self.assert_installed(repo, "br", ["claude", "codex"])
+
+    def test_claude_only_repo_installs_claude_only(self):
+        repo = TempRepo(self, beads="sqlite")
+        repo.path(".claude").mkdir()
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["present"]})
+        self.assert_installed(repo, "br", ["claude"])
+        self.assertFalse(repo.path(".codex").exists() or repo.path(".cursor").exists())
+
+    def test_no_harness_and_no_target_defaults_to_claude(self):
+        repo = TempRepo(self, beads="sqlite")
+        data = self.ok(run_install(repo, targets=()))
+        self.assertEqual(data["target_reasons"], {"claude": ["default"]})
+        self.assert_installed(repo, "br", ["claude"])
+
+    def test_explicit_target_adds_to_the_set(self):
+        repo = TempRepo(self, beads="sqlite")
+        repo.path(".codex").mkdir()
+        data = self.ok(run_install(repo, targets=("cursor",)))
+        self.assertEqual(data["target_reasons"], {"codex": ["present"], "cursor": ["requested"]})
+        self.assertEqual(self.lock(repo)["targets"], ["codex", "cursor"])
+
     def test_rerun_is_idempotent(self):
         repo = TempRepo(self, beads="sqlite")
         self.ok(run_install(repo))
@@ -462,6 +546,40 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(repo.path(".claude/skills/plan-anchoring/tests").exists())
         self.assertEqual(repo.path(".claude/agents/mine.md").read_text(encoding="utf-8"), "consumer agent\n")
         self.assertNotIn(".claude/agents/anchor-question-tune.md", self.lock(repo)["files"])
+
+    def test_repo_guidelines_are_never_written_by_the_installer(self):
+        key = ".sc/plan-anchor/plan-anchor-repo-guidelines.md"
+        repo = TempRepo(self, beads="dolt")
+        self.ok(run_install(repo, tracker="bd"))
+        self.assertFalse(repo.path(key).exists())  # never created
+        data = b"# Owner notes\n\n- Prefer cuts.\r\n\xe2\x80\x94 trailing bytes kept\n"
+        repo.path(key).write_bytes(data)
+        steps = {
+            "rerun": lambda: run_install(repo, tracker="bd"),
+            "overwrite": lambda: run_install(repo, tracker="bd", overwrite=True),
+            "tracker switch": lambda: (repo.beads("sqlite"), run_install(repo, tracker="br"))[1],
+            "add targets": lambda: run_install(repo, tracker="br", targets=("claude", "codex", "cursor")),
+        }
+        for step, run in steps.items():
+            with self.subTest(step=step):
+                result = self.ok(run())
+                self.assertEqual(repo.path(key).read_bytes(), data)
+                plan = result["plan"]
+                for kind in ("create", "replace", "remove", "backup"):
+                    self.assertNotIn(key, plan[kind])
+                self.assertNotIn(key, self.lock(repo)["files"])
+        lock = self.lock(repo)  # an upgrade from an earlier version
+        lock["version"] = "0.6.0"
+        repo.path(inst.LOCK_RELPATH).write_text(json.dumps(lock), encoding="utf-8")
+        data_upgrade = self.ok(run_install(repo, tracker="br"))
+        self.assertEqual(data_upgrade["previous_version"], "0.6.0")
+        self.assertEqual(repo.path(key).read_bytes(), data)
+        self.assertNotIn(key, self.lock(repo)["files"])
+        repo.path(inst.LOCK_RELPATH).unlink()  # an install from before the lock existed
+        self.ok(run_install(repo, tracker="br"))
+        self.assertEqual(repo.path(key).read_bytes(), data)
+        legacy = json.loads(inst.LEGACY_PATH.read_text(encoding="utf-8"))
+        self.assertFalse(any(key in json.dumps(v) for v in legacy.values()))
 
     def test_modified_file_is_refused_then_backed_up_with_overwrite(self):
         repo = TempRepo(self, beads="sqlite")
@@ -813,6 +931,26 @@ class RealInstallTests(unittest.TestCase):
         self.assertTrue(json.loads(proc.stdout)["success"], proc.stdout)
         return root
 
+    def test_triage_defaults_are_seeded_once_and_never_overwritten(self):
+        triage = ".sc/plan-anchor/triage"
+        names = {"plan-questions.jsonl", "rules.json", "README.md"}
+        for tracker in inst.TRACKERS:
+            with self.subTest(tracker=tracker):
+                root = self.install(self.repo(f"triage-{tracker}"), tracker)
+                folder = root / triage
+                self.assertEqual({p.name for p in folder.iterdir()}, names)
+                shipped = root / ".claude" / "skills" / "plan-anchoring" / "assets" / "triage"
+                for name in names:
+                    self.assertEqual((folder / name).read_bytes(), (shipped / name).read_bytes(), name)
+                lock = json.loads((root / ".sc" / "plan-anchor" / "install-lock.json").read_text(encoding="utf-8"))
+                self.assertFalse(any(k.startswith(triage) for k in lock["files"]))  # the repository owns it
+                # the repository edits its rules and drops a file; a rerun changes neither
+                (folder / "rules.json").write_text('{"edited": true}\n', encoding="utf-8")
+                (folder / "README.md").unlink()
+                self.install(root, tracker)
+                self.assertEqual((folder / "rules.json").read_text(encoding="utf-8"), '{"edited": true}\n')
+                self.assertFalse((folder / "README.md").exists())
+
     def test_each_install_names_only_its_tracker(self):
         for tracker in inst.TRACKERS:
             with self.subTest(tracker=tracker):
@@ -845,7 +983,9 @@ class RealInstallTests(unittest.TestCase):
                     continue
                 with self.subTest(tracker=tracker, path=rel):
                     harness, kind, rest = rel.split("/", 2)
-                    if kind == "agents":
+                    if rel.startswith(".sc/plan-anchor/triage/"):  # seeded from the shipped triage asset
+                        source = skill_src / "assets" / "triage" / f"{rel.rsplit('/', 1)[1]}.j2"
+                    elif kind == "agents":
                         source = TEMPLATES / "agents" / f"{rest}.j2"
                     else:
                         source = skill_src / f"{rest.split('/', 1)[1]}.j2"
@@ -854,7 +994,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 3 + 22 + 7))
+            self.assertEqual(checked, 3 * (3 + 5 + 23 + 8) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):

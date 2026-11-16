@@ -16,27 +16,27 @@ import tempfile
 import zipfile
 
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 ASSETS = {
     ("linux", "x86_64"): (
         f"sc-compose_{VERSION}_x86_64-unknown-linux-gnu.tar.gz",
-        "5e2ffeb47072b26c47a44bfcc0d7068d0dfb8d5742feecc309fc535dab2e1c84",
+        "a12a16259c1cab58c4c611320653e442fe3440c2a15cce0ba617ad77d145809a",
     ),
     ("linux", "aarch64"): (
         f"sc-compose_{VERSION}_aarch64-unknown-linux-gnu.tar.gz",
-        "fa2cd0247c78954a6f0d83dcf053a0405adda65dddbe5b9da820b4ed71c0b32a",
+        "b4a909d0638914856a6e3c21598d4ee9f78e2a1d9b6d6aefb3d3d624a496c3f1",
     ),
     ("darwin", "x86_64"): (
         f"sc-compose_{VERSION}_x86_64-apple-darwin.tar.gz",
-        "6e32de8ee1fe627e64bd68f85dd4ba85d18fae2a8627d9dd8aeb4c42bdde674a",
+        "5f70b67b35e2c3f8e2784a7aea631fbf1ca0cf91f8378e4f1b44f96242a9d057",
     ),
     ("darwin", "aarch64"): (
         f"sc-compose_{VERSION}_aarch64-apple-darwin.tar.gz",
-        "d7590a41921bef5a428bcbd33dda48006c6f6df5eafa83217cb820240fe6544b",
+        "c7b03453d357f36997b27467b02cfe6124713ca1ee9344175c31f8e0dc5f5408",
     ),
     ("win32", "x86_64"): (
         f"sc-compose_{VERSION}_x86_64-pc-windows-msvc.zip",
-        "80027b651ef86f2abe9ca88a16635fd53994fc0e9ec3c6c14d56ab151cbb3111",
+        "987c33e1a8d66d364c3a3b85e8e54b10f47d60321ac464cd87a15b9245a91335",
     ),
 }
 

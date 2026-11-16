@@ -29,6 +29,9 @@ from the working directory, nearest first, and stop before the home directory.
     copy is refused.
   - ``find_settings(start)`` / ``find_lock(start)``: the nearest
     ``.sc/plan-anchor/settings.yaml`` / ``install-lock.json``.
+  - ``find_guidelines(start)``: the nearest
+    ``.sc/plan-anchor/plan-anchor-repo-guidelines.md``, an optional file the
+    repository owns and the installer never writes, or None.
   - ``global_location(path)``: why ``path`` is a global (user-wide or
     machine-wide) harness location, or None. The home directory itself, and
     anything inside ``~/.claude``, ``~/.codex``, ``~/.cursor``, ``~/.agents``,
@@ -57,6 +60,7 @@ HARNESS_DIRS = (".claude", ".codex", ".cursor")  # the directories install.py wr
 GLOBAL_HARNESS_DIRS = HARNESS_DIRS + (".agents",)
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
 LOCK_RELPATH = ".sc/plan-anchor/install-lock.json"
+GUIDELINES_RELPATH = ".sc/plan-anchor/plan-anchor-repo-guidelines.md"  # repository-owned; never installed
 SCRIPT_RELPATH = f"skills/{SKILL_NAME}/scripts/jev_judge.py"
 # Machine-wide skill/config directories (Codex admin skills; Claude Code managed settings).
 SYSTEM_GLOBALS = (
@@ -170,6 +174,15 @@ def find_settings(start: Path, home: Optional[Path] = None) -> Optional[Path]:
 def find_lock(start: Path, home: Optional[Path] = None) -> Optional[Path]:
     """The nearest ``.sc/plan-anchor/install-lock.json`` at or above ``start`` (stopping before home)."""
     return _nearest(start, LOCK_RELPATH, home)
+
+
+def find_guidelines(start: Path, home: Optional[Path] = None) -> Optional[Path]:
+    """The nearest ``.sc/plan-anchor/plan-anchor-repo-guidelines.md`` file at or above ``start``, or None."""
+    for directory in ancestors(start, home):
+        candidate = directory.joinpath(*GUIDELINES_RELPATH.split("/"))
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def trusted_script(script: Path, start: Path, home: Optional[Path] = None) -> Tuple[bool, str]:

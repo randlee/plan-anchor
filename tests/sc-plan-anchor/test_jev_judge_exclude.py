@@ -30,7 +30,8 @@ def excluded(item="ex-42", reason=REASON):
 
 
 def sent_anchor_ids(transport):
-    return [b["state"]["anchor"]["id"] for b in transport.bodies]
+    """The anchors judged: one gate request each (a failed cell's later triage request is not a judgment)."""
+    return [b["state"]["anchor"]["id"] for b in transport.bodies if "relevant" in b["questions"]]
 
 
 class JudgeExclusionTests(unittest.TestCase):
@@ -271,6 +272,86 @@ class ExcludeCommandTests(unittest.TestCase):
             code, out = run_cli(["exclude", "--anchors", path, "--id", "ANC-011", "--item", "ex-42", "--remove"])
             self.assertEqual((code, out["success"], out["data"]["changed"], out["error"]), (0, True, False, None))
             self.assertEqual(Path(path).read_text(), before)
+
+
+def lines(d, name, *entries):
+    return write(d, name, "\n".join(e if isinstance(e, str) else json.dumps(e) for e in entries) + "\n")
+
+
+class ExcludeFromFileTests(unittest.TestCase):
+    def setUp(self):
+        self._d = tempfile.TemporaryDirectory()
+        self.d = self._d.name
+        self.addCleanup(self._d.cleanup)
+        self.path = write(self.d, "anchors.json", record(cli_anchor(version=2), cli_anchor("ANC-012", exclude=excluded("ex-7", "Old reason."))))
+
+    def anchors(self):
+        return {a["id"]: a for a in json.loads(Path(self.path).read_text())["anchors"]}
+
+    def test_applies_every_line_like_the_single_cell_form(self):
+        src = lines(self.d, "x.jsonl",
+                    {"id": "ANC-011", "item": "ex-1", "reason": f" {REASON} "},
+                    "",
+                    {"id": "ANC-011", "item": "ex-2", "reason": "Second."},
+                    {"id": "ANC-012", "item": "ex-7", "remove": True},
+                    {"id": "ANC-012", "item": "ex-9", "remove": True})  # nothing to remove: a no-op
+        code, out = run_cli(["exclude", "--anchors", self.path, "--from", src])
+        self.assertEqual(code, 0, out)
+        self.assertEqual((out["data"]["count"], out["data"]["changed"]), (4, 3))
+        a = self.anchors()
+        self.assertEqual(a["ANC-011"]["exclude"], [{"item": "ex-1", "reason": REASON}, {"item": "ex-2", "reason": "Second."}])
+        self.assertEqual(a["ANC-011"]["version"], 2)  # never a version bump
+        self.assertNotIn("exclude", a["ANC-012"])
+        self.assertEqual([h["event"] for h in a["ANC-011"]["history"]][-2:], ["excluded", "excluded"])
+        self.assertEqual(jj.validate_record(json.loads(Path(self.path).read_text())), [])
+        # the same records as the single-cell form produces
+        single = write(self.d, "single.json", record(cli_anchor(version=2)))
+        run_cli(["exclude", "--anchors", single, "--id", "ANC-011", "--item", "ex-1", "--reason", REASON])
+        run_cli(["exclude", "--anchors", single, "--id", "ANC-011", "--item", "ex-2", "--reason", "Second."])
+        one = json.loads(Path(single).read_text())["anchors"][0]
+        self.assertEqual(one["exclude"], a["ANC-011"]["exclude"])
+
+    def test_any_bad_line_saves_nothing(self):
+        before = Path(self.path).read_text()
+        good = {"id": "ANC-011", "item": "ex-1", "reason": REASON}
+        cases = (
+            ("{not json", "INPUT.MALFORMED"),
+            ("[1]", "INPUT.MALFORMED"),
+            ({"id": "ANC-011", "item": "ex-2", "reason": "r", "extra": 1}, "INPUT.MALFORMED"),
+            ({"id": "ANC-011", "item": "ex-2"}, "VALIDATION.INPUT"),
+            ({"id": "ANC-011", "item": " ", "reason": "r"}, "VALIDATION.INPUT"),
+            ({"id": "ANC-011", "item": "ex-2", "remove": "yes"}, "INPUT.MALFORMED"),
+            ({"id": "ANC-099", "item": "ex-2", "reason": "r"}, "ANCHOR.UNKNOWN"),
+            (dict(good), "VALIDATION.INPUT"),  # duplicate of line 1
+        )
+        for bad, expected in cases:
+            with self.subTest(line=bad):
+                code, out = run_cli(["exclude", "--anchors", self.path, "--from", lines(self.d, "x.jsonl", good, bad)])
+                self.assertEqual((code, out["error"]["code"]), (2, expected), out)
+                self.assertIn("x.jsonl:2", out["error"]["message"])
+                self.assertEqual(Path(self.path).read_text(), before)
+
+    def test_file_and_flag_misuse_is_refused(self):
+        before = Path(self.path).read_text()
+        src = lines(self.d, "x.jsonl", {"id": "ANC-011", "item": "ex-1", "reason": REASON})
+        for argv, expected in (
+            (["--from", src, "--id", "ANC-011"], "VALIDATION.INPUT"),
+            (["--from", src, "--remove"], "VALIDATION.INPUT"),
+            (["--from", str(Path(self.d) / "absent.jsonl")], "INPUT.MISSING"),
+            (["--from", lines(self.d, "empty.jsonl", "")], "INPUT.EMPTY"),
+            ([], "VALIDATION.INPUT"),
+            (["--id", "ANC-011"], "VALIDATION.INPUT"),
+        ):
+            with self.subTest(argv=argv):
+                code, out = run_cli(["exclude", "--anchors", self.path, *argv])
+                self.assertEqual((code, out["error"]["code"]), (2, expected), out)
+        self.assertEqual(Path(self.path).read_text(), before)
+
+    def test_all_no_ops_leave_the_file_untouched(self):
+        before = Path(self.path).read_text()
+        code, out = run_cli(["exclude", "--anchors", self.path, "--from", lines(self.d, "x.jsonl", {"id": "ANC-011", "item": "ex-5", "remove": True})])
+        self.assertEqual((code, out["data"]["changed"]), (0, 0))
+        self.assertEqual(Path(self.path).read_text(), before)
 
 
 class LintTests(unittest.TestCase):
