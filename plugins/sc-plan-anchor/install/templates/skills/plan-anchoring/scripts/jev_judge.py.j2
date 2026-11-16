@@ -1771,6 +1771,7 @@ DECIDR_CATEGORY_CODES = {
     "auth": "AUTH.CREDENTIALS", "quota": "JEV.RATE_LIMITED", "busy": "JEV.OVERLOADED",
     "network": "JEV.NETWORK", "response_invalid": "JEV.RESPONSE_INVALID",
     "validation": "JEV.VALIDATION", "cancelled": "CANCELED",
+    "config": "DECIDR.CONFIG", "log": "DECIDR.LOG", "other": "DECIDR.ERROR",
 }
 DECIDR_ERROR_CODES = {
     "decision.context_exceeded": "JEV.CONTEXT_EXCEEDED",
@@ -1787,6 +1788,11 @@ DECIDR_ERROR_ACTIONS = {
     "JEV.NETWORK": "Check network access and retry.",
     "JEV.RESPONSE_INVALID": "Check the model and question ids, then retry.",
     "JEV.HTTP": "Check the request and the provider error details.",
+    "DECIDR.CONFIG": "Check the sc-decidr configuration and correct the reported setting.",
+    "DECIDR.LOG": "Check the sc-decidr log location and write permissions.",
+    "DECIDR.ERROR": "Inspect the sc-decidr error details and correct the cause.",
+    "DECIDR.INVALID_RESULT": "Inspect the invalid sc-decidr result and check the wheel and client versions.",
+    "DEPENDENCY.SC_DECIDR": "Install the sc-decidr 0.2 wheel in the active Python environment.",
     "CANCELED": "Retry the command when ready.",
 }
 
@@ -1862,6 +1868,11 @@ def _sag_error(exc: Exception) -> JudgeError:
                                   message=getattr(exc, "message", str(exc))))
 
 
+def _client_error(exc: decidr_client.ClientError) -> Result[dict, JudgeError]:
+    return fail(exc.code, str(exc), action=DECIDR_ERROR_ACTIONS.get(
+        exc.code, "Inspect the sc-decidr client error and correct its cause."))
+
+
 def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
     """Call the shared transport once; credentials and provider retries belong to sc-decidr."""
     try:
@@ -1871,7 +1882,7 @@ def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
             keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
         )
     except decidr_client.ClientError as exc:
-        return fail(exc.code, str(exc), action="Install the sc-decidr 0.2 wheel in the active Python environment.")
+        return _client_error(exc)
     except Exception as exc:
         if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
             return Err(_sag_error(exc))
@@ -3820,7 +3831,7 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
             timeout_secs=settings.timeout, workers=settings.max_workers,
         )
     except decidr_client.ClientError as exc:
-        return fail(exc.code, str(exc), action="Install the sc-decidr 0.2 wheel in the active Python environment.")
+        return _client_error(exc)
     except Exception as exc:
         if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
             return Err(_sag_error(exc))

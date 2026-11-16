@@ -164,6 +164,42 @@ def stub_client(transport):
 
 
 class CredentialLookupTests(unittest.TestCase):
+    def test_wheel_categories_have_specific_codes_and_actions(self):
+        cases = {
+            "config": ("DECIDR.CONFIG", "configuration"),
+            "log": ("DECIDR.LOG", "log location"),
+            "other": ("DECIDR.ERROR", "error details"),
+        }
+        for category, (code, action) in cases.items():
+            with self.subTest(category=category):
+                detail = {"id": "example.error", "category": category, "message": "controlled failure"}
+                with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                        mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": detail}), code)):
+                    result = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
+                self.assertEqual(result.code, code)
+                self.assertIn(action, result.action)
+                self.assertEqual(result.message, "controlled failure")
+                self.assertFalse(result.recoverable)
+
+    def test_client_errors_have_correct_actions_for_single_and_batch(self):
+        cases = {
+            "DECIDR.INVALID_RESULT": "invalid sc-decidr result",
+            "DEPENDENCY.SC_DECIDR": "Install the sc-decidr",
+        }
+        settings = mock.Mock(gate="plan", model="jev", timeout=30, max_workers=1)
+        for code, action in cases.items():
+            for batch in (False, True):
+                with self.subTest(code=code, batch=batch), \
+                        mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                        mock.patch.object(jj, "load_question_set", return_value=jj.Ok({"roles": {}})), \
+                        mock.patch.object(jj.decidr_client, "call_batch" if batch else "call",
+                                          side_effect=jj.decidr_client.ClientError(code, "controlled failure")):
+                    result = (jj._live_batch_results([], settings, Path("unused"), False) if batch else
+                              jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
+                    error = failure(result)
+                    self.assertEqual((error.code, error.message), (code, "controlled failure"))
+                    self.assertIn(action, error.action)
+
     def test_remote_preflight_checks_consent_without_reading_credentials(self):
         args = mock.Mock(repository_root=".")
         with mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)) as consent:
