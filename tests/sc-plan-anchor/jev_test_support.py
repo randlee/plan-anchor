@@ -87,7 +87,7 @@ def wheel_line(line, *, position=0, sends=1):
 
 
 def context_overflow_line(*, sends=1, position=0):
-    """sc-decidr 0.2.3 ResultLine/ContextExceeded shape, with controlled envelope values."""
+    """sc-decidr ResultLine/ContextExceeded shape, with controlled envelope values."""
     return wheel_line({"error": {
         "id": "decision.context_exceeded",
         "message": "the API answered HTTP 413: request exceeds the model's context window",

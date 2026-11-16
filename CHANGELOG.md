@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.5
+
+- Adopt the sc-decidr 0.2.4 generated client and its shared ClientError for wheel and local errors; remove local conversions and action overrides, preserving Rust messages and context-shortening state.
+
 ## 0.12.4 — 2026-11-16
 
 - Render the shared client from sc-decidr 0.2.3 and use its error adapters and streaming result helpers, removing duplicated wheel-facing logic.
