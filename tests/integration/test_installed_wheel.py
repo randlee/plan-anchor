@@ -4,13 +4,13 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/sc-plan-anchor'))
+from child_support import run_test_child
 from layout_support import SCRIPTS, TEST_TRACKER
 from test_jev_judge import anchor, record, run_cli, write
 import test_tournament as tournament_cases
@@ -24,8 +24,8 @@ if os.environ.get('PLAN_ANCHOR_LIVE_INTEGRATION') != '1':
 def live(tmp_path, monkeypatch, record_property):
     assert importlib.metadata.version('sc-decidr') == os.environ['PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION']
     monkeypatch.chdir(tmp_path)
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True, timeout=30)
-    subprocess.run([sys.executable, str(SCRIPTS / 'plan_anchor_settings.py'), 'set', 'allow_remote_judge', 'true'],
+    run_test_child(['git', 'init', '-q', str(tmp_path)], check=True, timeout=30)
+    run_test_child([sys.executable, str(SCRIPTS / 'plan_anchor_settings.py'), 'set', 'allow_remote_judge', 'true'],
                    check=True, capture_output=True, text=True, timeout=30)
     config = tmp_path / 'wheel-config'
     config.mkdir()

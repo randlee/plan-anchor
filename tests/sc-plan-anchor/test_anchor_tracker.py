@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import textwrap
@@ -903,7 +904,7 @@ class RepositoryContractTests(unittest.TestCase):
         code = ("import sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                 f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"
                 "assert 'plan_anchor_settings' not in sys.modules, 'imported eagerly'\n")
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("import yaml", (SCRIPTS / "plan_anchor_settings.py").read_text(encoding="utf-8"))
         for name in ("jev_judge.py", "anchor_runner_contract.py",
@@ -911,7 +912,7 @@ class RepositoryContractTests(unittest.TestCase):
             with self.subTest(help=name):
                 code = ("import runpy, sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                         f"sys.argv = ['{name}', '--help']\nrunpy.run_path({str(SCRIPTS / name)!r}, run_name='__main__')\n")
-                proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+                proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_ci_installs_pyyaml(self):

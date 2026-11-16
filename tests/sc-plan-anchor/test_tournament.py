@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -422,7 +423,7 @@ class BatchTests(TournamentCase):
         """The installed script as a separate process: stdout bytes exactly as a caller sees them."""
         argv = [sys.executable, str(SCRIPTS / "jev_judge.py"), "batch", "--run-dir", str(self.d / run_dir), "--run-name", "r1",
                 "--answers-file", self.put("answers.json", self.FIXTURE), "--repeat", "2", "--request-prefix", "run-7", *extra]
-        proc = subprocess.run(argv, input=stdin, capture_output=True, cwd=str(self.d))
+        proc = run_test_child(argv, input=stdin, capture_output=True, cwd=str(self.d))
         return proc
 
     def log(self, run_dir):
@@ -475,7 +476,7 @@ class BatchTests(TournamentCase):
         argv = [sys.executable, "-c", wrapper, str(SCRIPTS / "jev_judge.py"), "batch", "--run-dir", str(self.d / "crlf"),
                 "--run-name", "r1", "--answers-file", self.put("answers.json", self.FIXTURE), "--input",
                 self.put("in.jsonl", jsonl(self.LINES))]
-        proc = subprocess.run(argv, capture_output=True, cwd=str(self.d))
+        proc = run_test_child(argv, capture_output=True, cwd=str(self.d))
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         self.assertEqual(len(proc.stdout.splitlines()), 3)
         self.assertNotIn(b"\r", proc.stdout)

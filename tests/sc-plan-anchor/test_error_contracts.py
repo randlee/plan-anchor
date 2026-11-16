@@ -11,7 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -284,7 +284,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
             with self.subTest(name), Workspace(files) as ws:
                 installed_scripts(ws.path)
                 environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
-                proc = subprocess.run([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
+                proc = run_test_child([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
                                       capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(proc.returncode, exit_code, proc.stdout + proc.stderr)
                 self.assertEqual(json.loads(proc.stdout), {"success": False, "data": data, "error": error})
@@ -328,7 +328,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
 
     def test_non_numeric_flag_exits_two_with_json(self):
         for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
-            proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
+            proc = run_test_child([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
                                    "--item-id", "ex-1", "--item-text", "t", "--dry-run", flag, value],
                                   capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(proc.returncode, 2, flag)
@@ -486,7 +486,7 @@ class RunnerContractErrorContracts(unittest.TestCase):
 class TuningContractCli(unittest.TestCase):
     def run_cli(self, kind, value):
         with Workspace({"f.json": value}) as ws:
-            proc = subprocess.run([sys.executable, str(SCRIPTS / "anchor_tuning_contract.py"), kind, str(ws.path / "f.json")],
+            proc = run_test_child([sys.executable, str(SCRIPTS / "anchor_tuning_contract.py"), kind, str(ws.path / "f.json")],
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 

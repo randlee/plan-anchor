@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from child_support import run_test_child
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
@@ -1535,11 +1536,10 @@ class FailClosedTests(unittest.TestCase):
 
 def run_installed(script, argv, cwd, home=None):
     """Run an installed copy of jev_judge.py as an agent does (a process, from ``cwd``); (exit code, JSON)."""
-    import subprocess
     environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
     if home is not None:
         environment["HOME"] = environment["USERPROFILE"] = str(home)  # expanduser("~") on POSIX / Windows
-    proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
+    proc = run_test_child([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
                           capture_output=True, text=True, encoding="utf-8")
     try:
         return proc.returncode, json.loads(proc.stdout)
