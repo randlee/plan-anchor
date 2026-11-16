@@ -222,6 +222,29 @@ class CredentialLookupTests(unittest.TestCase):
                           and name not in {"keyring_service", "keyring_account"}], [])
         self.assertNotIn("session_log", kwargs)
 
+    def test_wheel_failures_are_forwarded_once_with_overrides_and_attempts(self):
+        cases = (("auth.credentials", "auth", "AUTH.CREDENTIALS", 0, 401),
+                 ("http.provider_busy", "busy", "JEV.OVERLOADED", 5, 529),
+                 ("http.network", "network", "JEV.NETWORK", 2, None))
+        for identifier, category, code, attempts, status in cases:
+            with self.subTest(category=category):
+                detail = {"id": identifier, "category": category, "message": "provider detail",
+                          "attempts": attempts, "status": status}
+                token = mock.Mock()
+                with mock.patch.object(jj, "_new_cancel_token", return_value=token), \
+                        mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": detail}), code)) as send:
+                    result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
+                send.assert_called_once()
+                self.assertIsInstance(result, jj.Err)
+                self.assertEqual((result.error.code, result.error.meta["attempts"], result.error.status),
+                                 (code, attempts, status))
+                expected = "Jev authentication failed; response body withheld" if category == "auth" else "provider detail"
+                self.assertEqual(result.error.message, expected)
+                kwargs = send.call_args.kwargs
+                self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+                                 ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+                self.assertIs(kwargs["cancel"], token)
+
     def test_missing_key_is_the_wheels_typed_auth_error(self):
         auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
         with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \

@@ -549,6 +549,7 @@ class BatchTests(TournamentCase):
         self.assertEqual((line["request_id"], line["ok"], line["retry_count"], line["attempts"][0]["attempt"]),
                          ("live/s1/ANC-001/c1/r1", False, 4, 5))
         self.assertEqual(json.loads(log_path.read_text(encoding="utf-8")), line)
+        send_batch.assert_called_once()
         args, kwargs = send_batch.call_args
         self.assertEqual(json.loads(args[0][0])["state"]["item"]["id"], "s1")
         self.assertEqual((kwargs["model"], kwargs["project"], kwargs["agent_role"], kwargs["workers"]),
@@ -557,6 +558,24 @@ class BatchTests(TournamentCase):
                          ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
         self.assertIs(kwargs["cancel"], cancel_token)
         self.assertNotIn("session_log", kwargs)
+
+    def test_batch_auth_result_surfaces_once_with_shared_abort_and_overrides(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
+        detail = {"id": "auth.credentials", "category": "auth", "message": "private response", "attempts": 1, "status": 401}
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
+        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call_batch", return_value=[(json.dumps({"error": detail}), "AUTH.CREDENTIALS")]) as send_batch:
+            result = jj.pump_batch([request], settings, None, self.d / "auth.jsonl", False)
+        send_batch.assert_called_once()
+        self.assertIsInstance(result, jj.Ok)
+        line = result.value[0]
+        self.assertEqual((line["error"]["code"], line["attempts"][0]["attempt"], line["retry_count"]),
+                         ("AUTH.CREDENTIALS", 1, 0))
+        self.assertEqual(line["error"]["message"], "Jev authentication failed; response body withheld")
+        self.assertNotIn("private response", json.dumps(line))
+        kwargs = send_batch.call_args.kwargs
+        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+                         ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
 
     def test_bad_input_is_refused_before_any_line(self):
         def refused(lines_text, *extra):
