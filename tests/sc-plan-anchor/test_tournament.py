@@ -10,7 +10,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
 from child_support import run_test_child
 import sys
 import tempfile
@@ -617,7 +616,7 @@ class BeadBatchTests(TournamentCase):
 
     def setUp(self):
         super().setUp()
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         beads = self.d / ".beads"
         beads.mkdir()
         if TEST_TRACKER == "bd":

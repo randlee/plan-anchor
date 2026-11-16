@@ -397,7 +397,7 @@ class RepoRootTests(RepoCase):
     def test_git_toplevel_is_used_when_available(self):
         real = Path(self._tmp.name).resolve() / "real"
         real.mkdir()
-        subprocess.run([GIT, "init", "-q", str(real)], check=True)
+        run_test_child([GIT, "init", "-q", str(real)], check=True)
         (real / "sub").mkdir()
         with mock.patch.object(settings_mod, "_git_toplevel", wraps=_REAL_GIT_TOPLEVEL) as spy:
             root = self.assertOk(settings_mod.find_repo_root(real / "sub"))
@@ -754,7 +754,7 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         code = (f"import runpy, sys{prelude}\n"
                 f"sys.argv = {[str(TRACKER_SCRIPT), *argv, '--repository-root', str(self.root)]!r}\n"
                 f"runpy.run_path({str(TRACKER_SCRIPT)!r}, run_name='__main__')\n")
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+        proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True,
                               env=env or self.env, cwd=str(self.bin))
         return proc.returncode, json.loads(proc.stdout), proc
 
@@ -848,7 +848,7 @@ class RepositoryContractTests(unittest.TestCase):
 
     @unittest.skipUnless(GIT, "git is not installed")
     def test_settings_file_is_not_gitignored(self):
-        proc = subprocess.run([GIT, "-C", str(ROOT), "check-ignore", "-q", "--", ".sc/plan-anchor/settings.yaml"],
+        proc = run_test_child([GIT, "-C", str(ROOT), "check-ignore", "-q", "--", ".sc/plan-anchor/settings.yaml"],
                               capture_output=True, text=True)
         if proc.returncode == 128:
             self.skipTest("not a git checkout")
