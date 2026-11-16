@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.2 — 2026-11-16
+
+- Render the shared client from the released sc-decidr wheel and use its recorded version in installation guidance.
+
 ## 0.12.1 — 2026-11-16
 
 - Integrate the shared sc-decidr transport while preserving plan-anchor behavior.
