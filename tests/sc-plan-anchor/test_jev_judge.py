@@ -21,12 +21,11 @@ SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills"
 from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
+from jev_test_support import QUOTE, STATEMENT, anchor, record, run_cli, write  # noqa: E402
 
 PLAN_ROLES = {"relevance": "relevant", "compliance": "addressed", "conflict": "contradicted"}
 DEV_ROLES = {"relevance": "relevant", "compliance": "implemented", "conflict": "violated", "evidence": "evidenced"}
 OPTIONS = ("yes", "no", "unclear")
-STATEMENT = "The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules; no runtime crate is written from scratch."
-QUOTE = "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code"
 REQ_STATEMENT = "All public CLI commands must support --json output with a stable schema."
 LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001"}
 ASSETS = SKILL / "assets"
@@ -50,43 +49,12 @@ def dev_answers(rel="yes", comp="yes", conf="no", evid="yes", p=0.9, evid_p=None
             "evidenced": answer(evid, evid_p if evid_p is not None else p)}
 
 
-def anchor(aid="ANC-001", status="locked", source_type="ANC", source_ref=None, statement=STATEMENT, quote=None, **extra):
-    """A valid anchor record. ANC anchors get the verbatim QUOTE; REQ/ADR anchors quote their register text."""
-    if quote is None:
-        quote = QUOTE if source_type == "ANC" else statement
-    rec = {
-        "id": aid, "source_type": source_type, "source_ref": source_ref, "statement": statement, "quote": quote,
-        "stated_by": "the user", "stated_at": "2026-10-09", "context": "planning session",
-        "summary": "start from the legacy repo", "scope": "the runtime crates", "deterministic_check": "",
-        "fixtures": {"pass": [], "fail": []}, "question_overrides": {}, "version": 1, "status": status,
-        "promoted_to": None, "beads": {"anchor": None, "plan_questions": None, "dev_questions": None}, "history": [],
-    }
-    rec.update(extra)
-    return rec
 
 
-def record(*anchors):
-    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-z", "intent_ref": "docs/plans/phase-z/intent.md",
-            "anchors": list(anchors)}
 
 
-def write(d, name, value):
-    path = Path(d) / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value) if not isinstance(value, str) else value, encoding="utf-8")
-    return str(path)
 
 
-def run_cli(argv):
-    """Run main() in-process; returns (exit code, parsed JSON or raw text)."""
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        code = jj.main(argv)
-    out = buf.getvalue()
-    try:
-        return code, json.loads(out)
-    except json.JSONDecodeError:
-        return code, out
 
 
 @contextlib.contextmanager

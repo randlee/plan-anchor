@@ -18,6 +18,7 @@ import unittest
 from unittest import mock
 
 from layout_support import SCRIPTS, TEST_TRACKER
+from jev_test_support import BATCH_LINES, PLAN_QS, question, request_line, alt_set, jsonl
 sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
 import anchor_tuning_contract as contract  # noqa: E402
@@ -25,7 +26,6 @@ import anchor_tuning_contract as contract  # noqa: E402
 from test_jev_judge import QUOTE, STATEMENT, anchor, answer, plan_answers, record, run_cli, write  # noqa: E402
 
 SKILL = SCRIPTS.parent
-PLAN_QS = json.loads((SKILL / "assets" / "questions" / "plan.json").read_text(encoding="utf-8"))
 ROLES = ("addressed", "contradicted", "relevant")
 CORRELATION = "phase-z:ANC-001:planning"
 
@@ -90,9 +90,6 @@ def oracle(**changes):
     return o
 
 
-def question(role, n):
-    return {"type": "choice", "instructions": f"Variant {n}: does `item.text` meet the {role} judgment for `anchor.statement`?",
-            "criteria": {"yes": f"{role} holds ({n})", "no": f"{role} does not hold ({n})", "unclear": f"cannot tell ({n})"}}
 
 
 def candidates(**changes):
@@ -396,27 +393,17 @@ class TournamentTests(TournamentCase):
         self.assertFalse((self.d / "t" / "results.jsonl").exists())
 
 
-ANCHOR_STATE = {"id": "ANC-001", "statement": STATEMENT, "scope": "the runtime crates", "kind": "directive"}
 
 
-def request_line(item_id, text, *cands, title=""):
-    return {"item": {"id": item_id, "title": title, "text": text}, "anchor": dict(ANCHOR_STATE),
-            "questions": [{"candidate_id": c, "questions": qs} for c, qs in cands]}
 
 
-def alt_set(n):
-    return {role: question(role, n) for role in ROLES}
 
-
-def jsonl(lines):
-    return "".join(json.dumps(x) + "\n" for x in lines)
 
 
 class BatchTests(TournamentCase):
     """The low layer: JSONL request lines in, JSONL result lines out on stdout and in the append-only log."""
 
-    LINES = [request_line("s1", "We copy the legacy crates.", ("cur", PLAN_QS["questions"]), ("alt", alt_set(1)), title="Sprint 1"),
-             request_line("s3", "# Sprint 3\n\nCopy the legacy runtime crates.\n", ("cur", PLAN_QS["questions"]))]
+    LINES = BATCH_LINES
     FIXTURE = {"s1/cur": plan_answers(), "s1/alt/r2": plan_answers(comp="no"), "alt": plan_answers(), "*": plan_answers(conf="yes")}
 
     def subprocess_batch(self, run_dir, *extra, stdin=None):
