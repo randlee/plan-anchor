@@ -7,7 +7,7 @@ required_variables:
   - tracker
   - version
 ---
-"""Discriminated-union results for plan-anchoring scripts (Python 3.9 floor).
+"""Discriminated-union results for plan-anchoring scripts (Python 3.11 floor).
 
 A function that can fail in an expected way returns ``Result[T, E]``: either
 ``Ok(value)`` or ``Err(error)``. Callers branch on ``isinstance(r, Err)`` (or

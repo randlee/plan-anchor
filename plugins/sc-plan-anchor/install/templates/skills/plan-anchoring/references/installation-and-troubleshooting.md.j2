@@ -83,7 +83,7 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 ## Install the CLIs
 
-**python3** (3.9 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
+**python3** (3.11 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
 
 - macOS: `brew install python` or the Xcode command line tools' `/usr/bin/python3`
 - Linux: `apt install python3` / `dnf install python3`
@@ -157,7 +157,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 
 | Tool | Minimum | Why |
 | --- | --- | --- |
-| python3 | 3.9 | tested floor; standard library only, except `anchor_tracker.py` |
+| python3 | 3.11 | tested floor; standard library only, except `anchor_tracker.py` |
 | PyYAML | 5.1 | `SafeLoader`-based strict reading of `.sc/plan-anchor/settings.yaml`; CI tests 5.1 and the latest release |
 {% if tracker != "bd" %}
 | br | 0.7.x | `init`, `show --json`, `sync --flush-only`; tested with 0.7.4 |

@@ -1,6 +1,6 @@
 """plugins/sc-plan-anchor/install.py: rendering, destinations, ownership, upgrades, tracker switching, envelope.
 
-Tests that render need the sc-compose wheel (CPython 3.11 wheels on PyPI) and
+Tests that render need the sc-compose wheel on PyPI and
 PyYAML; without them they skip with the reason. CI's installer job sets
 PLAN_ANCHOR_REQUIRE_SC_COMPOSE=1, which turns those skips into failures.
 """
@@ -58,7 +58,7 @@ def _missing_deps():
 
 MISSING = _missing_deps()
 SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.8.0,<2' "
-               "(sc-compose publishes CPython 3.11 wheels); CI's installer job runs these")
+               "(sc-compose must be installed); CI's installer job runs these")
 
 
 def needs_wheel(cls):

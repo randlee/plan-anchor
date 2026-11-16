@@ -893,7 +893,7 @@ class RepositoryContractTests(unittest.TestCase):
     def test_ci_runs_the_suite_against_each_render(self):
         """The scripts under test are one tracker's render; every CI job runs the suite for br and again for bd."""
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 4)  # unit, two dependency-floor runs, installer
+        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 2)  # unit and installer
 
 
 if __name__ == "__main__":
