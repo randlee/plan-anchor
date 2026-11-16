@@ -1,5 +1,6 @@
 """Anchor tracker selection: .sc/plan-anchor/settings.yaml, detection, br init, CLI envelope."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -7,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import textwrap
@@ -395,7 +397,7 @@ class RepoRootTests(RepoCase):
     def test_git_toplevel_is_used_when_available(self):
         real = Path(self._tmp.name).resolve() / "real"
         real.mkdir()
-        subprocess.run([GIT, "init", "-q", str(real)], check=True)
+        run_test_child([GIT, "init", "-q", str(real)], check=True)
         (real / "sub").mkdir()
         with mock.patch.object(settings_mod, "_git_toplevel", wraps=_REAL_GIT_TOPLEVEL) as spy:
             root = self.assertOk(settings_mod.find_repo_root(real / "sub"))
@@ -752,7 +754,7 @@ class FakeExecutableEndToEndTests(unittest.TestCase):
         code = (f"import runpy, sys{prelude}\n"
                 f"sys.argv = {[str(TRACKER_SCRIPT), *argv, '--repository-root', str(self.root)]!r}\n"
                 f"runpy.run_path({str(TRACKER_SCRIPT)!r}, run_name='__main__')\n")
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+        proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True,
                               env=env or self.env, cwd=str(self.bin))
         return proc.returncode, json.loads(proc.stdout), proc
 
@@ -846,7 +848,7 @@ class RepositoryContractTests(unittest.TestCase):
 
     @unittest.skipUnless(GIT, "git is not installed")
     def test_settings_file_is_not_gitignored(self):
-        proc = subprocess.run([GIT, "-C", str(ROOT), "check-ignore", "-q", "--", ".sc/plan-anchor/settings.yaml"],
+        proc = run_test_child([GIT, "-C", str(ROOT), "check-ignore", "-q", "--", ".sc/plan-anchor/settings.yaml"],
                               capture_output=True, text=True)
         if proc.returncode == 128:
             self.skipTest("not a git checkout")
@@ -872,18 +874,45 @@ class RepositoryContractTests(unittest.TestCase):
                         self.assertIn("    import plan_anchor_settings as pas  # lazy", source)
                     else:
                         self.assertNotIn("plan_anchor_settings", source)
-        code = ("import sys\nsys.modules['yaml'] = None\n"
+        client = ast.parse((SCRIPTS / "decidr_client.py").read_text(encoding="utf-8"))
+        runtime_imports = [node for node in ast.walk(client)
+                           if isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names)]
+        calls = [node for node in client.body if isinstance(node, ast.FunctionDef) and node.name in {"call", "call_batch"}]
+        self.assertEqual(len(runtime_imports), 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual({node for call in calls for node in ast.walk(call) if node in runtime_imports}, set(runtime_imports))
+        for script in SCRIPTS.glob("*.py"):
+            if script.name != "decidr_client.py":
+                tree = ast.parse(script.read_text(encoding="utf-8"))
+                imports = [node for node in ast.walk(tree)
+                           if (isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names))
+                           or (isinstance(node, ast.ImportFrom) and node.module == "sc_agent")]
+                if script.name == "jev_judge.py":
+                    # CancelToken is public wheel API, loaded only for an opted-in live call.
+                    factory, = (node for node in tree.body if isinstance(node, ast.FunctionDef)
+                                and node.name == "_new_cancel_token")
+                    self.assertEqual(len(imports), 1)
+                    self.assertTrue(all(node in set(ast.walk(factory)) for node in imports))
+                    self.assertEqual([node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+                                      and isinstance(node.value, ast.Name) and node.value.id == "sc_agent"], ["CancelToken"])
+                else:
+                    self.assertEqual(imports, [])
+        offline = ("import sys\nsys.modules['sc_agent'] = None\n"
+                   f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport decidr_client\n")
+        proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        code = ("import sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                 f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"
                 "assert 'plan_anchor_settings' not in sys.modules, 'imported eagerly'\n")
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("import yaml", (SCRIPTS / "plan_anchor_settings.py").read_text(encoding="utf-8"))
         for name in ("jev_judge.py", "anchor_runner_contract.py",
                      "anchor_tuning_contract.py", "anchor_tracker.py"):
             with self.subTest(help=name):
-                code = ("import runpy, sys\nsys.modules['yaml'] = None\n"
+                code = ("import runpy, sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                         f"sys.argv = ['{name}', '--help']\nrunpy.run_path({str(SCRIPTS / name)!r}, run_name='__main__')\n")
-                proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+                proc = run_test_child([sys.executable, "-c", code], capture_output=True, text=True)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_ci_installs_pyyaml(self):
@@ -893,7 +922,7 @@ class RepositoryContractTests(unittest.TestCase):
     def test_ci_runs_the_suite_against_each_render(self):
         """The scripts under test are one tracker's render; every CI job runs the suite for br and again for bd."""
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 4)  # unit, two dependency-floor runs, installer
+        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 4)  # unit, both floor profiles and installer
 
 
 if __name__ == "__main__":

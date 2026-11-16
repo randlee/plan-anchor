@@ -1,7 +1,7 @@
 """`batch` (the low-layer Jev runner), `bead-batch` (its tracker adapter) and `tournament` (a consumer).
 
 Every test runs offline with --answers-file; the answers are a function of (item, candidate, repeat), so results
-never depend on thread scheduling. The streaming test drives completion order with events, never with time; the
+never depend on thread scheduling. Streaming tests assert request ordering without timing assumptions; the
 stream-order test proves the consumer keys lines by id: a reversed stream scores identically.
 """
 import copy
@@ -10,14 +10,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
-import threading
 import unittest
 from unittest import mock
 
 from layout_support import SCRIPTS, TEST_TRACKER
+from jev_test_support import ANCHOR_STATE, BATCH_LINES, PLAN_QS, question, request_line, alt_set, jsonl
 sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
 import anchor_tuning_contract as contract  # noqa: E402
@@ -25,7 +25,6 @@ import anchor_tuning_contract as contract  # noqa: E402
 from test_jev_judge import QUOTE, STATEMENT, anchor, answer, plan_answers, record, run_cli, write  # noqa: E402
 
 SKILL = SCRIPTS.parent
-PLAN_QS = json.loads((SKILL / "assets" / "questions" / "plan.json").read_text(encoding="utf-8"))
 ROLES = ("addressed", "contradicted", "relevant")
 CORRELATION = "phase-z:ANC-001:planning"
 
@@ -90,9 +89,6 @@ def oracle(**changes):
     return o
 
 
-def question(role, n):
-    return {"type": "choice", "instructions": f"Variant {n}: does `item.text` meet the {role} judgment for `anchor.statement`?",
-            "criteria": {"yes": f"{role} holds ({n})", "no": f"{role} does not hold ({n})", "unclear": f"cannot tell ({n})"}}
 
 
 def candidates(**changes):
@@ -286,22 +282,24 @@ class TournamentTests(TournamentCase):
         self.assertEqual([b for b, r in ranks.items() if r["selected"]], ["S2"])
         self.assertFalse(any(r["co_leader"] for r in ranks.values()))
 
-    def test_retry_is_recorded_and_an_unanswered_call_is_incomplete_evidence(self):
+    def test_fixture_failures_are_not_resubmitted_and_incomplete_evidence_is_kept(self):
         ok = {role: answer(choice, 0.9) for role, choice in CASES[0][3].items()}
         fixture = fixture_for(conf={"S0": 0.95}, failures={
-            "FX-PASS/S0/r1": [{"__error__": "JEV.OVERLOADED"}, ok],
-            "FX-PASS/S1/r1": [{"__error__": "JEV.OVERLOADED"}, {"__error__": "JEV.OVERLOADED"}],
+            "FX-PASS/S0/r1": ok,
+            "FX-PASS/S1/r1": {"__error__": "JEV.OVERLOADED"},
         })
         data = self.ran(fixture)
-        self.assertEqual((data["accepted"], data["retries"], data["failed_calls"]), (True, 2, [f"{CORRELATION}/FX-PASS/ANC-001/S1/r1"]))
+        self.assertEqual((data["accepted"], data["retries"], data["failed_calls"]), (True, 0, [f"{CORRELATION}/FX-PASS/ANC-001/S1/r1"]))
         variables = self.result_vars()
-        self.assertEqual(variables["metadata"]["retry_count"], 2)
+        self.assertEqual(variables["metadata"]["retry_count"], 0)
         ranks = self.rankings(variables)
         self.assertEqual((ranks["S1"]["complete"], ranks["S1"]["semantic_accepted"]), (False, False))
         self.assertTrue(ranks["S0"]["semantic_accepted"])
         lines = {json.loads(x)["request_id"]: json.loads(x) for x in (self.d / "t" / "results.jsonl").read_text(encoding="utf-8").splitlines()}
-        retried = lines[f"{CORRELATION}/FX-PASS/ANC-001/S0/r1"]
-        self.assertEqual((retried["ok"], retried["retry_count"], [a["ok"] for a in retried["attempts"]]), (True, 1, [False, True]))
+        answered = lines[f"{CORRELATION}/FX-PASS/ANC-001/S0/r1"]
+        failed = lines[f"{CORRELATION}/FX-PASS/ANC-001/S1/r1"]
+        self.assertEqual((answered["ok"], answered["retry_count"], answered["attempts"]), (True, 0, [{"attempt": 1, "ok": True}]))
+        self.assertEqual((failed["ok"], failed["retry_count"], failed["attempts"][0]["attempt"]), (False, 0, 1))
 
     def test_stream_order_does_not_change_the_score(self):
         self.ran(fixture_for(conf={"S2": 0.95}, wrong={("P-EXCEPTION", "S1"): {"contradicted": "no"}}))
@@ -381,39 +379,37 @@ class TournamentTests(TournamentCase):
         self.assertFalse((self.d / "t" / "result_vars.json").exists())
 
     def test_live_run_fails_closed_without_credentials(self):
-        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
+        auth = RuntimeError("missing key")
+        auth.id = "auth.credentials"
+        auth.category = "auth"
+        auth.message = "missing key"
+        auth.detail = json.dumps({"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0})
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
+                mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj.decidr_client, "call_batch", side_effect=auth):
             self.refused("AUTH.CREDENTIALS", None)
         self.assertFalse((self.d / "t" / "results.jsonl").exists())
 
 
-ANCHOR_STATE = {"id": "ANC-001", "statement": STATEMENT, "scope": "the runtime crates", "kind": "directive"}
 
 
-def request_line(item_id, text, *cands, title=""):
-    return {"item": {"id": item_id, "title": title, "text": text}, "anchor": dict(ANCHOR_STATE),
-            "questions": [{"candidate_id": c, "questions": qs} for c, qs in cands]}
 
 
-def alt_set(n):
-    return {role: question(role, n) for role in ROLES}
 
-
-def jsonl(lines):
-    return "".join(json.dumps(x) + "\n" for x in lines)
 
 
 class BatchTests(TournamentCase):
     """The low layer: JSONL request lines in, JSONL result lines out on stdout and in the append-only log."""
 
-    LINES = [request_line("s1", "We copy the legacy crates.", ("cur", PLAN_QS["questions"]), ("alt", alt_set(1)), title="Sprint 1"),
-             request_line("s3", "# Sprint 3\n\nCopy the legacy runtime crates.\n", ("cur", PLAN_QS["questions"]))]
+    LINES = BATCH_LINES
     FIXTURE = {"s1/cur": plan_answers(), "s1/alt/r2": plan_answers(comp="no"), "alt": plan_answers(), "*": plan_answers(conf="yes")}
 
     def subprocess_batch(self, run_dir, *extra, stdin=None):
         """The installed script as a separate process: stdout bytes exactly as a caller sees them."""
         argv = [sys.executable, str(SCRIPTS / "jev_judge.py"), "batch", "--run-dir", str(self.d / run_dir), "--run-name", "r1",
                 "--answers-file", self.put("answers.json", self.FIXTURE), "--repeat", "2", "--request-prefix", "run-7", *extra]
-        proc = subprocess.run(argv, input=stdin, capture_output=True, cwd=str(self.d))
+        proc = run_test_child(argv, input=stdin, capture_output=True, cwd=str(self.d))
         return proc
 
     def log(self, run_dir):
@@ -466,57 +462,106 @@ class BatchTests(TournamentCase):
         argv = [sys.executable, "-c", wrapper, str(SCRIPTS / "jev_judge.py"), "batch", "--run-dir", str(self.d / "crlf"),
                 "--run-name", "r1", "--answers-file", self.put("answers.json", self.FIXTURE), "--input",
                 self.put("in.jsonl", jsonl(self.LINES))]
-        proc = subprocess.run(argv, capture_output=True, cwd=str(self.d))
+        proc = run_test_child(argv, capture_output=True, cwd=str(self.d))
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         self.assertEqual(len(proc.stdout.splitlines()), 3)
         self.assertNotIn(b"\r", proc.stdout)
         self.assertEqual(self.log("crlf"), proc.stdout)
 
-    def test_results_stream_in_request_order_as_each_answer_arrives(self):
-        """Completion order is forced to c3, c1, c2 with events (no sleeps); lines still come out c1, c2, c3, and c1
-        is yielded while c2 is still unanswered, so nothing is held back for the end of the batch."""
+    def test_results_stream_preserves_request_order(self):
+        """Fixture answers produce the same result order as their requests."""
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]), ("c3", PLAN_QS["questions"]))
-        c3_done, release_c2 = threading.Event(), threading.Event()
-        completed, waits = [], []
-        real = jj.run_batch_job
-
-        def controlled(job, settings, api_key, fixture, abort):
-            if job.candidate_id == "c1":
-                waits.append(c3_done.wait(timeout=30))  # a guard against a deadlocked implementation, not a timing input
-            if job.candidate_id == "c2":
-                waits.append(release_c2.wait(timeout=30))
-            result = real(job, settings, api_key, fixture, abort)
-            completed.append(job.candidate_id)
-            if job.candidate_id == "c3":
-                c3_done.set()
-            return result
-
         settings = jj.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
 
         async def consume():
             got = []
-            async for result in jj.stream_batch([line], settings, "", {"*": plan_answers()}):
-                got.append((result["candidate_id"], list(completed)))
-                release_c2.set()
+            async for result in jj.stream_batch([line], settings, {"*": plan_answers()}):
+                got.append(result["candidate_id"])
             return got
 
-        with mock.patch.object(jj, "run_batch_job", controlled):
-            got = jj.asyncio.run(consume())
-        self.assertEqual(waits, [True, True])
-        self.assertEqual([cid for cid, _ in got], ["c1", "c2", "c3"])
-        self.assertEqual(got[0][1], ["c3", "c1"])  # c1 was yielded before c2 had an answer
-        self.assertEqual(completed, ["c3", "c1", "c2"])
+        self.assertEqual(jj.asyncio.run(consume()), ["c1", "c2", "c3"])
+
+    def test_fixture_auth_failure_stops_later_jobs(self):
+        line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
+
+        async def consume():
+            return [result async for result in jj.stream_batch(
+                [line], settings, {"c1": {"__error__": "AUTH.CREDENTIALS"}, "*": plan_answers()})]
+
+        with mock.patch.object(jj, "run_batch_job", wraps=jj.run_batch_job) as run_job:
+            results = jj.asyncio.run(consume())
+        self.assertEqual([r["candidate_id"] for r in results], ["c1"])
+        self.assertEqual(results[0]["error"]["code"], "AUTH.CREDENTIALS")
+        self.assertEqual(run_job.call_count, 1)
+
+    def test_stream_batch_refuses_live_calls_before_running_jobs(self):
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)
+
+        async def consume():
+            return [result async for result in jj.stream_batch(self.LINES, settings)]
+
+        with mock.patch.object(jj, "run_batch_job") as run_job, \
+                mock.patch.object(jj, "call_jev") as call:
+            with self.assertRaises(jj.BatchInputError) as raised:
+                jj.asyncio.run(consume())
+        self.assertEqual(raised.exception.error.code, "VALIDATION.INPUT")
+        run_job.assert_not_called()
+        call.assert_not_called()
 
     def test_failed_call_is_a_line_and_exit_2_with_the_error_on_stderr(self):
-        self.FIXTURE = {"s1/cur": [{"__error__": "JEV.OVERLOADED"}, {"__error__": "JEV.OVERLOADED"}], "*": plan_answers()}
+        self.FIXTURE = {"s1/cur": {"__error__": "JEV.OVERLOADED"}, "*": plan_answers()}
         proc = self.subprocess_batch("runs", "--repeat", "1", stdin=jsonl(self.LINES[:1]).encode("utf-8"))
         self.assertEqual(proc.returncode, 2)
         lines = [json.loads(x) for x in proc.stdout.decode("utf-8").splitlines()]
         failed = next(x for x in lines if x["candidate_id"] == "cur")
-        self.assertEqual((failed["ok"], failed["retry_count"], failed["error"]["code"], failed["verdict"]), (False, 1, "JEV.OVERLOADED", None))
+        self.assertEqual((failed["ok"], failed["retry_count"], failed["error"]["code"], failed["verdict"]), (False, 0, "JEV.OVERLOADED", None))
         self.assertTrue(next(x for x in lines if x["candidate_id"] == "alt")["ok"])
         self.assertEqual(json.loads(proc.stderr)["error"]["code"], "JEV.OVERLOADED")
         self.assertEqual(self.log("runs"), proc.stdout)
+
+    def test_live_batch_uses_shared_client_attempt_count_and_keeps_input_order(self):
+        request = request_line("s1", "We copy the legacy crates.", ("c1", PLAN_QS["questions"]))
+        wheel_error = json.dumps({"error": {"id": "http.provider_busy", "category": "busy", "message": "busy",
+                                              "attempts": 5, "retry_after_ms": 2500}})
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
+        log_path = self.d / "live.jsonl"
+        cancel_token = mock.Mock()
+        with mock.patch.object(jj, "_new_cancel_token", return_value=cancel_token), \
+                mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wheel_error, "JEV.OVERLOADED")]) as send_batch:
+            result = jj.pump_batch([request], settings, None, log_path, False)
+        self.assertIsInstance(result, jj.Ok)
+        line = result.value[0]
+        self.assertEqual((line["request_id"], line["ok"], line["retry_count"], line["attempts"][0]["attempt"]),
+                         ("live/s1/ANC-001/c1/r1", False, 4, 5))
+        self.assertEqual(json.loads(log_path.read_text(encoding="utf-8")), line)
+        send_batch.assert_called_once()
+        args, kwargs = send_batch.call_args
+        self.assertEqual(json.loads(args[0][0])["state"]["item"]["id"], "s1")
+        self.assertEqual((kwargs["model"], kwargs["project"], kwargs["agent_role"], kwargs["workers"]),
+                         ("jev-latest", "plan-anchor", "tournament", 2))
+        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+                         ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+        self.assertIs(kwargs["cancel"], cancel_token)
+        self.assertNotIn("session_log", kwargs)
+
+    def test_batch_auth_result_surfaces_once_with_shared_abort_and_overrides(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
+        detail = {"id": "auth.credentials", "category": "auth", "message": "private response", "attempts": 1, "status": 401}
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
+        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call_batch", return_value=[(json.dumps({"error": detail}), "AUTH.CREDENTIALS")]) as send_batch:
+            result = jj.pump_batch([request], settings, None, self.d / "auth.jsonl", False)
+        send_batch.assert_called_once()
+        self.assertIsInstance(result, jj.Ok)
+        line = result.value[0]
+        self.assertEqual((line["error"]["code"], line["attempts"][0]["attempt"], line["retry_count"]),
+                         ("AUTH.CREDENTIALS", 1, 0))
+        self.assertEqual(line["error"]["message"], "Jev authentication failed; response body withheld")
+        self.assertNotIn("private response", json.dumps(line))
+        kwargs = send_batch.call_args.kwargs
+        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+                         ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
 
     def test_bad_input_is_refused_before_any_line(self):
         def refused(lines_text, *extra):
@@ -535,8 +580,17 @@ class BatchTests(TournamentCase):
         self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))  # no log directory
 
     def test_live_run_fails_closed_before_any_line(self):
-        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), mock.patch.object(jj, "credential_store_api_key", return_value=""):
+        error = RuntimeError("missing key")
+        error.id = "auth.credentials"
+        error.category = "auth"
+        error.message = "missing key"
+        error.detail = json.dumps({"id": "auth.credentials", "category": "auth", "attempts": 0})
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
+                mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj.decidr_client, "call_batch", side_effect=error) as send_batch:
             code, out = run_cli(["batch", "--input", self.put("in.jsonl", jsonl(self.LINES)), "--run-dir", str(self.d / "runs")])
+        send_batch.assert_called_once()
         self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
         self.assertFalse((self.d / "runs").exists())
 
@@ -562,7 +616,7 @@ class BeadBatchTests(TournamentCase):
 
     def setUp(self):
         super().setUp()
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         beads = self.d / ".beads"
         beads.mkdir()
         if TEST_TRACKER == "bd":

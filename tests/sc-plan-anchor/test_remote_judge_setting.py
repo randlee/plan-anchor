@@ -24,7 +24,7 @@ import unittest
 from unittest import mock
 
 from test_jev_judge import (  # noqa: F401 - shared helpers
-    QUOTE, SKILL, STATEMENT, Judged, Transport, anchor, answer, env, jj, plan_answers, record, run_cli, write,
+    QUOTE, SKILL, STATEMENT, Judged, Transport, anchor, answer, env, jj, plan_answers, record, run_cli, stub_client, write,
 )
 import plan_anchor_settings as settings_mod  # noqa: E402 - test_jev_judge put scripts/ on sys.path
 import anchor_tracker as tracker_mod  # noqa: E402
@@ -160,7 +160,7 @@ class LiveCallConsentTests(unittest.TestCase):
         }
         t = Transport()
         for name, argv in cases.items():
-            with self.subTest(name), env(**KEY), mock.patch.object(jj, "call_jev", t):
+            with self.subTest(name), env(**KEY), stub_client(t):
                 code, out = run_cli([*argv, "--allow-remote"])
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "VALIDATION.INPUT"))
             self.assertIn("unrecognized arguments: --allow-remote", out["error"]["message"])
@@ -245,7 +245,7 @@ class LiveCallConsentTests(unittest.TestCase):
             t = Transport()
             anchors = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy runtime crates.")
-            with env(**KEY), mock.patch.object(jj, "call_jev", t), \
+            with env(**KEY), stub_client(t), \
                     mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
                 code, out = run_cli(["judge", "--anchors", anchors, "--gate", "plan", "--all", "--item-id", "x",
                                      "--item-file", item, "--repository-root", d])
@@ -266,7 +266,7 @@ class LiveCallConsentTests(unittest.TestCase):
         }
         t = Transport()
         for name, argv in cases.items():
-            with self.subTest(name), env(**KEY), mock.patch.object(jj, "call_jev", t):
+            with self.subTest(name), env(**KEY), stub_client(t):
                 code, out = run_cli([*argv, "--repository-root", root])
             self.assertEqual((code, out["error"]["code"], out["error"]["suggested_action"]),
                              (2, "POLICY.REMOTE_JUDGE_DISABLED", ABSENT_ACTION))

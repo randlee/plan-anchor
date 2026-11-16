@@ -7,6 +7,8 @@ the command could not do its job, and no exit 1 anywhere. Every case runs the
 script as a subprocess, offline, with no TypeSafe key in the environment.
 """
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,8 +17,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubric_answers
+from test_jev_judge import QUOTE, STATEMENT, anchor, jj, plan_answers, record, rubric_answers
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
@@ -70,6 +73,18 @@ class ConventionCase(unittest.TestCase):
         if code is not None:
             self.assertEqual(out["error"]["code"], code)
         return out["error"]
+
+    def failed_judge_through_client_seam(self, *argv):
+        """Exercise the consumer with a typed wheel auth result and no provider or keyring access."""
+        output = io.StringIO()
+        auth = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
+        with mock.patch.dict(os.environ, clean_env(), clear=True), \
+                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call", return_value=(auth, "AUTH.CREDENTIALS")), \
+                contextlib.redirect_stdout(output):
+            code = jj.main(list(argv))
+        return code, json.loads(output.getvalue())
 
 
 class JevJudgeNegativeOutcomes(ConventionCase):
@@ -183,6 +198,10 @@ class JevJudgeErrors(ConventionCase):
         self.assertEqual(sorted(cases), sorted(listed), "every subcommand needs an error-path case")
         for name, (argv, code) in cases.items():
             with self.subTest(name):
+                if name == "judge":
+                    rc, out = self.failed_judge_through_client_seam(*argv)
+                    self.assertEqual((rc, out["success"], out["error"]["code"]), (2, False, code))
+                    continue
                 self.failed(JJ, *argv, code=code)
 
 
@@ -190,8 +209,10 @@ class JevJudgeErrors(ConventionCase):
         """A live call that must not go out: AUTH.CREDENTIALS without a key, POLICY.REMOTE_JUDGE_DISABLED without consent."""
         path = self.put("anchors.json", record(anchor()))
         argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
-        error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
-        self.assertEqual(error["message"], "no TypeSafe API key was found")
+        rc, out = self.failed_judge_through_client_seam(*argv)
+        self.assertEqual((rc, out["success"], out["error"]["code"]), (2, False, "AUTH.CREDENTIALS"), out)
+        error = out["error"]
+        self.assertEqual(error["message"], "Jev authentication failed; response body withheld")
         try:
             import yaml  # noqa: F401
         except ImportError:

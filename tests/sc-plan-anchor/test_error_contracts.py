@@ -2,10 +2,8 @@
 
 Pinned before the Result<T, E> refactor so it is provably behaviour-preserving:
 every case asserts the exact JSON envelope (code, message, recoverable,
-suggested_action, data) and exit code a caller sees. The Jev transport is
-exercised at the urllib boundary, so these tests do not depend on how
-expected failures travel inside the scripts. Standard library only; no
-network is touched.
+suggested_action, data) and exit code a caller sees. The shared client seam is
+driven with typed results; no wheel, keyring or network is touched.
 """
 import contextlib
 import hashlib
@@ -13,12 +11,11 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
 from unittest import mock
-import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
@@ -93,32 +90,18 @@ class Workspace:
         self.td.cleanup()
 
 
-def call_main(main, argv, *, env=None, stdin=None):
+def call_main(main, argv, *, env=None, stdin=None, client_calls=None):
     buf = io.StringIO()
     environment = {"PATH": os.environ.get("PATH", ""), **(env or {})}
+    missing = (json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}}),
+               "AUTH.CREDENTIALS")
     with mock.patch.dict(os.environ, environment, clear=True), contextlib.redirect_stdout(buf), \
-            mock.patch.object(jj, "credential_store_api_key", return_value=""), \
+            mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+            mock.patch.object(jj.decidr_client, "call", side_effect=client_calls if client_calls is not None else None,
+                              return_value=missing), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
         code = main(argv)
     return code, json.loads(buf.getvalue())
-
-
-class FakeResponse:
-    def __init__(self, raw: bytes):
-        self.raw = raw
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self, n=-1):
-        return self.raw[:n] if n >= 0 else self.raw
-
-
-def http_error(status, body=b"", headers=None):
-    return urllib.error.HTTPError("http://jev", status, "x", headers or {}, io.BytesIO(body))
 
 
 LIVE = {"TYPESAFE_API_KEY": "sk-test-0001"}
@@ -129,12 +112,16 @@ ADD = ["add", "--anchors", "anchors.json", "--stated-at", "2026-10-09"]
 
 # name: (argv, files, env, stdin, exit code, expected error object or None, expected data)
 JEV_CASES = {
-    "auth_missing_key": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {}, None, 2,
-                         {"code": "AUTH.CREDENTIALS", "message": "no TypeSafe API key was found", "recoverable": False,
-                          "suggested_action": "Export TYPESAFE_API_KEY or add the documented platform credential, or use --dry-run / --answers-file."}, None),
-    "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
-                        {"code": "AUTH.CREDENTIALS", "message": "the TypeSafe API key has invalid formatting (whitespace, control or non-ASCII characters)",
-                         "recoverable": False, "suggested_action": "Replace TYPESAFE_API_KEY or the platform credential with the key exactly as issued."}, None),
+    "auth_missing_key": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n",
+                                  ".sc/plan-anchor/settings.yaml": "schema_version: 1\nallow_remote_judge: true\n"}, {}, None, 2,
+                         {"code": "AUTH.CREDENTIALS", "message": "Jev authentication failed; response body withheld", "recoverable": False,
+                          "suggested_action": "Check TYPESAFE_API_KEY or the documented platform credential."},
+                         {"id": "auth.credentials", "category": "auth", "attempts": 0}),
+    "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n",
+                                 ".sc/plan-anchor/settings.yaml": "schema_version: 1\nallow_remote_judge: true\n"}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
+                        {"code": "AUTH.CREDENTIALS", "message": "Jev authentication failed; response body withheld", "recoverable": False,
+                         "suggested_action": "Check TYPESAFE_API_KEY or the documented platform credential."},
+                        {"id": "auth.credentials", "category": "auth", "attempts": 0}),
     # A repository (".git") whose settings file does not record allow_remote_judge. The workspace is cwd. The key must
     # not be a substring of the message: output redacts it.
     "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,
@@ -281,7 +268,11 @@ class JevJudgeErrorContracts(unittest.TestCase):
     def test_every_offline_error_code_keeps_its_exact_envelope(self):
         for name, (argv, files, env, stdin, exit_code, error, data) in JEV_CASES.items():
             with self.subTest(name), Workspace(files):
-                code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
+                # Auth-envelope cases control consent; real consent/settings cases remain separate.
+                consent = (mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None))
+                           if name in {"auth_missing_key", "auth_bad_format"} else contextlib.nullcontext())
+                with consent:
+                    code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
                 self.assertEqual(code, exit_code)
                 if error is None:
                     continue
@@ -293,7 +284,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
             with self.subTest(name), Workspace(files) as ws:
                 installed_scripts(ws.path)
                 environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
-                proc = subprocess.run([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
+                proc = run_test_child([sys.executable, SCRIPT_IN_WORKSPACE, *argv], cwd=str(ws.path), env=environment,
                                       capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(proc.returncode, exit_code, proc.stdout + proc.stderr)
                 self.assertEqual(json.loads(proc.stdout), {"success": False, "data": data, "error": error})
@@ -337,7 +328,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
 
     def test_non_numeric_flag_exits_two_with_json(self):
         for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
-            proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
+            proc = run_test_child([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
                                    "--item-id", "ex-1", "--item-text", "t", "--dry-run", flag, value],
                                   capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(proc.returncode, 2, flag)
@@ -347,86 +338,63 @@ class JevJudgeErrorContracts(unittest.TestCase):
 
 
 class JevTransportErrorContracts(unittest.TestCase):
-    """call_jev and its retry policy, driven through urllib so the internal error channel is not assumed."""
+    """Typed wheel responses are translated once; only context sizing can cause a new consumer call."""
 
-    def judge(self, responses, extra=(), gate="plan", item=ITEM):
-        sleeps = []
+    def wheel_error(self, identifier, category, message, *, attempts=1, status=None, retry_after_ms=None):
+        detail = {"id": identifier, "category": category, "message": message, "attempts": attempts}
+        if status is not None:
+            detail["status"] = status
+        if retry_after_ms is not None:
+            detail["retry_after_ms"] = retry_after_ms
+        return json.dumps({"error": detail}), jj.DECIDR_CATEGORY_CODES.get(category)
+
+    def ok_response(self, comp="yes"):
+        return json.dumps({"response": {"model": "jev-x", "answers": plan_answers(comp)}}), None
+
+    def judge(self, calls, extra=(), gate="plan", item=ITEM):
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
-                mock.patch.object(jj.urllib.request, "urlopen", side_effect=list(responses)) as opened, \
-                mock.patch.object(jj, "_sleep", sleeps.append), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)):
             argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
-            code, out = call_main(jj.main, argv, env=LIVE)
-        return code, out, opened.call_count, sleeps
+            code, out = call_main(jj.main, argv, env=LIVE, client_calls=list(calls))
+        return code, out, len(calls)
 
-    def ok_response(self, comp="yes"):
-        return FakeResponse(json.dumps({"model": "jev-x", "answers": plan_answers(comp)}).encode("utf-8"))
+    def test_401_aborts_with_body_withheld(self):
+        auth = self.wheel_error("auth.credentials", "auth", "Bearer sk-test-0001 is wrong", status=401)
+        code, out, calls = self.judge([auth])
+        self.assertEqual((code, calls, out["error"]["code"]), (2, 1, "AUTH.CREDENTIALS"))
+        self.assertNotIn("Bearer", out["error"]["message"])
 
-    def test_401_aborts_the_run_with_body_withheld(self):
-        code, out, calls, _ = self.judge([http_error(401, b"Bearer sk-test-0001 is wrong")])
-        self.assertEqual((code, calls), (2, 1))
-        self.assertEqual(out, {"success": False, "data": None, "error": {
-            "code": "AUTH.CREDENTIALS", "message": "Jev HTTP 401; response body withheld", "recoverable": False,
-            "suggested_action": "Check TYPESAFE_API_KEY."}})
-
-    def test_transient_codes_retry_three_times_then_record_an_error_verdict(self):
-        cases = (
-            (http_error(429, headers={"Retry-After": "7"}), "JEV.RATE_LIMITED", "Jev HTTP 429; response body withheld", [7.0, 2.0]),
-            (http_error(529), "JEV.OVERLOADED", "Jev HTTP 529; response body withheld", [1.0, 2.0]),
-            (http_error(503), "JEV.HTTP", "Jev HTTP 503; response body withheld", [1.0, 2.0]),
-            (urllib.error.URLError("refused"), "JEV.NETWORK", "Could not reach Jev: refused", [1.0, 2.0]),
-            (ConnectionResetError("reset"), "JEV.NETWORK", "Jev connection failed: ConnectionResetError: reset", [1.0, 2.0]),
-            (FakeResponse(b"not json"), "JEV.RESPONSE_INVALID", "Jev response was not JSON", [1.0, 2.0]),
-            (FakeResponse(b"[1]"), "JEV.RESPONSE_INVALID", "Jev response was not a JSON object", [1.0, 2.0]),
-            (FakeResponse(b"x" * (jj.MAX_RESPONSE_BYTES + 1)), "JEV.RESPONSE_INVALID", "Jev response exceeded the size limit", [1.0, 2.0]),
-            (FakeResponse(b'{"answers": {}}'), "JEV.RESPONSE_INVALID",
-             "Jev answer ids differ from the questions (missing ['addressed', 'contradicted', 'relevant'], unexpected [])", [1.0, 2.0]),
-        )
-        for failure, error_code, message, delays in cases:
-            with self.subTest(error_code=error_code, message=message):
-                code, out, calls, sleeps = self.judge([failure, failure, failure])
+    def test_wheel_retryable_categories_report_attempts_without_consumer_resend(self):
+        cases = (("http.provider_busy", "busy", "JEV.OVERLOADED"),
+                 ("http.quota_exhausted", "quota", "JEV.RATE_LIMITED"),
+                 ("http.network", "network", "JEV.NETWORK"),
+                 ("decision.response_parse", "response_invalid", "JEV.RESPONSE_INVALID"))
+        for identifier, category, code_expected in cases:
+            with self.subTest(category=category):
+                failure = self.wheel_error(identifier, category, "typed failure", attempts=5, retry_after_ms=7000)
+                code, out, calls = self.judge([failure])
                 result = out["data"]["results"][0]
-                # 0.8.3: retries exhausted is exit 2 with the cell's code; data is the partial run
-                self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, error_code))
-                self.assertEqual((out["data"]["summary"]["pass"], calls, sleeps, result["verdict"], result["attempts"]), (False, 3, delays, "error", 3))
-                self.assertEqual((result["error"]["code"], result["error"]["message"], result["error"]["recoverable"]), (error_code, message, True))
+                self.assertEqual((code, calls, out["error"]["code"], result["error"]["code"], result["attempts"]),
+                                 (2, 1, code_expected, code_expected, 5))
 
-    def test_transient_failure_then_success_passes(self):
-        code, out, calls, sleeps = self.judge([http_error(500), self.ok_response()])
-        self.assertEqual((code, calls, sleeps, out["data"]["results"][0]["verdict"], out["data"]["results"][0]["attempts"]), (0, 2, [1.0], "satisfied", 2))
+    def test_nonretryable_validation_error_is_returned_once(self):
+        failure = self.wheel_error("decision.api_validation", "validation", "invalid question", status=422)
+        code, out, calls = self.judge([failure])
+        result = out["data"]["results"][0]
+        self.assertEqual((code, calls, out["error"]["code"], result["attempts"]), (2, 1, "JEV.VALIDATION", 1))
 
-    def test_non_transient_http_errors_are_recorded_without_retry(self):
-        code, out, calls, _ = self.judge([http_error(422, b"questions.addressed is invalid")])
-        self.assertEqual((code, out["error"]["code"], out["error"]["recoverable"]), (2, "JEV.VALIDATION", False))  # 0.8.3: exit 2
-        self.assertEqual((out["data"]["summary"]["pass"], calls), (False, 1))
-        self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.VALIDATION", "message": "Jev HTTP 422: questions.addressed is invalid",
-                                                               "recoverable": False, "suggested_action": "Fix the named field; usually a malformed question override."})
-        code, out, calls, _ = self.judge([http_error(418, b"teapot")])
-        self.assertEqual((code, out["error"]["code"]), (2, "JEV.HTTP"))  # 0.8.3: exit 2
-        self.assertEqual((out["data"]["summary"]["pass"], calls), (False, 1))
-        self.assertEqual(out["data"]["results"][0]["error"], {"code": "JEV.HTTP", "message": "Jev HTTP 418; response body withheld",
-                                                               "recoverable": False, "suggested_action": "Check the request body."})
-
-    def test_plan_gate_context_overflow_is_plan_too_large_and_dev_gate_shortens(self):
-        code, out, calls, _ = self.judge([http_error(400, b"max_tokens exceeded")])
+    def test_planning_gate_refuses_context_overflow_and_dev_gate_halves(self):
+        overflow = self.wheel_error("decision.context_exceeded", "validation", "context exceeded")
+        code, out, calls = self.judge([overflow])
         error = out["data"]["results"][0]["error"]
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls, error["code"], error["recoverable"]), (2, False, 1, "PLAN.TOO_LARGE", False))
-        self.assertEqual(out["error"]["code"], "PLAN.TOO_LARGE")  # 0.8.3: the run fails as PLAN.TOO_LARGE, exit 2
-        self.assertIn("Jev rejected it for context size (Jev HTTP 400: request exceeds the model's context window)", error["message"])
+        self.assertEqual((code, calls, error["code"], out["error"]["code"]), (2, 1, "PLAN.TOO_LARGE", "PLAN.TOO_LARGE"))
         self.assertEqual(error["data"]["item_id"], "ex-42")
 
-        code, out, calls, _ = self.judge([http_error(400, b"max_tokens"), http_error(400, b"max_tokens")], gate="dev",
-                                         extra=("--min-item-chars", "1000"), item="evidence " * 200)
+        code, out, calls = self.judge([overflow, overflow], gate="dev", extra=("--min-item-chars", "1000"), item="evidence " * 200)
         result = out["data"]["results"][0]
-        self.assertEqual((code, out["data"]["summary"]["pass"], calls, result["item_shortened"], result["attempts"]), (2, False, 2, True, 2))
-        self.assertEqual(out["error"]["code"], "JEV.CONTEXT_EXCEEDED")  # 0.8.3: exit 2
-        self.assertEqual(result["error"], {
-            "code": "JEV.CONTEXT_EXCEEDED",
-            "message": "Jev rejected the request for context size with the item at 1055 chars (floor --min-item-chars 1000): "
-                       "Jev HTTP 400: request exceeds the model's context window",
-            "recoverable": False,
-            "suggested_action": "Shorten the evidence for this item: sprint report and PR body summaries, file names and counts only; or lower --min-item-chars."})
+        self.assertEqual((code, calls, result["item_shortened"], result["attempts"]), (2, 2, True, 2))
+        self.assertEqual(out["error"]["code"], "JEV.CONTEXT_EXCEEDED")
 
     def test_dry_run_request_that_cannot_fit_reports_context_exceeded(self):
         with Workspace({"anchors.json": LOCKED, "item.txt": "evidence " * 1000}):
@@ -518,7 +486,7 @@ class RunnerContractErrorContracts(unittest.TestCase):
 class TuningContractCli(unittest.TestCase):
     def run_cli(self, kind, value):
         with Workspace({"f.json": value}) as ws:
-            proc = subprocess.run([sys.executable, str(SCRIPTS / "anchor_tuning_contract.py"), kind, str(ws.path / "f.json")],
+            proc = run_test_child([sys.executable, str(SCRIPTS / "anchor_tuning_contract.py"), kind, str(ws.path / "f.json")],
                                   capture_output=True, text=True, encoding="utf-8")
         return proc.returncode, proc.stdout
 

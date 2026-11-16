@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import types
+import unittest
+from unittest.mock import Mock, call, patch
+
+from layout_support import SCRIPTS
+
+
+def load_client():
+    path = SCRIPTS / "decidr_client.py"
+    spec = importlib.util.spec_from_file_location("plan_anchor_decidr_client_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class DecidrClientTests(unittest.TestCase):
+    def setUp(self):
+        self.client = load_client()
+        self.old_agent = sys.modules.get("sc_agent")
+        self.agent = types.ModuleType("sc_agent")
+        self.agent.SagError = type("SagError", (Exception,), {})
+        self.agent.category = lambda detail: json.loads(detail).get("category")
+        self.agent.CancelToken = type("CancelToken", (), {"cancel": Mock()})
+        sys.modules["sc_agent"] = self.agent
+
+    def tearDown(self):
+        if self.old_agent is None:
+            sys.modules.pop("sc_agent", None)
+        else:
+            sys.modules["sc_agent"] = self.old_agent
+
+    def test_client_records_sc_decidr_version(self):
+        self.assertEqual(self.client.SC_DECIDR_VERSION, "0.2.0")
+
+    def test_call_passes_model_keyring_timeout_and_logging(self):
+        self.agent.send = Mock(return_value='{"response":{"text":"ok"}}')
+        general_sink = Mock()
+        cancel = self.agent.CancelToken()
+        result = self.client.call(
+            "request", model="model-selector", project="demo", agent_role="planner",
+            abort_on=frozenset(), category_codes={}, cancel=cancel,
+            config_dir="/tmp/config", keyring_service="plan-anchor",
+            keyring_account="typesafe-api-key", general_log=general_sink,
+            timeout_secs=45,
+        )
+        self.assertEqual(result, ('{"response":{"text":"ok"}}', None))
+        self.agent.send.assert_called_once_with(
+            "request", model="model-selector", project="demo", agent_role="planner",
+            cancel=cancel, images=None, long_context=False, config_dir="/tmp/config",
+            keyring_service="plan-anchor", keyring_account="typesafe-api-key",
+            general_log=general_sink, timeout_secs=45,
+        )
+        self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
+        self.assertNotIn("provider", self.agent.send.call_args.kwargs)
+
+    def test_default_keyring_location_is_forwarded_for_both_calls(self):
+        self.agent.send = Mock(return_value='{"response": {}}')
+        self.agent.send_batch = Mock(return_value=[])
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={}, cancel=Mock())
+        self.client.call("request", **common)
+        self.client.call_batch(["request"], **common)
+        for method in (self.agent.send, self.agent.send_batch):
+            self.assertEqual(method.call_count, 1)
+            self.assertIsNone(method.call_args.kwargs["keyring_service"])
+            self.assertIsNone(method.call_args.kwargs["keyring_account"])
+
+    def test_invalid_abort_on_fails_before_import_or_send(self):
+        self.agent.send = Mock()
+        self.agent.send_batch = Mock()
+        with patch.dict(sys.modules, {"sc_agent": None}):
+            for method, request in ((self.client.call, "request"), (self.client.call_batch, ["request"])):
+                with self.subTest(method=method.__name__), self.assertRaises(ValueError):
+                    method(request, model="m", project="p", agent_role="r",
+                           abort_on=frozenset({"quota"}), category_codes={}, cancel=Mock())
+        self.agent.send.assert_not_called()
+        self.agent.send_batch.assert_not_called()
+
+    def test_batch_missing_wheel_and_error_paths(self):
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset({"auth"}),
+                      category_codes={}, cancel=Mock())
+        with patch.dict(sys.modules, {"sc_agent": None}):
+            with self.assertRaises(self.client.ClientError) as raised:
+                self.client.call_batch(["request"], **common)
+        self.assertEqual(raised.exception.code, "DEPENDENCY.SC_DECIDR")
+
+        error = self.agent.SagError("typed")
+        error.category = "auth"
+        self.agent.send_batch = Mock(side_effect=error)
+        with self.assertRaises(self.agent.SagError) as raised:
+            self.client.call_batch(["request"], **common)
+        self.assertIs(raised.exception, error)
+        common["cancel"].cancel.assert_called_once_with()
+
+        common["cancel"] = Mock()
+        self.agent.send_batch = Mock(side_effect=KeyboardInterrupt)
+        with self.assertRaises(KeyboardInterrupt):
+            self.client.call_batch(["request"], **common)
+        common["cancel"].cancel.assert_called_once_with()
+
+    def test_sag_error_is_mapped_and_selected_category_cancels(self):
+        error = self.agent.SagError("typed")
+        error.category = "auth"
+        self.agent.send = Mock(side_effect=error)
+        cancel = Mock()
+        with self.assertRaises(self.agent.SagError):
+            self.client.call("request", model="m", project="p", agent_role="r",
+                             abort_on=frozenset({"auth"}), category_codes={"auth": "AUTH"}, cancel=cancel)
+        cancel.cancel.assert_called_once_with()
+
+    def test_unknown_result_category_maps_to_none(self):
+        self.agent.send = Mock(return_value='{"error":{"id":"other","category":"unmapped"}}')
+        result = self.client.call("request", model="m", project="p", agent_role="r",
+                                  abort_on=frozenset(), category_codes={"auth": "AUTH"}, cancel=Mock())
+        self.assertEqual(result, ('{"error":{"id":"other","category":"unmapped"}}', None))
+
+    def test_category_failure_is_typed_and_preserves_cause(self):
+        self.agent.send = Mock(return_value='{"error":{"id":"auth","category":"auth"}}')
+        cause = RuntimeError("wheel failure")
+        self.agent.category = Mock(side_effect=cause)
+        with self.assertRaises(self.client.ClientError) as raised:
+            self.client.call("request", model="m", project="p", agent_role="r",
+                             abort_on=frozenset({"auth"}), category_codes={}, cancel=Mock())
+        self.assertEqual(raised.exception.code, "DECIDR.INVALID_RESULT")
+        self.assertIs(raised.exception.__cause__, cause)
+
+    def test_call_cancels_on_selected_result_category(self):
+        self.agent.send = Mock(return_value='{"error":{"id":"auth","category":"auth"}}')
+        cancel = Mock()
+        result = self.client.call("request", model="m", project="p", agent_role="r",
+                                  abort_on=frozenset({"auth"}), category_codes={"auth": "AUTH"}, cancel=cancel)
+        self.assertEqual(result[1], "AUTH")
+        cancel.cancel.assert_called_once_with()
+
+    def test_module_import_is_offline_and_missing_wheel_is_typed(self):
+        with patch.dict(sys.modules, {"sc_agent": None}):
+            offline_client = load_client()
+            with self.assertRaises(offline_client.ClientError) as raised:
+                offline_client.call("request", model="m", project="p", agent_role="r",
+                                    abort_on=frozenset(), category_codes={}, cancel=Mock())
+        self.assertEqual(raised.exception.code, "DEPENDENCY.SC_DECIDR")
+
+    def test_batch_maps_errors_cancels_and_forwards_callback(self):
+        lines = [
+            '{"response":{"text":"one"}}',
+            '{"error":{"id":"http.auth","category":"auth"}}',
+        ]
+
+        def send_batch(requests, *, on_result, **kwargs):
+            for line in reversed(lines):
+                on_result(line)
+            return list(lines)
+
+        self.agent.send_batch = Mock(side_effect=send_batch)
+        cancel = Mock()
+        callback = Mock()
+        out = self.client.call_batch(
+            ["one", "two"], model="m", project="p", agent_role="r",
+            abort_on=frozenset({"auth"}), category_codes={"auth": "AUTH"}, cancel=cancel,
+            workers=3, timeout_secs=30, on_result=callback,
+        )
+        self.assertEqual(out, [(lines[0], None), (lines[1], "AUTH")])
+        cancel.cancel.assert_called_once_with()
+        self.assertEqual(callback.call_args_list, [call(lines[1]), call(lines[0])])
+        self.assertNotIn("session_log", self.agent.send_batch.call_args.kwargs)
+        self.assertNotIn("provider", self.agent.send_batch.call_args.kwargs)
+        self.assertEqual(self.agent.send_batch.call_args.kwargs["workers"], 3)
+        self.assertEqual(self.agent.send_batch.call_args.kwargs["timeout_secs"], 30)
+
+    def test_invalid_limits_are_forwarded_once_and_reraised(self):
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={}, cancel=Mock())
+        cases = (("send", "timeout_secs", 9.99, "decidr.invalid_request_timeout"),
+                 ("send_batch", "timeout_secs", 9.99, "decidr.invalid_request_timeout"),
+                 ("send_batch", "workers", 0, "decidr.invalid_workers"),
+                 ("send_batch", "workers", 65, "decidr.invalid_workers"))
+        for operation, option, value, error_id in cases:
+            with self.subTest(operation=operation, option=option, value=value):
+                error = self.agent.SagError(error_id)
+                error.category = "validation"
+                method = Mock(side_effect=error)
+                setattr(self.agent, operation, method)
+                call_client = self.client.call if operation == "send" else self.client.call_batch
+                request = "request" if operation == "send" else ["request"]
+                with self.assertRaises(self.agent.SagError) as raised:
+                    call_client(request, **common, **{option: value})
+                self.assertIs(raised.exception, error)
+                self.assertEqual(method.call_count, 1)
+                self.assertEqual(method.call_args.kwargs[option], value)
+
+    def test_each_distinct_error_line_is_classified_once(self):
+        line = '{"error":{"id":"auth","category":"auth"}}'
+        self.agent.category = Mock(wraps=self.agent.category)
+        self.agent.send = Mock(return_value=line)
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={"auth": "AUTH"}, cancel=Mock())
+        self.client.call("request", **common)
+        self.assertEqual(self.agent.category.call_count, 1)
+        self.agent.category.reset_mock()
+        def send_batch(requests, *, on_result, **kwargs):
+            on_result(line)
+            return [line]
+        self.agent.send_batch = Mock(side_effect=send_batch)
+        self.client.call_batch(["request"], **common)
+        self.assertEqual(self.agent.category.call_count, 1)
+
+    def test_keyboard_interrupt_cancels(self):
+        self.agent.send = Mock(side_effect=KeyboardInterrupt)
+        cancel = Mock()
+        with self.assertRaises(KeyboardInterrupt):
+            self.client.call("request", model="m", project="p", agent_role="r",
+                             abort_on=frozenset(), category_codes={}, cancel=cancel)
+        cancel.cancel.assert_called_once_with()
+
+
+if __name__ == "__main__":
+    unittest.main()

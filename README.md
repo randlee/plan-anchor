@@ -61,7 +61,8 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 
 | Need | For | Notes |
 | --- | --- | --- |
-| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
+| `python3` 3.11+ | everything | Scripts are standard-library only except `anchor_tracker.py` and `plan_anchor_settings.py` (PyYAML) and live `jev_judge.py` calls (`sc-decidr`) |
+| `sc-decidr` 0.2.0 wheel | live Jev calls | Install the platform wheel for the active Python from the [prerelease release](https://github.com/randlee/sc-agent/releases/tag/prerelease/v0.2.0); offline commands do not import it |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |
@@ -98,7 +99,7 @@ If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REM
 **Runtime the worker must provide.**
 
 - A checkout that includes the vendored install above (gates walk up from the working directory, stopping before the home directory, to the nearest `<D>/.claude|.codex|.cursor/skills/plan-anchoring/scripts/jev_judge.py` whose `<D>/.sc/plan-anchor/install-lock.json` lists that script; a hand-copied, lock-less, `.agents/`, global or plugin-cache copy fails with `VALIDATION.PATH`).
-- `python3` 3.9+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
+- `python3` 3.11+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
 - Outbound HTTPS to the Jev endpoint (see the installed `references/jev-api.md`).
 
 **Operational notes.**
@@ -190,7 +191,9 @@ plugins/sc-plan-anchor/
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
-Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. Transient API failures get three attempts with backoff before an anchor is marked `error`; credential and consent failures abort immediately and are never retried.
+Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
+
+The shared client's `MODELS` list documents the model selectors rendered for this consumer; it does not restrict the model passed to a call.
 
 ## Development
 
@@ -202,7 +205,7 @@ Maintainer tests live outside the marketplace plugin so plugin consumers do not
 redistribute or inherit this repository's test suite. They use fixture answers
 and a stub transport; they cover ID allocation, gating, overrides, retries and
 context shortening, response validation, report format, coverage and diffs,
-not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.9
+not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.11
 and the latest 3.x, once against the br render of the scripts and once against the bd render
 (CONTRIBUTING.md). The scripts are templates, so a smoke run installs first (it needs the
 sc-compose wheel) and then runs the installed copy with no key (exits 0 with `data.summary.pass: false`,
@@ -235,3 +238,9 @@ The offline suite runs on Linux, macOS and Windows in CI. The repository is a Cl
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Installed-wheel integration
+
+[The manual integration workflow](docs/integration.md) runs plan-anchor's real
+judge, batch-order and auth/redaction cases against an installed sc-decidr wheel
+and commits per-platform XHTML panels under `site/reports/integration/`.
