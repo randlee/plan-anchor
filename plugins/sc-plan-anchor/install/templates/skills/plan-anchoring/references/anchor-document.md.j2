@@ -10,7 +10,7 @@ required_variables:
 ---
 name: anchor-document
 version: {{ version }}
-description: The intent document, the anchors.json record of truth and its rendered anchors.md, ID rules, provenance, versioning, promotion, and retirement.
+description: The intent document, the anchors.json record of truth and its rendered anchors.md, ID rules, provenance, versioning, promotion, retirement, and the optional repository guidelines file.
 ---
 
 # The anchor documents
@@ -101,3 +101,13 @@ The quote is evidence. The statement is an instrument: `lint`, `rubric` and the 
 ## Rendering
 
 `render` writes `anchors.md`: a status table and one section per anchor (quote as blockquote, provenance, summary, scope, deterministic check, exclusions with reasons, bead IDs, fixtures). Re-render after every `add`, `update`, `set-beads`, `promote`, `retire` or `exclude`; commit both files together.
+
+## Repository guidelines (optional)
+
+`.sc/plan-anchor/plan-anchor-repo-guidelines.md`, beside `settings.yaml`, holds the repository owner's notes for plan-anchor work in this repository: principles for resolving anchor conflicts, triage, plan fixes, question tuning and drift review; domain vocabulary; known pitfalls. The owner writes and commits it; the installer never creates, changes or deletes it. `plan_anchor_settings.py show` reports the nearest one as `data.repo_guidelines_path`; null means there is none, and nothing below applies. A starting point: `assets/examples/plan-anchor-repo-guidelines.example.md`.
+
+When it exists, read it before capture, tuning, triage, plan fixes and the drift review, and follow it:
+
+- It supplements the approved intent, the anchors and their quotes, and never overrides them. Where it conflicts with one of them, they win; raise the conflict with the owner.
+- It is not an anchor: it is never judged, adds no scope, and is not the authority a `to_fix` `add` needs.
+- It never widens what may be sent to Jev (`jev-api.md`, Remote judging consent).
