@@ -74,3 +74,22 @@ def jsonl(lines):
 
 BATCH_LINES = [request_line("s1", "We copy the legacy crates.", ("cur", PLAN_QS["questions"]), ("alt", alt_set(1)), title="Sprint 1"),
                request_line("s3", "# Sprint 3\n\nCopy the legacy runtime crates.\n", ("cur", PLAN_QS["questions"]))]
+
+
+def wheel_line(line, *, position=0, sends=1):
+    """Add ResultLine envelope fields to a controlled legacy fixture (not live evidence)."""
+    value = json.loads(line) if isinstance(line, str) else dict(line)
+    value.setdefault("session_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    value.setdefault("position", position)
+    value.setdefault("digests", {})
+    value.setdefault("sends", value.get("error", {}).get("attempts", sends))
+    return json.dumps(value)
+
+
+def context_overflow_line(*, sends=1, position=0):
+    """sc-decidr 0.2.3 ResultLine/ContextExceeded shape, with controlled envelope values."""
+    return wheel_line({"error": {
+        "id": "decision.context_exceeded",
+        "message": "the API answered HTTP 413: request exceeds the model's context window",
+        "recovery": "shorten the request and send again", "status": 413, "category": "validation",
+    }}, sends=sends, position=position)

@@ -72,7 +72,7 @@ class ScriptErrValueTests(unittest.TestCase):
     def test_jev_judge(self):
         missing = jj.load_json("/nonexistent/x.json", "thing")
         self.assertEqual((missing.error.code, missing.error.message), ("INPUT.MISSING", "thing not found: '/nonexistent/x.json'"))
-        self.assertEqual(jj.DECIDR_CATEGORY_CODES["auth"], "AUTH.CREDENTIALS")
+        self.assertEqual(jj.decidr_client.DECIDR_CATEGORY_CODES["auth"], "AUTH.CREDENTIALS")
 
     def test_judge_error_is_a_value_not_an_exception(self):
         self.assertFalse(issubclass(jj.JudgeError, BaseException))
@@ -89,6 +89,7 @@ class JevPropagationTests(unittest.TestCase):
 
     def test_non_transient_err_is_returned_with_meta(self):
         refused = jj.JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401", status=401)
+        refused.meta = {"attempts": 1}
         with mock.patch.object(jj, "call_jev", return_value=Err(refused)) as called:
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertIs(out.error, refused)
@@ -103,8 +104,17 @@ class JevPropagationTests(unittest.TestCase):
         self.assertIs(out.error, down)
         self.assertEqual((called.call_count, out.error.meta["attempts"]), (1, 5))
 
+    def test_success_uses_observed_send_count_and_preserves_unknown(self):
+        for sends in (5, None):
+            with self.subTest(sends=sends), mock.patch.object(jj, "call_jev", return_value=Ok(
+                    jj._JevResponse({"answers": {}}, sends))) as called:
+                out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
+            self.assertIsInstance(out, Ok)
+            self.assertEqual(out.value[1]["attempts"], sends)
+            called.assert_called_once()
+
     def test_invalid_ok_response_becomes_err(self):
-        with mock.patch.object(jj, "call_jev", return_value=Ok({"answers": []})):
+        with mock.patch.object(jj, "call_jev", return_value=Ok(jj._JevResponse({"answers": []}, 1))):
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertEqual(out.error.code, "JEV.RESPONSE_INVALID")
 

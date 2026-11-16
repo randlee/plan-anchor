@@ -1767,127 +1767,57 @@ def encode_body(body: dict) -> bytes:
     return json.dumps(body, allow_nan=False).encode("utf-8")
 
 
-DECIDR_CATEGORY_CODES = {
-    "auth": "AUTH.CREDENTIALS", "quota": "JEV.RATE_LIMITED", "busy": "JEV.OVERLOADED",
-    "network": "JEV.NETWORK", "response_invalid": "JEV.RESPONSE_INVALID",
-    "validation": "JEV.VALIDATION", "cancelled": "CANCELED",
-    "config": "DECIDR.CONFIG", "log": "DECIDR.LOG", "other": "DECIDR.ERROR",
-}
-DECIDR_ERROR_CODES = {
-    "decision.context_exceeded": "JEV.CONTEXT_EXCEEDED",
-    "decision.api_bad_request": "JEV.VALIDATION",
-    "decision.api_validation": "JEV.VALIDATION",
-    "decision.response_parse": "JEV.RESPONSE_INVALID",
-}
-DECIDR_ERROR_ACTIONS = {
+DECIDR_CODE_OVERRIDES = {"context_exceeded": "JEV.CONTEXT_EXCEEDED"}
+DECIDR_ACTION_OVERRIDES = {
     "AUTH.CREDENTIALS": "Check TYPESAFE_API_KEY or the documented platform credential.",
-    "JEV.CONTEXT_EXCEEDED": "Shorten the evidence for this item.",
-    "JEV.VALIDATION": "Fix the request or question field named by Jev.",
-    "JEV.RATE_LIMITED": "Retry the command later, after the rate limit clears.",
-    "JEV.OVERLOADED": "Retry the command later, after the provider is available.",
-    "JEV.NETWORK": "Check network access and retry.",
-    "JEV.RESPONSE_INVALID": "Check the model and question ids, then retry.",
-    "JEV.HTTP": "Check the request and the provider error details.",
-    "DECIDR.CONFIG": "Check the sc-decidr configuration and correct the reported setting.",
-    "DECIDR.LOG": "Check the sc-decidr log location and write permissions.",
-    "DECIDR.ERROR": "Inspect the sc-decidr error details and correct the cause.",
-    "DECIDR.INVALID_RESULT": "Inspect the invalid sc-decidr result and check the wheel and client versions.",
-    "DEPENDENCY.SC_DECIDR": "Install the sc-decidr 0.2 wheel in the active Python environment.",
-    "CANCELED": "Retry the command when ready.",
 }
 
 
-def _new_cancel_token():
-    """Load the optional wheel only when an opted-in live call is about to be made."""
-    try:
-        import sc_agent
-    except ImportError as exc:
-        raise decidr_client.ClientError("DEPENDENCY.SC_DECIDR", f"sc-decidr {decidr_client.SC_DECIDR_VERSION} is required for live calls: {exc}") from exc
-    return sc_agent.CancelToken()
+def _judge_failure(failure: dict) -> JudgeError:
+    """Convert the shared plain failure once, retaining plan-anchor's auth presentation."""
+    message = ("Jev authentication failed; response body withheld" if failure["code"] == "AUTH.CREDENTIALS"
+               else failure["message"])
+    retry_after_ms = failure["retry_after_ms"]
+    error = JudgeError(failure["code"], message, recoverable=failure["retryable"], action=failure["action"],
+                       status=failure["status"], retry_after=retry_after_ms / 1000 if retry_after_ms is not None else None)
+    error.meta = {"attempts": failure["attempts"]}
+    if retry_after_ms is not None:
+        error.meta["retry_after_ms"] = retry_after_ms
+    error.data = {key: failure["data"][key] for key in ("id", "category", "attempts", "retry_after_ms", "cause")
+                  if key in failure["data"]}
+    return error
 
 
-def _error_metadata(detail: dict) -> dict:
-    attempts = detail.get("attempts")
-    meta = {"attempts": attempts if isinstance(attempts, int) and attempts >= 0 else 1}
-    if isinstance(detail.get("retry_after_ms"), int):
-        meta["retry_after_ms"] = detail["retry_after_ms"]
-    return meta
+class _JevResponse(dict):
+    """A domain response carrying the wheel's observed send count."""
+
+    def __init__(self, response: dict, attempts):
+        super().__init__(response)
+        self.sc_agent_sends = attempts
 
 
-def _wheel_error(code: Optional[str], error: dict) -> JudgeError:
-    """Translate structured sc-decidr fields; never infer a category from provider message text."""
-    identifier = error.get("id") if isinstance(error.get("id"), str) else ""
-    category = error.get("category") if isinstance(error.get("category"), str) else None
-    resolved_code = DECIDR_ERROR_CODES.get(identifier) or code or DECIDR_CATEGORY_CODES.get(category) or "JEV.HTTP"
-    message = ("Jev authentication failed; response body withheld" if resolved_code == "AUTH.CREDENTIALS" else
-               error.get("message") if isinstance(error.get("message"), str) else "sc-decidr returned an error")
-    meta = _error_metadata(error)
-    retry_after_ms = meta.get("retry_after_ms")
-    out = JudgeError(resolved_code, message,
-                     recoverable=(resolved_code == "JEV.CONTEXT_EXCEEDED" or category in ("busy", "network")),
-                     action=DECIDR_ERROR_ACTIONS.get(resolved_code, "Inspect the typed error and correct its cause."),
-                     status=error.get("status") if isinstance(error.get("status"), int) else None,
-                     retry_after=(retry_after_ms / 1000 if retry_after_ms is not None else None))
-    out.meta = meta
-    out.data = {key: error[key] for key in ("id", "category", "attempts", "retry_after_ms", "cause") if key in error}
-    return out
+def _add_attempts(total, count):
+    return total + count if total is not None and count is not None else None
 
 
-def _decode_wheel_result(line: str, mapped_code: Optional[str]) -> Result[dict, JudgeError]:
-    try:
-        parsed = json.loads(line)
-    except (TypeError, ValueError) as exc:
-        return fail("JEV.RESPONSE_INVALID", f"sc-decidr returned invalid JSON: {exc}", recoverable=True,
-                    action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
-    if not isinstance(parsed, dict):
-        return fail("JEV.RESPONSE_INVALID", "sc-decidr returned a non-object result", recoverable=True,
-                    action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
-    error = parsed.get("error")
-    if isinstance(error, dict):
-        return Err(_wheel_error(mapped_code, error))
-    response = parsed.get("response")
-    if not isinstance(response, dict):
-        return fail("JEV.RESPONSE_INVALID", "sc-decidr result has neither a response nor a typed error",
-                    recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
-    return Ok(response)
-
-
-def _sag_error(exc: Exception) -> JudgeError:
-    detail = getattr(exc, "detail", {})
-    if isinstance(detail, str):
-        try:
-            detail = json.loads(detail)
-        except ValueError:
-            detail = {}
-    if not isinstance(detail, dict):
-        detail = {}
-    category = getattr(exc, "category", None) or detail.get("category")
-    identifier = getattr(exc, "id", None) or detail.get("id")
-    code = DECIDR_ERROR_CODES.get(identifier) or DECIDR_CATEGORY_CODES.get(category) or "JEV.HTTP"
-    return _wheel_error(code, dict(detail, id=identifier, category=category,
-                                  message=getattr(exc, "message", str(exc))))
-
-
-def _client_error(exc: decidr_client.ClientError) -> Result[dict, JudgeError]:
-    return fail(exc.code, str(exc), action=DECIDR_ERROR_ACTIONS.get(
-        exc.code, "Inspect the sc-decidr client error and correct its cause."))
+def _total_attempts(counts):
+    total = 0
+    for count in counts:
+        total = _add_attempts(total, count)
+    return total
 
 
 def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
-    """Call the shared transport once; credentials and provider retries belong to sc-decidr."""
-    try:
-        line, mapped_code = decidr_client.call(
-            encode_body(body).decode("utf-8"), model=body["model"], project="plan-anchor", agent_role="judge",
-            abort_on=frozenset({"auth"}), category_codes=DECIDR_CATEGORY_CODES, cancel=_new_cancel_token(),
-            keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
-        )
-    except decidr_client.ClientError as exc:
-        return _client_error(exc)
-    except Exception as exc:
-        if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
-            return Err(_sag_error(exc))
-        raise
-    return _decode_wheel_result(line, mapped_code)
+    """Author the domain request; the generated client owns the wheel boundary."""
+    record = decidr_client.call_result(
+        encode_body(body).decode("utf-8"), model=body["model"], project="plan-anchor", agent_role="judge",
+        abort_on=frozenset({"auth"}), category_codes=DECIDR_CODE_OVERRIDES,
+        error_actions=DECIDR_ACTION_OVERRIDES, keyring_service=CREDENTIAL_SERVICE,
+        keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
+    )
+    if not record["ok"]:
+        return Err(_judge_failure(record["error"]))
+    return Ok(_JevResponse(record["value"], record["attempts"]))
 
 
 def item_core(text: str) -> str:
@@ -1942,13 +1872,13 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
         meta["item_chars_sent"] = len(item["text"]) if item else 0
         answered = call_jev(body, timeout)
         if isinstance(answered, Ok):
-            meta["attempts"] += 1
+            meta["attempts"] = _add_attempts(meta["attempts"], answered.value.sc_agent_sends)
             answered = validate_response(answered.value, questions, optional)
             if isinstance(answered, Ok):
                 return Ok((answered.value, meta))
         else:
             call_meta = answered.error.meta or {}
-            meta["attempts"] += call_meta.get("attempts", 1)
+            meta["attempts"] = _add_attempts(meta["attempts"], call_meta.get("attempts"))
             if "retry_after_ms" in call_meta:
                 meta["retry_after_ms"] = call_meta["retry_after_ms"]
         exc = answered.error
@@ -2494,7 +2424,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                                            shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
-                    meta["attempts"] += meta2.get("attempts", 0)
+                    meta["attempts"] = _add_attempts(meta["attempts"], meta2.get("attempts"))
                     verdict2, min_conf2 = decide(resp2["answers"], qs["roles"], ctx["threshold"], entry["kind"])
                     if verdict2 == verdict:
                         entry["confirmed"] = True
@@ -2505,7 +2435,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                     exc2 = second.error
                     if exc2.code in ABORT_CODES:
                         return second
-                    meta["attempts"] += (exc2.meta or {}).get("attempts", 0)
+                    meta["attempts"] = _add_attempts(meta["attempts"], (exc2.meta or {}).get("attempts"))
                     entry["confirm_error"] = exc2.to_json()["error"]
             entry.update({"verdict": verdict, "answers": resp["answers"], "min_confidence": round(min_conf, 3),
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
@@ -3033,7 +2963,7 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts += meta.get("attempts", 1)
+        attempts = _add_attempts(attempts, meta.get("attempts"))
     first_choices = [answer_choice(responses[0]["answers"][qid])[0] for qid in qs["questions"]]
     second_choices = [answer_choice(responses[1]["answers"][qid])[0] for qid in qs["questions"]]
     if first_choices != second_choices:
@@ -3042,7 +2972,7 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts += meta.get("attempts", 1)
+        attempts = _add_attempts(attempts, meta.get("attempts"))
     outcome = rubric_confirmation_outcome(responses, tuple(qs["questions"]), threshold, lint_errors)
     if isinstance(outcome, Err):
         return outcome
@@ -3671,6 +3601,8 @@ def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dr
     if raw is not None:
         verdict, min_conf = decide(raw["answers"], job.roles, settings.threshold, job.kind)
         leaning = decide(raw["answers"], job.roles, 0.0, job.kind)[0]
+    count = wheel_attempts if wheel_attempts is not None else (
+        None if any(attempt.get("attempt") is None for attempt in attempts) else len(attempts))
     return redact_sensitive({
         "schema": BATCH_RESULT_SCHEMA, "request_id": job.request_id, "run_id": batch_run_id(job.request_id),
         "item_id": job.item_id, "anchor_id": job.anchor_id, "candidate_id": job.candidate_id, "repeat": job.repeat,
@@ -3679,7 +3611,7 @@ def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dr
         "raw_response": raw, "answers": raw["answers"] if raw is not None else None,
         "model_answered": raw.get("model") if raw is not None else None,
         "threshold": settings.threshold, "verdict": verdict, "min_confidence": min_conf, "leaning": leaning,
-        "retry_count": max((wheel_attempts if wheel_attempts is not None else len(attempts)) - 1, 0), "attempts": attempts,
+        "retry_count": max(count - 1, 0) if count is not None else None, "attempts": attempts,
         "error": None if error is None else {"code": error.code, "message": error.message, "recoverable": error.recoverable},
     })
 
@@ -3812,7 +3744,7 @@ def encode_result_line(line: dict) -> str:
 
 
 def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, JudgeError]:
-    """Flush completion callbacks immediately; return results in input order."""
+    """Validate and persist domain results; the generated client streams wheel records."""
     base = load_question_set(settings.gate)
     if isinstance(base, Err):
         return base
@@ -3824,24 +3756,16 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
         jobs.extend(built.value)
     completed = {}
 
-    def persist(position, wire_line, mapped_code):
-        if position in completed:
-            return completed[position]
+    def persist(record):
+        position = record["position"]
         job = jobs[position]
-        decoded = _decode_wheel_result(wire_line, mapped_code)
-        if isinstance(decoded, Ok):
-            checked = validate_response(decoded.value, job.questions)
-            if isinstance(checked, Ok):
-                attempts = [{"attempt": 1, "ok": True}]
-                line = _line(job, settings, checked.value, attempts, None, False, 1)
-            else:
-                error = checked.error
-                attempts = [{"attempt": 1, "ok": False,
-                             "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}}]
-                line = _line(job, settings, None, attempts, error, False, 1)
+        wheel_attempts = record["attempts"]
+        checked = validate_response(record["value"], job.questions) if record["ok"] else Err(_judge_failure(record["error"]))
+        if isinstance(checked, Ok):
+            attempts = [{"attempt": wheel_attempts, "ok": True}]
+            line = _line(job, settings, checked.value, attempts, None, False, wheel_attempts)
         else:
-            error = decoded.error
-            wheel_attempts = (error.meta or {}).get("attempts", 1)
+            error = checked.error
             attempts = [{"attempt": wheel_attempts, "ok": False,
                          "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}}]
             line = _line(job, settings, None, attempts, error, False, wheel_attempts)
@@ -3857,42 +3781,21 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
             raise BatchInputError(fail("SCRIPT.IO", f"batch result log could not be written: {exc}",
                                        action="Check the run directory is writable.").error) from exc
         completed[position] = line
-        return line
-
-    def received(wire_line):
-        try:
-            value = json.loads(wire_line)
-        except (TypeError, ValueError) as exc:
-            raise BatchInputError(fail("JEV.RESPONSE_INVALID", f"sc-decidr callback is not valid JSON: {exc}",
-                                       recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"]).error) from exc
-        position = value.get("position") if isinstance(value, dict) else None
-        if type(position) is not int or not 0 <= position < len(jobs):
-            raise BatchInputError(fail("JEV.RESPONSE_INVALID", "sc-decidr callback has no valid input position",
-                                       recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"]).error)
-        persist(position, wire_line, None)
 
     try:
-        results = decidr_client.call_batch(
+        result = decidr_client.call_batch_results(
             [encode_body(job.body).decode("utf-8") for job in jobs],
             model=settings.model, project="plan-anchor", agent_role="tournament",
-            abort_on=frozenset({"auth"}), category_codes=DECIDR_CATEGORY_CODES, cancel=_new_cancel_token(),
-            keyring_service=CREDENTIAL_SERVICE, keyring_account=CREDENTIAL_ACCOUNT,
-            timeout_secs=settings.timeout, workers=settings.max_workers, on_result=received,
+            abort_on=frozenset({"auth"}), category_codes=DECIDR_CODE_OVERRIDES,
+            error_actions=DECIDR_ACTION_OVERRIDES, keyring_service=CREDENTIAL_SERVICE,
+            keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=settings.timeout,
+            workers=settings.max_workers, on_result=persist,
         )
-        if len(results) != len(jobs):
-            return fail("JEV.RESPONSE_INVALID", f"sc-decidr returned {len(results)} results for {len(jobs)} batch requests",
-                        recoverable=True, action=DECIDR_ERROR_ACTIONS["JEV.RESPONSE_INVALID"])
-        # The returned list is input ordered. Callback rows are already durable;
-        # persist only rows not delivered by the callback, never write twice.
-        return Ok([persist(position, wire, code) for position, (wire, code) in enumerate(results)])
     except BatchInputError as exc:
         return Err(exc.error)
-    except decidr_client.ClientError as exc:
-        return _client_error(exc)
-    except Exception as exc:
-        if getattr(exc, "id", None) is not None or getattr(exc, "category", None) is not None:
-            return Err(_sag_error(exc))
-        raise
+    if not result["ok"]:
+        return Err(_judge_failure(result["error"]))
+    return Ok([completed[record["position"]] for record in result["value"]])
 
 
 def batch_settings(args, prefix: str) -> Result[BatchSettings, JudgeError]:
@@ -4719,7 +4622,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     baseline = scores[0]
     score = chosen.semantic_score()
     explanation = (f"{len(bundles)} role-complete bundles (baseline included) x {len(oracle.cases)} frozen oracle cases x {repeat} repeats: "
-                   f"{len(all_lines)} calls, {sum(x['retry_count'] for x in all_lines)} retries. ")
+                   f"{len(all_lines)} calls, {_total_attempts(x['retry_count'] for x in all_lines)} retries. ")
     if tie and not accepted:
         explanation += (f"Bundles {', '.join(s.bundle.bundle_id for s in leaders)} are all semantically accepted and tie on every ranking key "
                         f"except complexity and id ({score['exact_role_cells']}/{score['total_role_cells']} role cells, "
@@ -4749,7 +4652,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
             "failed_calls": sorted(x["request_id"] for x in all_lines if not x.get("ok")),
             "missing_calls": sorted(f"{c.case_id}/{b.bundle_id}/r{r}" for c in oracle.cases for b in bundles
                                     for r in range(1, repeat + 1) if (c.case_id, b.bundle_id, r) not in indexed),
-            "retries": sum(x["retry_count"] for x in all_lines), "max_parallel_evaluators": workers,
+            "retries": _total_attempts(x["retry_count"] for x in all_lines), "max_parallel_evaluators": workers,
             "repeat_requests_byte_identical": all(
                 len({indexed[(c.case_id, b.bundle_id, r)]["request_sha256"] for r in range(1, repeat + 1) if (c.case_id, b.bundle_id, r) in indexed}) <= 1
                 for c in oracle.cases for b in bundles),
@@ -4781,7 +4684,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     variables = {"success": True, "canceled": False, "aborted_by": None, "data": data, "error": None,
                  "metadata": {"duration_ms": int((time.monotonic() - started) * 1000),
                               "tool_calls": sum(len(x.get("attempts") or []) for x in all_lines),
-                              "retry_count": sum(x["retry_count"] for x in all_lines), "correlation_id": request["correlation_id"],
+                              "retry_count": _total_attempts(x["retry_count"] for x in all_lines), "correlation_id": request["correlation_id"],
                               "jev_run_ids": sorted(x["run_id"] for x in all_lines), "planner_observation_trust": None,
                               "authoritative_sources_unchanged": True}}
     checked = contract.validate_result(dict(variables, schema_version="1.0.0"))

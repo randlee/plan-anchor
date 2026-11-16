@@ -80,7 +80,7 @@ class ConventionCase(unittest.TestCase):
         auth = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
         with mock.patch.dict(os.environ, clean_env(), clear=True), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
-                mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch.object(jj.decidr_client, "call", return_value=(auth, "AUTH.CREDENTIALS")), \
                 contextlib.redirect_stdout(output):
             code = jj.main(list(argv))

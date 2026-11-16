@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.4 — 2026-11-16
+
+- Render the shared client from sc-decidr 0.2.3 and use its error adapters and streaming result helpers, removing duplicated wheel-facing logic.
+- Preserve plan-anchor auth redaction, domain validation and durable logging while taking send counts and retryability from the wheel.
+- Use the generated client version as the single CI wheel pin, including Windows unit runners, and update controlled overflow fixtures to the released result shape.
+
 ## 0.12.3 — 2026-11-16
 
 - Flush each completed live batch result immediately, preserving request correlation and input-ordered returned results even when callbacks finish out of order.

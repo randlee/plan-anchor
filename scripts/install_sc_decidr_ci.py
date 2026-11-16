@@ -16,6 +16,8 @@ PLATFORMS = {
     ("Linux", "ARM64"): "manylinux_2_28_aarch64",
     ("macOS", "X64"): "macosx_11_0_x86_64",
     ("macOS", "ARM64"): "macosx_11_0_arm64",
+    ("Windows", "X64"): "win_amd64",
+    ("Windows", "ARM64"): "win_arm64",
 }
 
 
