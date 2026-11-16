@@ -16,14 +16,16 @@ Dates are when the decision first landed or was made.
 
 ## ADR-001 Exact work in the script, judgment in the session and Jev
 
-Status: accepted. Date: 2026-10-09.
+Status: accepted (amended for 0.12.1). Date: 2026-10-09.
 
 Context: Facts stated during planning are lost as context compresses, and
 language models cannot count, gate reliably, or keep a request byte-identical.
 
 Decision: Three tiers. `scripts/jev_judge.py` owns IDs, request composition,
-gating, retries, run files, coverage, diffs and reports. The main session owns
-capture, approval and triage. Jev answers independent typed questions about one
+gating, run files, coverage, diffs and reports. Live calls use the lazily
+imported `sc-decidr` wheel through the generated `decidr_client.py`; the wheel
+owns provider retries, credential lookup and status classification (ADR-006).
+The main session owns capture, approval and triage. Jev answers independent typed questions about one
 anchor and one item. Agents run the script once and return its result. See
 §1 of the call-graph document.
 
@@ -123,19 +125,27 @@ installer removes them from earlier installs. REQ-027 to REQ-029 are retired.
 
 ## ADR-006 Python: stdlib, 3.11 floor, Result for expected failures
 
-Status: accepted (was partial until 0.7.1). Date: 2026-10-17.
+Status: accepted (was partial until 0.7.1; amended for 0.12.1). Date: 2026-10-17.
 
 Context: Scripts run inside agent sessions on any developer machine, and the
 calling agent needs a typed failure, not a traceback.
 
 Decision: Standard library only on Python 3.11+, except PyYAML for settings
-(`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily;
+(`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily, and the
+`sc-decidr` wheel for live Jev calls. The wheel version is recorded in the
+generated `decidr_client.py` header and the installation instructions in
+[README.md](../README.md). The client lazily imports `sc_agent`; offline paths
+remain standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
+The wheel owns provider retries, credential lookup and status classification;
 `jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and a `ToolError {code, message, action, data}`. Exceptions are
 for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
 unit-tested; CI runs ubuntu, macOS and Windows on 3.11 and 3.x, plus a 3.11
-installer job. The installer alone runs on a 3.11 pin (ADR-015).
+installer job. A Python 3.11 dependency-floor job runs both tracker renders
+without PyYAML and with its declared minimum, installing the named sc-decidr
+prerelease wheel in `.github/workflows/tests.yml`. The installer job uses
+Python 3.11; the installer supports 3.11 and newer (ADR-015).
 
 Consequences: Every skill script and the installer return `Result` for
 expected failures and share `result.py`; `JudgeError` is a value, not an
@@ -301,7 +311,7 @@ unchanged. An anchor excluded everywhere is still uncovered. REQ-006.
 
 ## ADR-013 Repository settings convention
 
-Status: accepted. Date: 2026-10-17.
+Status: accepted (amended for 0.12.1). Date: 2026-10-17.
 
 Context: Behavior varied by machine and environment variable; the skill needs
 one committed place for per-repository choices.
@@ -317,7 +327,11 @@ Consequences: A typo never falls back to a default. The keys are
 `schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
 `plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-082); the
 nearest file at or above the repository wins whole (ADR-015).
-`TYPESAFE_API_KEY` is checked first because it is a runtime secret; when it is absent, the live judge checks the documented platform credential store (macOS Keychain, Windows Credential Manager, or Linux Secret Service) without printing its value. It is the only environment variable the plugin reads for runtime credentials, and since 0.7.3 the
+The `sc-decidr` wheel owns credential lookup and precedence. Live calls pass
+the plan-anchor keyring service/account overrides through the generated client;
+the plugin does not query the platform credential store. The plugin reads
+`TYPESAFE_API_KEY` only to redact it from emitted values and run files
+(REQ-017), never to resolve or pass a credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
 CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
@@ -357,7 +371,7 @@ not shipped. REQ-021, REQ-057.
 
 ## ADR-015 Installer: per-folder, tracker-rendered copies with lock-file ownership
 
-Status: accepted (0.7.0; rewritten for 0.8.0; amended for 0.8.2). Date: 2026-10-17.
+Status: accepted (0.7.0; rewritten for 0.8.0; amended for 0.8.2 and 0.12.1). Date: 2026-10-17.
 Amended 2026-10-17 (0.8.2): scripts are rendered templates too; the
 single-tracker rule, the install flow and switch equivalence are stated below.
 
@@ -424,9 +438,12 @@ Decision:
   render and no committed rendered tree. Schemas, JSON assets, `registry.yaml`
   and the skill's runtime `templates/*.md.j2` are copied verbatim (0.8.2;
   until 0.8.1 the scripts were copied verbatim too). Agent frontmatter and
-  registries live in `install/harness/<target>/`. PEP 723 metadata supplies
-  PyYAML and `sc-compose` >=1.8.0,<2 and pins Python 3.11 (the code runs on
-  3.11+).
+  registries live in `install/harness/<target>/`. The installer's PEP 723
+  metadata declares PyYAML, sc-compose and Python 3.11 or newer; dependency
+  bounds live in `install.py`. It does not install the live-call dependency:
+  callers install the `sc-decidr` wheel separately, as documented in
+  [README.md](../README.md). The generated `decidr_client.py` records its wheel
+  version and imports it lazily only for live calls (ADR-006).
 - **Destination.** `--dest` is any folder: a repository, a folder inside one,
   or a parent folder of many repositories (a non-repository with no `.beads/`
   needs `--tracker` or a settings file, else `TRACKER.REQUIRED`). Global
