@@ -29,7 +29,8 @@ def live(tmp_path, monkeypatch, record_property):
     config = tmp_path / 'wheel-config'
     config.mkdir()
     (config / 'default.json').write_text(json.dumps({'max_sends': 1, 'log_root': str(tmp_path / 'logs')}))
-    # Configure log isolation only; both partials execute the real installed wheel.
+    # The manual live harness redirects log_root through config_dir for isolation;
+    # production calls use the wheel's default log root. Both partials use the real wheel.
     monkeypatch.setattr(jj.decidr_client, 'call', partial(jj.decidr_client.call, config_dir=str(config)))
     monkeypatch.setattr(jj.decidr_client, 'call_batch', partial(jj.decidr_client.call_batch, config_dir=str(config)))
     record_property('provider', 'typesafe')
