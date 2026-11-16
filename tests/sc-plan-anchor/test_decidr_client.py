@@ -62,6 +62,18 @@ class DecidrClientTests(unittest.TestCase):
         self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
         self.assertNotIn("api-key", result[0])
 
+    def test_default_keyring_location_is_forwarded_for_both_calls(self):
+        self.agent.send = Mock(return_value='{"response": {}}')
+        self.agent.send_batch = Mock(return_value=[])
+        common = dict(model="m", project="p", agent_role="r", abort_on=frozenset(),
+                      category_codes={}, cancel=Mock())
+        self.client.call("request", **common)
+        self.client.call_batch(["request"], **common)
+        for method in (self.agent.send, self.agent.send_batch):
+            self.assertEqual(method.call_count, 1)
+            self.assertEqual(method.call_args.kwargs["keyring_service"], "plan-anchor")
+            self.assertEqual(method.call_args.kwargs["keyring_account"], "typesafe-api-key")
+
     def test_invalid_abort_on_fails_before_import_or_send(self):
         self.agent.send = Mock()
         with self.assertRaises(ValueError):
