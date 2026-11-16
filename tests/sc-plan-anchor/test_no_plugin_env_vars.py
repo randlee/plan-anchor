@@ -105,7 +105,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
 
         def send(request, **kwargs):
             requests.append((json.loads(request), kwargs))
-            return wheel_line({"response": {"model": "jev-1.13.0", "answers": answers}}), None
+            return wheel_line({"response": {"model": "jev-1.13.0", "answers": answers}})
 
         with tempfile.TemporaryDirectory() as d:
             workspace(d)
@@ -113,7 +113,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
             os.chdir(d)
             try:
                 with mock.patch.dict(os.environ, dict(environment, TYPESAFE_API_KEY="sk-test-0001"), clear=True), \
-                        mock.patch.object(module.decidr_client, "call", side_effect=send), \
+                        mock.patch("sc_agent.send", side_effect=send), \
                         mock.patch("sc_agent.CancelToken", return_value=object()), \
                         mock.patch.object(module, "remote_judge_consent", return_value=module.Ok(None)), \
                         contextlib.redirect_stdout(buf):

@@ -386,7 +386,7 @@ class TournamentTests(TournamentCase):
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
-                mock.patch.object(jj.decidr_client, "call_batch", side_effect=auth):
+                mock.patch("sc_agent.send_batch", side_effect=auth):
             self.refused("AUTH.CREDENTIALS", None)
         self.assertFalse((self.d / "t" / "results.jsonl").exists())
 
@@ -527,7 +527,8 @@ class BatchTests(TournamentCase):
         log_path = self.d / "live.jsonl"
         cancel_token = mock.Mock()
         with mock.patch("sc_agent.CancelToken", return_value=cancel_token), \
-                mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wheel_error, "JEV.OVERLOADED")]) as send_batch:
+                mock.patch("sc_agent.send_batch", return_value=[wheel_error]) as send_batch, \
+                mock.patch.object(jj.decidr_client, "call_batch_results", wraps=jj.decidr_client.call_batch_results) as boundary:
             result = jj.pump_batch([request], settings, None, log_path, False)
         self.assertIsInstance(result, jj.Ok)
         line = result.value[0]
@@ -539,7 +540,7 @@ class BatchTests(TournamentCase):
         self.assertEqual(json.loads(args[0][0])["state"]["item"]["id"], "s1")
         self.assertEqual((kwargs["model"], kwargs["project"], kwargs["agent_role"], kwargs["workers"]),
                          ("jev-latest", "plan-anchor", "tournament", 2))
-        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
                          ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
         self.assertIs(kwargs["cancel"], cancel_token)
         self.assertNotIn("session_log", kwargs)
@@ -551,7 +552,7 @@ class BatchTests(TournamentCase):
             with self.subTest(sends=sends):
                 wire = wheel_line({"response": {"model": "controlled", "answers": plan_answers()}}, sends=sends)
                 with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                        mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wire, None)]):
+                        mock.patch("sc_agent.send_batch", return_value=[wire]):
                     result = jj.pump_batch([request], settings, None, self.d / f"counts-{index}.jsonl", False)
                 self.assertIsInstance(result, jj.Ok)
                 self.assertEqual(result.value[0]["attempts"], [{"attempt": sends, "ok": True}])
@@ -559,20 +560,21 @@ class BatchTests(TournamentCase):
 
     def test_batch_auth_result_surfaces_once_with_shared_abort_and_overrides(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        detail = {"id": "auth.credentials", "category": "auth", "message": "private response", "attempts": 1, "status": 401}
+        detail = {"id": "auth.credentials", "category": "auth", "message": "authentication failed (HTTP 401); provider response body withheld", "attempts": 1, "status": 401}
         settings = jj.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wheel_line({"error": detail}), "AUTH.CREDENTIALS")]) as send_batch:
+                mock.patch("sc_agent.send_batch", return_value=[wheel_line({"error": detail})]) as send_batch, \
+                mock.patch.object(jj.decidr_client, "call_batch_results", wraps=jj.decidr_client.call_batch_results) as boundary:
             result = jj.pump_batch([request], settings, None, self.d / "auth.jsonl", False)
         send_batch.assert_called_once()
         self.assertIsInstance(result, jj.Ok)
         line = result.value[0]
         self.assertEqual((line["error"]["code"], line["attempts"][0]["attempt"], line["retry_count"]),
                          ("AUTH.CREDENTIALS", 1, 0))
-        self.assertEqual(line["error"]["message"], "Jev authentication failed; response body withheld")
+        self.assertEqual(line["error"]["message"], "authentication failed (HTTP 401); provider response body withheld")
         self.assertNotIn("private response", json.dumps(line))
         kwargs = send_batch.call_args.kwargs
-        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
+        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
                          ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
 
     def test_live_callback_is_durable_before_interruption(self):
@@ -590,7 +592,7 @@ class BatchTests(TournamentCase):
             raise KeyboardInterrupt
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call_batch", side_effect=interrupted), \
+                mock.patch("sc_agent.send_batch", side_effect=interrupted), \
                 mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
             with self.assertRaises(KeyboardInterrupt):
                 jj.pump_batch([request], settings, None, path, True)
@@ -612,10 +614,10 @@ class BatchTests(TournamentCase):
             on_result(second)
             self.assertEqual(json.loads(path.read_text())["candidate_id"], "c2")
             on_result(first)
-            return [(first, None), (second, "JEV.OVERLOADED")]
+            return [first, second]
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call_batch", side_effect=finish_second_first), \
+                mock.patch("sc_agent.send_batch", side_effect=finish_second_first), \
                 mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
             result = jj.pump_batch([request], settings, None, path, True)
         self.assertIsInstance(result, jj.Ok)
@@ -641,7 +643,7 @@ class BatchTests(TournamentCase):
                     return []
 
                 with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                        mock.patch.object(jj.decidr_client, "call_batch", side_effect=invalid):
+                        mock.patch("sc_agent.send_batch", side_effect=invalid):
                     result = jj.pump_batch([request], settings, None, path, False)
                 self.assertIsInstance(result, jj.Err)
                 self.assertEqual(result.error.code, "DECIDR.INVALID_RESULT")
@@ -658,7 +660,7 @@ class BatchTests(TournamentCase):
             return []
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call_batch", side_effect=completed):
+                mock.patch("sc_agent.send_batch", side_effect=completed):
             result = jj.pump_batch([request], settings, None, parent / "log.jsonl", False)
         self.assertIsInstance(result, jj.Err)
         self.assertEqual(result.error.code, "SCRIPT.IO")
@@ -685,7 +687,7 @@ class BatchTests(TournamentCase):
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
-                mock.patch.object(jj.decidr_client, "call_batch", side_effect=error) as send_batch:
+                mock.patch("sc_agent.send_batch", side_effect=error) as send_batch:
             code, out = run_cli(["batch", "--input", self.put("in.jsonl", jsonl(self.LINES)), "--run-dir", str(self.d / "runs")])
         send_batch.assert_called_once()
         self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))

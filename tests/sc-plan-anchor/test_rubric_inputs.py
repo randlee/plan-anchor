@@ -122,7 +122,7 @@ class RubricInputTests(unittest.TestCase):
             self.assertTrue(json.loads(proc.stdout)['success'])
 
     def assert_refused_before_credentials(self, args, pattern):
-        with env(), mock.patch.object(jj.decidr_client, 'call') as transport:
+        with env(), mock.patch('sc_agent.send') as transport:
             code, out = run_cli(args)
         self.assertEqual(code, 2, out)
         self.assertRegex(out['error']['code'], pattern)

@@ -3,7 +3,7 @@
 Pinned before the Result<T, E> refactor so it is provably behaviour-preserving:
 every case asserts the exact JSON envelope (code, message, recoverable,
 suggested_action, data) and exit code a caller sees. The shared client seam is
-driven with typed results; no wheel, keyring or network is touched.
+driven with controlled native results; no provider, keyring or network is touched.
 """
 from jev_test_support import wheel_line, context_overflow_line
 import contextlib
@@ -94,12 +94,12 @@ class Workspace:
 def call_main(main, argv, *, env=None, stdin=None, client_calls=None):
     buf = io.StringIO()
     environment = {"PATH": os.environ.get("PATH", ""), **(env or {})}
-    missing = (json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}}),
+    missing = (json.dumps({"sends": 0, "error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}}),
                "AUTH.CREDENTIALS")
     with mock.patch.dict(os.environ, environment, clear=True), contextlib.redirect_stdout(buf), \
             mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-            mock.patch.object(jj.decidr_client, "call", side_effect=client_calls if client_calls is not None else None,
-                              return_value=missing), \
+            mock.patch("sc_agent.send", side_effect=[line for line, _ in client_calls] if client_calls is not None else None,
+                              return_value=missing[0]), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
         code = main(argv)
     return code, json.loads(buf.getvalue())
@@ -115,14 +115,14 @@ ADD = ["add", "--anchors", "anchors.json", "--stated-at", "2026-10-09"]
 JEV_CASES = {
     "auth_missing_key": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n",
                                   ".sc/plan-anchor/settings.yaml": "schema_version: 1\nallow_remote_judge: true\n"}, {}, None, 2,
-                         {"code": "AUTH.CREDENTIALS", "message": "Jev authentication failed; response body withheld", "recoverable": False,
-                          "suggested_action": "Check TYPESAFE_API_KEY or the documented platform credential."},
-                         {"id": "auth.credentials", "category": "auth", "attempts": 0}),
+                         {"code": "AUTH.CREDENTIALS", "message": "missing key", "recoverable": False,
+                          "suggested_action": None},
+                         {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}),
     "auth_bad_format": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n",
                                  ".sc/plan-anchor/settings.yaml": "schema_version: 1\nallow_remote_judge: true\n"}, {"TYPESAFE_API_KEY": "ské"}, None, 2,
-                        {"code": "AUTH.CREDENTIALS", "message": "Jev authentication failed; response body withheld", "recoverable": False,
-                         "suggested_action": "Check TYPESAFE_API_KEY or the documented platform credential."},
-                        {"id": "auth.credentials", "category": "auth", "attempts": 0}),
+                        {"code": "AUTH.CREDENTIALS", "message": "missing key", "recoverable": False,
+                         "suggested_action": None},
+                        {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}),
     # A repository (".git") whose settings file does not record allow_remote_judge. The workspace is cwd. The key must
     # not be a substring of the message: output redacts it.
     "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,
@@ -361,7 +361,7 @@ class JevTransportErrorContracts(unittest.TestCase):
         return code, out, len(calls)
 
     def test_401_aborts_with_body_withheld(self):
-        auth = self.wheel_error("auth.credentials", "auth", "Bearer sk-test-0001 is wrong", status=401)
+        auth = self.wheel_error("auth.credentials", "auth", "authentication failed (HTTP 401); provider response body withheld", status=401)
         code, out, calls = self.judge([auth])
         self.assertEqual((code, calls, out["error"]["code"]), (2, 1, "AUTH.CREDENTIALS"))
         self.assertNotIn("Bearer", out["error"]["message"])

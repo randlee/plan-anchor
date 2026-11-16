@@ -33,8 +33,8 @@ REFUSED_RUNNER = (
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
     "def refused(*args, **kwargs):\n"
-    "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}}), 'JEV.NETWORK'\n"
-    "jev_judge.decidr_client.call = refused\n"
+    "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}})\n"
+    "import sc_agent; sc_agent.send = refused\n"
     "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
 )
 # Runs a CLI as __main__ and interrupts it exactly where it reads one input file: the first Path.read_text of

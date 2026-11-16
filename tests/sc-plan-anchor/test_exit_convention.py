@@ -81,7 +81,7 @@ class ConventionCase(unittest.TestCase):
         with mock.patch.dict(os.environ, clean_env(), clear=True), \
                 mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj.decidr_client, "call", return_value=(auth, "AUTH.CREDENTIALS")), \
+                mock.patch("sc_agent.send", return_value=auth), \
                 contextlib.redirect_stdout(output):
             code = jj.main(list(argv))
         return code, json.loads(output.getvalue())
@@ -212,7 +212,7 @@ class JevJudgeErrors(ConventionCase):
         rc, out = self.failed_judge_through_client_seam(*argv)
         self.assertEqual((rc, out["success"], out["error"]["code"]), (2, False, "AUTH.CREDENTIALS"), out)
         error = out["error"]
-        self.assertEqual(error["message"], "Jev authentication failed; response body withheld")
+        self.assertEqual(error["message"], "missing key")
         try:
             import yaml  # noqa: F401
         except ImportError:

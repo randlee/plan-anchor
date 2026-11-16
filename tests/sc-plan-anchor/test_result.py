@@ -74,9 +74,10 @@ class ScriptErrValueTests(unittest.TestCase):
         self.assertEqual((missing.error.code, missing.error.message), ("INPUT.MISSING", "thing not found: '/nonexistent/x.json'"))
         self.assertEqual(jj.decidr_client.DECIDR_CATEGORY_CODES["auth"], "AUTH.CREDENTIALS")
 
-    def test_judge_error_is_a_value_not_an_exception(self):
-        self.assertFalse(issubclass(jj.JudgeError, BaseException))
-        e = jj.JudgeError("C.X", "msg", recoverable=True, action="act")
+    def test_shared_error_is_carried_as_a_value_and_can_be_raised(self):
+        self.assertIs(jj.ClientError, jj.decidr_client.ClientError)
+        self.assertTrue(issubclass(jj.ClientError, RuntimeError))
+        e = jj.ClientError("C.X", "msg", retryable=True, action="act")
         self.assertEqual(str(e), "msg")
         self.assertEqual(jj.fail("C.X", "msg").error.to_json()["error"]["message"], "msg")
 
@@ -87,22 +88,47 @@ class JevPropagationTests(unittest.TestCase):
     def body(self):
         return {"model": "m", "questions": {}, "state": {"anchor": {"statement": "s"}}}
 
-    def test_non_transient_err_is_returned_with_meta(self):
-        refused = jj.JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401", status=401)
-        refused.meta = {"attempts": 1}
+    def test_shared_error_identity_survives_single_and_whole_batch_calls(self):
+        error = jj.ClientError("AUTH.CREDENTIALS", "Rust authentication message", action="Rust recovery", attempts=0,
+                               data={"id": "decidr.no_provider_key", "category": "auth"})
+        failed = {"ok": False, "error": error}
+        with mock.patch.object(jj.decidr_client, "call_result", return_value=failed):
+            single = jj.call_jev(self.body(), 30)
+        self.assertIs(single.error, error)
+        settings = mock.Mock(gate="plan", model="jev", timeout=30, max_workers=1)
+        with mock.patch.object(jj, "load_question_set", return_value=Ok({"roles": {}})), \
+                mock.patch.object(jj.decidr_client, "call_batch_results", return_value=failed):
+            batch = jj._live_batch_results([], settings, None, False)
+        self.assertIs(batch.error, error)
+        self.assertEqual(batch.error.to_json(), {"success": False, "data": error.data, "error": {
+            "code": "AUTH.CREDENTIALS", "message": "Rust authentication message", "recoverable": False,
+            "suggested_action": "Rust recovery"}})
+
+    def test_partial_run_wrapper_preserves_rust_text_and_action(self):
+        for action in (None, "Rust recovery text"):
+            with self.subTest(action=action):
+                error = jj.ClientError("JEV.NETWORK", "Rust network failure", action=action)
+                wrapped = jj.jev_failure("cells", [("ANC-001", error)], 2, {"run_path": "runs/partial.json"}).error
+                self.assertIn(error.message, wrapped.message)
+                self.assertEqual(wrapped.action, action)
+                self.assertEqual(wrapped.data["run_path"], "runs/partial.json")
+
+    def test_non_transient_err_is_returned_with_attempts(self):
+        refused = jj.ClientError("AUTH.CREDENTIALS", "Jev HTTP 401", status=401)
+        refused.attempts = 1
         with mock.patch.object(jj, "call_jev", return_value=Err(refused)) as called:
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertIs(out.error, refused)
-        self.assertEqual(out.error.meta["attempts"], 1)
+        self.assertEqual(out.error.attempts, 1)
         self.assertEqual(called.call_count, 1)
 
     def test_wheel_attempt_count_is_returned_without_consumer_retry(self):
-        down = jj.JudgeError("JEV.NETWORK", "down", recoverable=True)
-        down.meta = {"attempts": 5}
+        down = jj.ClientError("JEV.NETWORK", "down", retryable=True)
+        down.attempts = 5
         with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called:
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertIs(out.error, down)
-        self.assertEqual((called.call_count, out.error.meta["attempts"]), (1, 5))
+        self.assertEqual((called.call_count, out.error.attempts), (1, 5))
 
     def test_success_uses_observed_send_count_and_preserves_unknown(self):
         for sends in (5, None):
