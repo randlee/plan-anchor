@@ -563,6 +563,94 @@ class BatchTests(TournamentCase):
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["abort_on"]),
                          ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
 
+    def test_live_callback_is_durable_before_interruption(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "interrupt", 0.6, 30.0, 2, 24000, False)
+        wire = json.dumps({"position": 1, "response": {"model": "controlled", "answers": plan_answers()}})
+        path = self.d / "interrupted.jsonl"
+        during, echoed = [], []
+
+        def interrupted(*args, **kwargs):
+            callback = kwargs.get("on_result")
+            if callback is not None:
+                callback(wire)
+            during.append(path.read_text() if path.exists() else "")
+            raise KeyboardInterrupt
+
+        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call_batch", side_effect=interrupted), \
+                mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
+            with self.assertRaises(KeyboardInterrupt):
+                jj.pump_batch([request], settings, None, path, True)
+        self.assertTrue(during[0], "completed result was not durable inside the callback")
+        self.assertEqual(path.read_text(), during[0])
+        self.assertEqual("".join(echoed), during[0])
+        self.assertEqual(json.loads(during[0])["request_id"], "interrupt/s1/ANC-001/c2/r1")
+
+    def test_live_callbacks_log_finish_order_but_return_input_order_once(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "ordered", 0.6, 30.0, 2, 24000, False)
+        first = json.dumps({"position": 0, "response": {"model": "controlled", "answers": plan_answers()}})
+        second = json.dumps({"position": 1, "error": {"id": "http.provider_busy", "category": "busy",
+                                                    "message": "busy", "attempts": 5}})
+        path = self.d / "ordered.jsonl"
+        echoed = []
+
+        def finish_second_first(*args, on_result, **kwargs):
+            on_result(second)
+            self.assertEqual(json.loads(path.read_text())["candidate_id"], "c2")
+            on_result(first)
+            return [(first, None), (second, "JEV.OVERLOADED")]
+
+        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call_batch", side_effect=finish_second_first), \
+                mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
+            result = jj.pump_batch([request], settings, None, path, True)
+        self.assertIsInstance(result, jj.Ok)
+        self.assertEqual([row["candidate_id"] for row in result.value], ["c1", "c2"])
+        self.assertEqual((result.value[1]["error"]["code"], result.value[1]["retry_count"]), ("JEV.OVERLOADED", 4))
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual([row["candidate_id"] for row in rows], ["c2", "c1"])
+        self.assertEqual(rows, [result.value[1], result.value[0]])
+        self.assertEqual("".join(echoed), path.read_text())
+
+    def test_live_callback_rejects_invalid_carried_positions(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "invalid", 0.6, 30.0, 1, 24000, False)
+        for index, position in enumerate((None, True, "0", 0.5, -1, 1)):
+            with self.subTest(position=position):
+                value = {"response": {"model": "controlled", "answers": plan_answers()}}
+                if position is not None:
+                    value["position"] = position
+                path = self.d / f"invalid-{index}.jsonl"
+
+                def invalid(*args, on_result, **kwargs):
+                    on_result(json.dumps(value))
+                    return []
+
+                with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                        mock.patch.object(jj.decidr_client, "call_batch", side_effect=invalid):
+                    result = jj.pump_batch([request], settings, None, path, False)
+                self.assertIsInstance(result, jj.Err)
+                self.assertEqual(result.error.code, "JEV.RESPONSE_INVALID")
+                self.assertFalse(path.exists())
+
+    def test_live_callback_log_failure_is_typed(self):
+        request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
+        settings = jj.BatchSettings("plan", "jev-latest", 1, "io", 0.6, 30.0, 1, 24000, False)
+        parent = self.d / "not-a-directory"
+        parent.write_text("occupied")
+
+        def completed(*args, on_result, **kwargs):
+            on_result(json.dumps({"position": 0, "response": {"model": "controlled", "answers": plan_answers()}}))
+            return []
+
+        with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
+                mock.patch.object(jj.decidr_client, "call_batch", side_effect=completed):
+            result = jj.pump_batch([request], settings, None, parent / "log.jsonl", False)
+        self.assertIsInstance(result, jj.Err)
+        self.assertEqual(result.error.code, "SCRIPT.IO")
+
     def test_bad_input_is_refused_before_any_line(self):
         def refused(lines_text, *extra):
             code, out = run_cli(["batch", "--input", self.put("bad.jsonl", lines_text), "--run-dir", str(self.d / "runs"), "--dry-run", *extra])

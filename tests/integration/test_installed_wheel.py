@@ -67,13 +67,13 @@ def test_batch_preserves_correlation_and_durable_log(live, record_property):
                             '--repository-root', str(live)])
     assert code == 0, output
     rows = [json.loads(line) for line in output.splitlines()]
-    assert [row['request_id'] for row in rows] == ['integration/s1/ANC-001/cur/r1',
+    assert sorted(row['request_id'] for row in rows) == sorted(['integration/s1/ANC-001/cur/r1',
                                                  'integration/s1/ANC-001/alt/r1',
-                                                 'integration/s3/ANC-001/cur/r1']
+                                                 'integration/s3/ANC-001/cur/r1'])
     assert all(row['ok'] and row['verdict'] != 'error' for row in rows)
     saved = [json.loads(line) for line in (live / 'batch-runs/tournament-live.jsonl').read_text().splitlines()]
     assert saved == rows
-    record_property('result', 'three real results; input correlation/order equals durable JSONL')
+    record_property('result', 'three real results; complete correlation; echoed completion order equals durable JSONL')
 
 
 def test_invalid_key_maps_auth_and_withholds_body(live, monkeypatch, record_property):

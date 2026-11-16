@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.3 — 2026-11-16
+
+- Flush each completed live batch result immediately, preserving request correlation and input-ordered returned results even when callbacks finish out of order.
+- Report shared-client configuration, logging and invalid-result failures with matching error codes and corrective actions.
+
 ## 0.12.2 — 2026-11-16
 
 - Render the shared client from the released sc-decidr wheel and use its recorded version in installation guidance.
