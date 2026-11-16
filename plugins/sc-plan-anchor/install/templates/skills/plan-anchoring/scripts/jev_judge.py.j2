@@ -26,7 +26,7 @@ statement; `validate` reports it.
 
 Python 3.11+. Offline paths use the standard library (plus lazy PyYAML settings
 lookup where needed). A live Jev call checks the committed
-``allow_remote_judge`` answer, then uses the optional sc-decidr 0.2.0 wheel for
+``allow_remote_judge`` answer, then uses the optional sc-decidr wheel for
 credentials and provider transport; dry runs and fixture answers do not import
 the wheel.
 
@@ -1796,7 +1796,7 @@ def _new_cancel_token():
     try:
         import sc_agent
     except ImportError as exc:
-        raise decidr_client.ClientError("DEPENDENCY.SC_DECIDR", f"sc-decidr 0.2.0 is required for live calls: {exc}") from exc
+        raise decidr_client.ClientError("DEPENDENCY.SC_DECIDR", f"sc-decidr {decidr_client.SC_DECIDR_VERSION} is required for live calls: {exc}") from exc
     return sc_agent.CancelToken()
 
 

@@ -88,7 +88,7 @@ Per anchor, per request:
 | Authentication error | The wheel aborts the run with `AUTH.CREDENTIALS`; the response body is withheld |
 | Missing key, or `allow_remote_judge` not `true` | Credentials are resolved by the wheel after plan-anchor checks consent; the run aborts before provider data is sent |
 
-Agents and plan-anchor never add provider retry loops around the client. Typed failures record the attempt count reported by the wheel. A successful response does not include an attempt count in the sc-decidr 0.2.0 result contract, so plan-anchor records one successful logical client call. Questions in one request are answered independently and in parallel: one logical client call per anchor.
+Agents and plan-anchor never add provider retry loops around the client. Typed failures record the attempt count reported by the wheel. A successful response does not include an attempt count in the sc-decidr result contract, so plan-anchor records one successful logical client call. Questions in one request are answered independently and in parallel: one logical client call per anchor.
 
 ## Models
 
