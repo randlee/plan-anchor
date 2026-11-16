@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 
 from layout_support import SCRIPTS, TEST_TRACKER
-from jev_test_support import BATCH_LINES, PLAN_QS, question, request_line, alt_set, jsonl
+from jev_test_support import ANCHOR_STATE, BATCH_LINES, PLAN_QS, question, request_line, alt_set, jsonl
 sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
 import anchor_tuning_contract as contract  # noqa: E402
