@@ -124,6 +124,16 @@ class DecidrClientTests(unittest.TestCase):
                                   abort_on=frozenset(), category_codes={"auth": "AUTH"}, cancel=Mock())
         self.assertEqual(result, ('{"error":{"id":"other","category":"unmapped"}}', None))
 
+    def test_category_failure_is_typed_and_preserves_cause(self):
+        self.agent.send = Mock(return_value='{"error":{"id":"auth","category":"auth"}}')
+        cause = RuntimeError("wheel failure")
+        self.agent.category = Mock(side_effect=cause)
+        with self.assertRaises(self.client.ClientError) as raised:
+            self.client.call("request", model="m", project="p", agent_role="r",
+                             abort_on=frozenset({"auth"}), category_codes={}, cancel=Mock())
+        self.assertEqual(raised.exception.code, "DECIDR.INVALID_RESULT")
+        self.assertIs(raised.exception.__cause__, cause)
+
     def test_call_cancels_on_selected_result_category(self):
         self.agent.send = Mock(return_value='{"error":{"id":"auth","category":"auth"}}')
         cancel = Mock()

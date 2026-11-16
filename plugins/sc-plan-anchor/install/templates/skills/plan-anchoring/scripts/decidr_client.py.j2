@@ -59,9 +59,11 @@ def _result_category(line: str, sc_agent: Any) -> Optional[str]:
     # never infer a category from message text.
     try:
         category = sc_agent.category(json.dumps(error))
-    except (AttributeError, TypeError, ValueError):
-        return None
-    return category if isinstance(category, str) else None
+    except Exception as exc:
+        raise ClientError("DECIDR.INVALID_RESULT", "sc-decidr could not classify the result") from exc
+    if not isinstance(category, str):
+        raise ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned an invalid category")
+    return category
 
 
 def _decode(line: str, category_codes: CategoryCodes, sc_agent: Any) -> tuple[str, Optional[str]]:
