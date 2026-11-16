@@ -205,10 +205,10 @@ class TriageReportTests(unittest.TestCase):
 
     def test_a_failed_triage_request_is_reported_with_its_error(self):
         with tempfile.TemporaryDirectory() as d:
-            bad = jj.JudgeError("JEV.HTTP", "boom", recoverable=False)
+            bad = jj.JudgeError("DECIDR.ERROR", "boom", recoverable=False)
             j = Judged(d, Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad))
             md = self.report(j)
-            self.assertIn(">   Triage error JEV.HTTP:", md)
+            self.assertIn(">   Triage error DECIDR.ERROR:", md)
             self.assertNotIn(">   Triage:", md)
 
     def test_fixture_triage_answers_are_reported(self):
