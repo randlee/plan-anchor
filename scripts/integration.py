@@ -30,7 +30,7 @@ def main():
         source = args.sc_agent_source.resolve()
         names = dict(re.findall(r'pub const ([A-Z_]+): &str = "([^"]+)";',
                                 (source / 'crates/sc-agent-secrets/src/vars.rs').read_text()))
-        variable = names[f"{'typesafe'.upper()}_API_KEY"]
+        variable = names["TYPESAFE_API_KEY"]
         values = dict(line.split('=', 1) for line in args.env_file.read_text().splitlines()
                       if line.strip() and not line.lstrip().startswith('#'))
         if not values.get(variable):

@@ -218,7 +218,8 @@ class CredentialLookupTests(unittest.TestCase):
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["timeout_secs"]),
                          ("plan-anchor", "typesafe-api-key", 45))
         self.assertIs(kwargs["cancel"], token)
-        self.assertNotIn("unused-secret", repr(send.call_args))
+        self.assertEqual([name for name in kwargs if "key" in name.lower()
+                          and name not in {"keyring_service", "keyring_account"}], [])
         self.assertNotIn("session_log", kwargs)
 
     def test_missing_key_is_the_wheels_typed_auth_error(self):

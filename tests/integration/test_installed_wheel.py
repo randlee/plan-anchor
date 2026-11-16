@@ -17,7 +17,7 @@ import test_tournament as tournament_cases
 import jev_judge as jj
 
 if os.environ.get('PLAN_ANCHOR_LIVE_INTEGRATION') != '1':
-    raise pytest.UsageError('select the real-provider suite with scripts/integration.py')
+    pytest.skip('select the real-provider suite with scripts/integration.py', allow_module_level=True)
 
 
 @pytest.fixture
