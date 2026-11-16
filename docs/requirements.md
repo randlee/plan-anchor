@@ -222,7 +222,7 @@ Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
+**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. `decidr_client.py` may import `sc_agent` only for a live decision call and reports a missing wheel as `DEPENDENCY.SC_DECIDR`; offline paths remain standard-library-only. The installer is the exception (REQ-059).
 Source: OPERATOR; ADR-006. Status: shipped.
 Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.11 floor are exercised by the unit matrix.
 
