@@ -101,7 +101,7 @@ class DecidrClientTests(unittest.TestCase):
         ]
 
         def send_batch(requests, *, on_result, **kwargs):
-            for line in lines:
+            for line in reversed(lines):
                 on_result(line)
             return list(lines)
 
@@ -115,7 +115,7 @@ class DecidrClientTests(unittest.TestCase):
         )
         self.assertEqual(out, [(lines[0], None), (lines[1], "AUTH")])
         cancel.cancel.assert_called_once_with()
-        self.assertEqual(callback.call_args_list, [call(lines[0]), call(lines[1])])
+        self.assertEqual(callback.call_args_list, [call(lines[1]), call(lines[0])])
         self.assertEqual(self.agent.send_batch.call_args.kwargs["workers"], 3)
         self.assertEqual(self.agent.send_batch.call_args.kwargs["timeout_secs"], 30)
 

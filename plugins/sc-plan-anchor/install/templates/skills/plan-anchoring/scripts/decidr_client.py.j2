@@ -139,12 +139,9 @@ def call_batch(
         import sc_agent
     except ImportError as exc:
         raise ClientError("DEPENDENCY.SC_DECIDR", f"sc-decidr 0.2.0 is required for live calls: {exc}") from exc
-    mapped: list[tuple[str, Optional[str]]] = []
-
     def handle(line: str) -> None:
-        item = _decode(line, category_codes, sc_agent)
+        _decode(line, category_codes, sc_agent)
         _cancel_if_selected(_result_category(line, sc_agent), abort_on, cancel)
-        mapped.append(item)
         if on_result is not None:
             on_result(line)
 
@@ -156,7 +153,7 @@ def call_batch(
     if workers is not None:
         kwargs["workers"] = workers
     try:
-        sc_agent.send_batch(requests, **kwargs)
+        lines = sc_agent.send_batch(requests, **kwargs)
     except KeyboardInterrupt:
         cancel.cancel()
         raise
@@ -164,4 +161,5 @@ def call_batch(
         category = exc.category
         _cancel_if_selected(category, abort_on, cancel)
         raise
-    return mapped
+    # The wheel returns input order; callbacks above retain finish order.
+    return [_decode(line, category_codes, sc_agent) for line in lines]
