@@ -90,7 +90,7 @@ class JevPropagationTests(unittest.TestCase):
     def test_non_transient_err_is_returned_with_meta(self):
         refused = jj.JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401", status=401)
         with mock.patch.object(jj, "call_jev", return_value=Err(refused)) as called:
-            out = jj.judge_with_policy(self.body(), "k", 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertIs(out.error, refused)
         self.assertEqual(out.error.meta["attempts"], 1)
         self.assertEqual(called.call_count, 1)
@@ -99,13 +99,13 @@ class JevPropagationTests(unittest.TestCase):
         down = jj.JudgeError("JEV.NETWORK", "down", recoverable=True)
         down.meta = {"attempts": 5}
         with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called:
-            out = jj.judge_with_policy(self.body(), "k", 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertIs(out.error, down)
         self.assertEqual((called.call_count, out.error.meta["attempts"]), (1, 5))
 
     def test_invalid_ok_response_becomes_err(self):
         with mock.patch.object(jj, "call_jev", return_value=Ok({"answers": []})):
-            out = jj.judge_with_policy(self.body(), "k", 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
         self.assertEqual(out.error.code, "JEV.RESPONSE_INVALID")
 
     def run_main(self, argv):

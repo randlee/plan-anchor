@@ -882,12 +882,25 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual({node for call in calls for node in ast.walk(call) if node in runtime_imports}, set(runtime_imports))
         for script in SCRIPTS.glob("*.py"):
             if script.name != "decidr_client.py":
-                self.assertNotIn("import sc_agent", script.read_text(encoding="utf-8"))
+                tree = ast.parse(script.read_text(encoding="utf-8"))
+                imports = [node for node in ast.walk(tree)
+                           if (isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names))
+                           or (isinstance(node, ast.ImportFrom) and node.module == "sc_agent")]
+                if script.name == "jev_judge.py":
+                    # CancelToken is public wheel API, loaded only for an opted-in live call.
+                    factory, = (node for node in tree.body if isinstance(node, ast.FunctionDef)
+                                and node.name == "_new_cancel_token")
+                    self.assertEqual(len(imports), 1)
+                    self.assertTrue(all(node in set(ast.walk(factory)) for node in imports))
+                    self.assertEqual([node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+                                      and isinstance(node.value, ast.Name) and node.value.id == "sc_agent"], ["CancelToken"])
+                else:
+                    self.assertEqual(imports, [])
         offline = ("import sys\nsys.modules['sc_agent'] = None\n"
                    f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport decidr_client\n")
         proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        code = ("import sys\nsys.modules['yaml'] = None\n"
+        code = ("import sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                 f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"
                 "assert 'plan_anchor_settings' not in sys.modules, 'imported eagerly'\n")
         proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -896,7 +909,7 @@ class RepositoryContractTests(unittest.TestCase):
         for name in ("jev_judge.py", "anchor_runner_contract.py",
                      "anchor_tuning_contract.py", "anchor_tracker.py"):
             with self.subTest(help=name):
-                code = ("import runpy, sys\nsys.modules['yaml'] = None\n"
+                code = ("import runpy, sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                         f"sys.argv = ['{name}', '--help']\nrunpy.run_path({str(SCRIPTS / name)!r}, run_name='__main__')\n")
                 proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -908,7 +921,7 @@ class RepositoryContractTests(unittest.TestCase):
     def test_ci_runs_the_suite_against_each_render(self):
         """The scripts under test are one tracker's render; every CI job runs the suite for br and again for bd."""
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 2)  # unit and installer
+        self.assertEqual(workflow.count("PLAN_ANCHOR_TEST_TRACKER: bd"), 4)  # unit, both floor profiles and installer
 
 
 if __name__ == "__main__":

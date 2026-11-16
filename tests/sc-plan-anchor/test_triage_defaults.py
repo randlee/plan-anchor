@@ -33,10 +33,10 @@ class ByQuestions(Transport):
     def default(self):
         return None
 
-    def __call__(self, body, api_key, timeout):
+    def __call__(self, body, timeout):
         gate = {"model": "jev-1.13.0", "answers": json.loads(json.dumps(self.gate_answers))}  # a fresh answer per call, as on the wire
         self.script = [gate if "relevant" in body["questions"] else triage_answers()]
-        return super().__call__(body, api_key, timeout)
+        return super().__call__(body, timeout)
 
 
 def repo_with_triage(d, *questions):

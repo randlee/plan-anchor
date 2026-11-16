@@ -488,7 +488,7 @@ class BatchTests(TournamentCase):
 
         async def consume():
             got = []
-            async for result in jj.stream_batch([line], settings, "", {"*": plan_answers()}):
+            async for result in jj.stream_batch([line], settings, {"*": plan_answers()}):
                 got.append(result["candidate_id"])
             return got
 
@@ -513,7 +513,7 @@ class BatchTests(TournamentCase):
         log_path = self.d / "live.jsonl"
         with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
                 mock.patch.object(jj.decidr_client, "call_batch", return_value=[(wheel_error, "JEV.OVERLOADED")]) as send_batch:
-            result = jj.pump_batch([request], settings, "", None, log_path, False)
+            result = jj.pump_batch([request], settings, None, log_path, False)
         self.assertIsInstance(result, jj.Ok)
         line = result.value[0]
         self.assertEqual((line["request_id"], line["ok"], line["retry_count"], line["attempts"][0]["attempt"]),

@@ -236,3 +236,9 @@ The offline suite runs on Linux, macOS and Windows in CI. The repository is a Cl
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Installed-wheel integration
+
+[The manual integration workflow](docs/integration.md) runs plan-anchor's real
+judge, batch-order and auth/redaction cases against an installed sc-decidr wheel
+and commits per-platform XHTML panels under `site/reports/integration/`.

@@ -268,7 +268,11 @@ class JevJudgeErrorContracts(unittest.TestCase):
     def test_every_offline_error_code_keeps_its_exact_envelope(self):
         for name, (argv, files, env, stdin, exit_code, error, data) in JEV_CASES.items():
             with self.subTest(name), Workspace(files):
-                code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
+                # Auth-envelope cases control consent; real consent/settings cases remain separate.
+                consent = (mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None))
+                           if name in {"auth_missing_key", "auth_bad_format"} else contextlib.nullcontext())
+                with consent:
+                    code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
                 self.assertEqual(code, exit_code)
                 if error is None:
                     continue

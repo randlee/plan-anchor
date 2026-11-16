@@ -143,7 +143,7 @@ class Transport:
         self.bodies = []
         self.gate = gate
 
-    def __call__(self, body, api_key, timeout):
+    def __call__(self, body, timeout):
         self.bodies.append(json.loads(json.dumps(body)))
         step = self.script.pop(0) if self.script else self.default()
         if isinstance(step, jj.JudgeError):
@@ -163,7 +163,7 @@ def client_transport(transport):
         if not key or any(ord(char) < 33 or ord(char) > 126 for char in key):
             detail = {"id": "auth.credentials", "category": "auth", "message": "missing or invalid key", "attempts": 0}
             return json.dumps({"error": detail}), "AUTH.CREDENTIALS"
-        got = transport(json.loads(request), "", timeout_secs)
+        got = transport(json.loads(request), timeout_secs)
         if isinstance(got, jj.Ok):
             return json.dumps({"response": got.value}), None
         error = got.error
@@ -199,7 +199,7 @@ class CredentialLookupTests(unittest.TestCase):
         args = mock.Mock(repository_root=".")
         with mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)) as consent:
             result = jj.remote_preflight(args, "anchor text")
-        self.assertEqual(result, jj.Ok(""))
+        self.assertEqual(result, jj.Ok(None))
         consent.assert_called_once_with(args, "anchor text")
 
     def test_call_forwards_keyring_overrides_to_shared_client_without_forwarding_a_key_or_session_log(self):
@@ -207,7 +207,7 @@ class CredentialLookupTests(unittest.TestCase):
         response = {"model": "jev-x", "answers": plan_answers()}
         with mock.patch.object(jj, "_new_cancel_token", return_value=token), \
                 mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"response": response}), None)) as send:
-            result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, "unused-secret", 45)
+            result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
         self.assertEqual(result, jj.Ok(response))
         args, kwargs = send.call_args
         self.assertEqual(json.loads(args[0]), {"model": "jev-latest", "state": {}, "questions": {}})
@@ -223,7 +223,7 @@ class CredentialLookupTests(unittest.TestCase):
         auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
         with mock.patch.object(jj, "_new_cancel_token", return_value=mock.Mock()), \
                 mock.patch.object(jj.decidr_client, "call", return_value=(json.dumps({"error": auth}), "AUTH.CREDENTIALS")):
-            error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, "", 30))
+            error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
         self.assertEqual((error.code, error.message, error.meta["attempts"]),
                          ("AUTH.CREDENTIALS", "Jev authentication failed; response body withheld", 0))
         self.assertNotIn("no key", error.message)
@@ -616,8 +616,8 @@ class DedupeTests(unittest.TestCase):
             self.assertEqual([(p["a"], p["b"]) for p in out["data"]["likely_duplicates"]], [("ANC-001", "ANC-002")])
             self.assertTrue(all(p["jev"] is None for p in out["data"]["pairs"]))
             self.assertEqual(sorted(Path(d).iterdir()), sorted(Path(d) / n for n in ("anchors.json", "answers.json", "partial.json")))  # no run files
-            # live: key and opt-in are enforced before anything is sent
-            with env():
+            # Credential mapping is tested with explicit consent; policy refusal is separate below.
+            with env(), consented():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -852,7 +852,7 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--dry-run"])
             self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-            with env():
+            with env(), consented():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
@@ -902,7 +902,7 @@ class RubricTests(unittest.TestCase):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The parser does not call the network.", "--quote", "no network in the parser"])
             self.assertEqual(code, 0)
             self.assertNotIn("rubric", out["data"])
-            with env():
+            with env(), consented():
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertEqual(len(json.loads(Path(path).read_text())["anchors"]), 3)
@@ -2172,7 +2172,7 @@ class CheckFixturesTests(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
 
     def test_live_check_uses_the_policy_and_opt_in(self):
-        with env():
+        with env(), consented():
             code, out = self.check("--id", "ANC-001")
         self.assertEqual(out["error"]["code"], "AUTH.CREDENTIALS")
         t = Transport({"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},

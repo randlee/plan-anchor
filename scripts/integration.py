@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Run plan-anchor's real judge/batch cases against an installed sc-decidr wheel."""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--venv', required=True, type=Path)
+    parser.add_argument('--env-file', required=True, type=Path, help='Consumed and deleted, including on failure')
+    parser.add_argument('--sc-agent-source', required=True, type=Path, help='Pinned sc-agent source providing its existing report renderer')
+    parser.add_argument('--source-sha', required=True, help='plan-anchor revision under test')
+    parser.add_argument('--pin-tag', required=True)
+    parser.add_argument('--pin-sha', required=True, help='sc-agent wheel source revision')
+    parser.add_argument('--platform', required=True, choices=('macos', 'colima'))
+    parser.add_argument('--results', required=True, type=Path)
+    args = parser.parse_args()
+    try:
+        source = args.sc_agent_source.resolve()
+        names = dict(re.findall(r'pub const ([A-Z_]+): &str = "([^"]+)";',
+                                (source / 'crates/sc-agent-secrets/src/vars.rs').read_text()))
+        variable = names[f"{'typesafe'.upper()}_API_KEY"]
+        values = dict(line.split('=', 1) for line in args.env_file.read_text().splitlines()
+                      if line.strip() and not line.lstrip().startswith('#'))
+        if not values.get(variable):
+            raise RuntimeError('TypeSafe key is required; no integration tests run')
+        env = {k: v for k, v in os.environ.items() if k not in names.values() and not k.startswith('SC_AGENT__')}
+        env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
+                    'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
+                    'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.pin_tag.removeprefix('prerelease/v'),
+                    'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING': '1'})
+        python = args.venv.resolve() / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+        results = args.results.resolve()
+        results.mkdir(parents=True, exist_ok=True)
+        junit = results / f'{args.platform}.xml'
+        with tempfile.TemporaryDirectory(prefix='plan-anchor-integration-') as scratch:
+            try:
+                completed = subprocess.run([str(python), '-m', 'pytest', str(ROOT / 'tests/integration'), '-v',
+                                            '-o', 'junit_family=legacy', f'--junitxml={junit}'],
+                                           env=env, cwd=scratch, timeout=600)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f'{args.platform}: plan-anchor integration timed out after 600s') from exc
+        subprocess.run([str(python), str(source / 'templates/integration-report/render.py'), str(junit),
+                        '--platform', args.platform, '--mode', 'live', '--source-revision', args.source_sha,
+                        '--wheel-revision', f'{args.pin_tag}@{args.pin_sha}', '--output',
+                        str(ROOT / f'site/reports/integration/{args.platform}.xhtml')], check=True, timeout=60)
+        return completed.returncode
+    finally:
+        args.env_file.unlink(missing_ok=True)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

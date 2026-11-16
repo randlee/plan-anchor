@@ -135,7 +135,6 @@ from result import Err, Ok, Result, utf8_stdio  # noqa: E402
 import decidr_client  # noqa: E402
 
 
-TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY"
 CREDENTIAL_SERVICE = "plan-anchor"
 CREDENTIAL_ACCOUNT = "typesafe-api-key"
 DEFAULT_MODEL = "jev-latest"
@@ -1865,9 +1864,8 @@ def _sag_error(exc: Exception) -> JudgeError:
                                   message=getattr(exc, "message", str(exc))))
 
 
-def call_jev(body: dict, api_key: str, timeout: float) -> Result[dict, JudgeError]:
+def call_jev(body: dict, timeout: float) -> Result[dict, JudgeError]:
     """Call the shared transport once; credentials and provider retries belong to sc-decidr."""
-    del api_key  # credential resolution is owned by the wheel and its configured keyring overrides
     try:
         line, mapped_code = decidr_client.call(
             encode_body(body), model=body["model"], project="plan-anchor", agent_role="judge",
@@ -1923,7 +1921,7 @@ def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: d
     return Ok(None)
 
 
-def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
+def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
                       shorten: bool = True, optional=frozenset()) -> Result[tuple, JudgeError]:
     """Call the shared transport and retain plan-anchor's local request sizing and context halving."""
     item = body["state"].get("item")
@@ -1933,7 +1931,7 @@ def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_byte
         return fitted
     while True:
         meta["item_chars_sent"] = len(item["text"]) if item else 0
-        answered = call_jev(body, api_key, timeout)
+        answered = call_jev(body, timeout)
         if isinstance(answered, Ok):
             meta["attempts"] += 1
             answered = validate_response(answered.value, questions, optional)
@@ -2223,9 +2221,6 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
         cleared = remote_preflight(args, "The anchor statement and the item text")
         if isinstance(cleared, Err):
             return cleared
-        ctx["api_key"] = cleared.value
-    else:
-        ctx["api_key"] = os.environ.get(TYPESAFE_KEY_ENV, "").strip()
     return Ok(ctx)
 
 
@@ -2278,12 +2273,12 @@ def _from_tool_error(error) -> JudgeError:
     return out
 
 
-def remote_preflight(args, what: str) -> Result[str, JudgeError]:
+def remote_preflight(args, what: str) -> Result[None, JudgeError]:
     """Check consent before a live call; sc-decidr resolves credentials and refuses before sending if absent."""
     consent = remote_judge_consent(args, what)
     if isinstance(consent, Err):
         return consent
-    return Ok("")
+    return Ok(None)
 
 
 def load_answers_fixture(path: str, keyed_by: str) -> Result[Any, JudgeError]:
@@ -2313,7 +2308,7 @@ def load_simple_question_set(name: str, required: tuple) -> Result[dict, JudgeEr
     return Ok(qs)
 
 
-def ask_jev_once(args, api_key: str, body: dict, questions: dict, fixture, fixture_keys: tuple) -> Result[tuple, JudgeError]:
+def ask_jev_once(args, body: dict, questions: dict, fixture, fixture_keys: tuple) -> Result[tuple, JudgeError]:
     """One request for the item-less subcommands (dedupe, rubric): fixture answers when given, else the live policy.
 
     Returns Ok((validated response, meta)), or Err(JudgeError) (FIXTURE.MISSING when the fixture lacks every key).
@@ -2331,7 +2326,7 @@ def ask_jev_once(args, api_key: str, body: dict, questions: dict, fixture, fixtu
         if isinstance(checked, Err):
             return checked
         return Ok((checked.value, {"attempts": 1}))
-    return judge_with_policy(body, api_key, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
+    return judge_with_policy(body, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
 
 
 def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
@@ -2376,7 +2371,7 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
         if isinstance(checked, Err):
             return checked
         return Ok((checked.value, meta))
-    return judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+    return judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
                              shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
 
 
@@ -2417,7 +2412,7 @@ def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_
     if len(encode_body(body)) > ctx["max_request_bytes"]:
         entry["extra_questions_dropped"] = sorted(set(entry.get("extra_questions_dropped") or ()) | deferred)
         return Ok(0)
-    got = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
+    got = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
                             shorten=False, optional=frozenset(asked))
     if isinstance(got, Err):
         if got.error.code in ABORT_CODES:
@@ -2486,7 +2481,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             if ctx["answers_fixture"] is None and ctx.get("confirm", False) and near_threshold(resp["answers"], qs["roles"], ctx["threshold"], entry["kind"]):
                 # Near the threshold a single answer is noise (8/50 identical re-runs flipped): ask once more, require agreement.
                 entry["near_threshold"] = True
-                second = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+                second = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
                                            shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
@@ -2869,12 +2864,12 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
         if isinstance(loaded, Err):
             return loaded
         qs = loaded.value
-        api_key = ""
+
         if pairs and not dry_run and fixture is None:
             cleared = remote_preflight(args, "The anchor statements")
             if isinstance(cleared, Err):
                 return cleared
-            api_key = cleared.value
+
         by_id = {a.get("id"): a for a in anchors}
         requests_out, failures = [], []
         for pair in pairs:
@@ -2890,7 +2885,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                     pair["jev"] = {"choice": None, "confidence": None, "error": fitted.error.to_json()["error"]}
                 requests_out.append(body)
                 continue
-            asked = ask_jev_once(args, api_key, body, qs["questions"], fixture, (f"{pair['a']}|{pair['b']}", "*"))
+            asked = ask_jev_once(args, body, qs["questions"], fixture, (f"{pair['a']}|{pair['b']}", "*"))
             if isinstance(asked, Ok):
                 resp, meta = asked.value
                 choice, conf = answer_choice(resp["answers"][DEDUPE_QUESTION])
@@ -3009,22 +3004,22 @@ def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: d
     return validate_response({"model": "fixture", "answers": value}, questions)
 
 
-def _rubric_ask(args, api_key: str, body: dict, qs: dict, fixture, cid, index: int) -> Result[tuple, JudgeError]:
+def _rubric_ask(args, body: dict, qs: dict, fixture, cid, index: int) -> Result[tuple, JudgeError]:
     """Confirmation `index` for one candidate: the fixture entry when a fixture is given, else one live request. Ok((response, meta))."""
     if fixture is not None:
         response = rubric_fixture_response(fixture, (cid, "*"), index, qs["questions"])
         if isinstance(response, Err):
             return response
         return Ok((response.value, {"attempts": 1}))
-    return ask_jev_once(args, api_key, body, qs["questions"], None, (cid, "*"))
+    return ask_jev_once(args, body, qs["questions"], None, (cid, "*"))
 
 
-def _rubric_judgement(args, api_key: str, body: dict, qs: dict, fixture, cid, threshold: float, lint_errors: list) -> Result[tuple, JudgeError]:
+def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float, lint_errors: list) -> Result[tuple, JudgeError]:
     """Two confirmations, a third on disagreement, then the outcome. Ok((responses, attempts, outcome))."""
     responses = []
     attempts = 0
     for index in range(2):
-        asked = _rubric_ask(args, api_key, body, qs, fixture, cid, index)
+        asked = _rubric_ask(args, body, qs, fixture, cid, index)
         if isinstance(asked, Err):
             return asked
         response, meta = asked.value
@@ -3033,7 +3028,7 @@ def _rubric_judgement(args, api_key: str, body: dict, qs: dict, fixture, cid, th
     first_choices = [answer_choice(responses[0]["answers"][qid])[0] for qid in qs["questions"]]
     second_choices = [answer_choice(responses[1]["answers"][qid])[0] for qid in qs["questions"]]
     if first_choices != second_choices:
-        asked = _rubric_ask(args, api_key, body, qs, fixture, cid, 2)
+        asked = _rubric_ask(args, body, qs, fixture, cid, 2)
         if isinstance(asked, Err):
             return asked
         response, meta = asked.value
@@ -3141,12 +3136,12 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             if isinstance(fitted, Err):
                 return fitted  # refuse before credentials, emission or any transport
         bodies.append(body)
-    api_key = ""
+
     if candidates and not dry_run and fixture is None:
         cleared = remote_preflight(args, what + (" and the explicitly selected approved intent" if intent is not None else ""))
         if isinstance(cleared, Err):
             return cleared
-        api_key = cleared.value
+
     entries, requests_out, failures = [], [], []
     for c, body in zip(candidates, bodies):
         warnings = lint_statement(c["statement"], c["quote"], c.get("source_type") or "ANC")
@@ -3165,7 +3160,7 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             requests_out.extend((body, json.loads(json.dumps(body))))
             entries.append(entry)
             continue
-        judged = _rubric_judgement(args, api_key, body, qs, fixture, c["id"], threshold, lint_errors)
+        judged = _rubric_judgement(args, body, qs, fixture, c["id"], threshold, lint_errors)
         if isinstance(judged, Ok):
             responses, attempts, outcome = judged.value
             entry["answers"] = responses[0]["answers"]
@@ -3680,11 +3675,11 @@ def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dr
     })
 
 
-def run_batch_job(job: BatchJob, settings: BatchSettings, api_key: str, fixture) -> dict:
+def run_batch_job(job: BatchJob, settings: BatchSettings, fixture) -> dict:
     """Run one controlled fixture or an individual shared-client call; never resends a failed call."""
     if settings.dry_run:
         return _line(job, settings, None, [], None, True)
-    got = _fixture_attempt(job, fixture) if fixture is not None else call_jev(job.body, api_key, settings.timeout)
+    got = _fixture_attempt(job, fixture) if fixture is not None else call_jev(job.body, settings.timeout)
     if isinstance(got, Ok):
         got = validate_response(got.value, job.questions)
     if isinstance(got, Ok):
@@ -3716,7 +3711,7 @@ class BatchInputError(Exception):
         self.error = error
 
 
-async def stream_batch(source, settings: BatchSettings, api_key: str = "", fixture=None):
+async def stream_batch(source, settings: BatchSettings, fixture=None):
     """Library API: an async iterator of result lines for an (async) iterable of request-line dicts.
 
     At most ``settings.max_workers`` Jev calls run at once. Lines are yielded in request order (candidates,
@@ -3738,7 +3733,7 @@ async def stream_batch(source, settings: BatchSettings, api_key: str = "", fixtu
             if isinstance(jobs, Err):
                 raise BatchInputError(jobs.error)
             for job in jobs.value:
-                pending.append(loop.run_in_executor(pool, run_batch_job, job, settings, api_key, fixture))
+                pending.append(loop.run_in_executor(pool, run_batch_job, job, settings, fixture))
                 while len(pending) >= window:
                     yield await pending.popleft()
         while pending:
@@ -3896,7 +3891,7 @@ def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, JudgeErr
     return Ok(pathlib.Path(run_dir) / f"tournament-{name}.jsonl")
 
 
-def pump_batch(lines: list, settings: BatchSettings, api_key: str, fixture, log_path: pathlib.Path, echo: bool) -> Result[list, JudgeError]:
+def pump_batch(lines: list, settings: BatchSettings, fixture, log_path: pathlib.Path, echo: bool) -> Result[list, JudgeError]:
     """Run the low layer over validated request lines; tee every result line, unchanged, to stdout (when ``echo``)
     and to the append-only log, flushing both after every line so a crash keeps the evidence."""
     if fixture is None and not settings.dry_run:
@@ -3906,7 +3901,7 @@ def pump_batch(lines: list, settings: BatchSettings, api_key: str, fixture, log_
         out = []
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8", newline="\n") as log:
-            async for line in stream_batch(lines, settings, api_key, fixture):
+            async for line in stream_batch(lines, settings, fixture):
                 text = encode_result_line(line)
                 log.write(text)
                 log.flush()
@@ -3960,13 +3955,13 @@ def run_low_layer(args, lines: list) -> Result[Any, JudgeError]:
     log_path = batch_log_path(run_dir, args.run_name)
     if isinstance(log_path, Err):
         return log_path
-    api_key = ""
+
     if not settings.dry_run and fixture is None:
         cleared = remote_preflight(args, "The anchor statements, scopes and item texts in the request stream")
         if isinstance(cleared, Err):
             return cleared
-        api_key = cleared.value
-    pumped = pump_batch(lines, settings, api_key, fixture, log_path.value, echo=True)
+
+    pumped = pump_batch(lines, settings, fixture, log_path.value, echo=True)
     if isinstance(pumped, Err):
         return pumped
     return Ok(StreamedResult([x for x in pumped.value if not x["ok"] and not x["dry_run"]]))
@@ -4828,7 +4823,7 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
         results_path = pathlib.Path(args.results)
     elif args.dry_run:
         path = out_dir / TOURNAMENT_DRY_RESULTS
-        pumped = pump_batch(request_lines, settings, "", None, path, echo=False)
+        pumped = pump_batch(request_lines, settings, None, path, echo=False)
         if isinstance(pumped, Err):
             return pumped
         return Ok({"success": True, "error": None, "data": {
@@ -4839,13 +4834,13 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
         if results_path.exists():
             return fail("TOURNAMENT.OUT_EXISTS", f"{results_path} already holds a result stream; evidence is never overwritten",
                         action="Pass a new --out, or rescore the existing stream with --results.")
-        api_key = ""
+
         if fixture is None:
             cleared = remote_preflight(args, "The anchor statement, scope and oracle case texts")
             if isinstance(cleared, Err):
                 return cleared
-            api_key = cleared.value
-        pumped = pump_batch(request_lines, settings, api_key, fixture, results_path, echo=False)
+
+        pumped = pump_batch(request_lines, settings, fixture, results_path, echo=False)
         if isinstance(pumped, Err):
             return pumped
     streamed = read_batch_results(str(results_path))

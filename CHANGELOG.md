@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1 — 2026-11-16
+
+- Integrate the shared sc-decidr transport while preserving plan-anchor behavior.
+- Retain Python 3.11 dependency-floor coverage and add installed-wheel live integration reports.
+
 ## 0.12.0 — 2026-11-15
 
 - Add the shared `decidr_client.py` consumer template for sc-decidr 0.2.0:
@@ -7,8 +12,8 @@
   cancellation, batch callbacks, timeout/worker options and injected logging.
 - Pin the client to sc-agent `prerelease/v0.2.0` as the concrete starting
   point for sc-agent's consumer template.
-- Raise the supported Python floor to 3.11, remove the Python 3.9 CI and
-  dependency-floor jobs, and allow the installer to run on later Python versions.
+- Raise the supported Python floor to 3.11, retain the dependency-floor job
+  at 3.11, and allow the installer to run on later Python versions.
 
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
