@@ -9,10 +9,11 @@ They supply no answer fixtures and assert no model probability or timing.
 Use the canonical sc-agent prerelease installer to checksum-verify and install
 the chosen matched wheels in a fresh Python 3.11+ environment. Install pytest,
 jsonschema, PyYAML and the supported sc-compose Python package there; put the
-released sc-compose CLI on PATH. Keep a source archive at the wheel's exact
-sc-agent commit: the command reuses its report renderer. Pass the TypeSafe credential variable
-name from the sc-agent export explicitly; plan-anchor does not parse SDK source
-for credential names. A missing renderer fails before any live test runs.
+released sc-compose CLI on PATH. Provide an sc-agent checkout containing the
+shared report generator (for example, commit `4fc8cdc`); the wheel's exact source
+revision is recorded separately by `--pin-sha`. Pass the TypeSafe credential
+variable name from the sc-agent export explicitly; plan-anchor does not parse
+SDK source for credential names. A missing renderer fails before any live test runs.
 
 Export credentials with sc-agent's existing `scripts/integration.py --export-env`
 to a new temporary mode-0600 `.env` outside a checkout. The integration command
@@ -36,12 +37,15 @@ commit and install that wheel into a fresh environment. Pass `--pin-tag source-b
 and `--wheel-version` with its distribution version; `--pin-sha` remains the actual
 SDK source commit. The report identifies a source build rather than a published tag.
 
-Repeat the same command in a disposable Colima container with `--platform colima`
+Optionally repeat the same command in a disposable Colima container with `--platform colima`
 and its Linux prerelease installation. Each run writes JUnit and renders
-`site/reports/integration/<platform>.xhtml` from that JUnit. The report records the
-plan-anchor source separately from the sc-agent wheel pin. FAIL remains FAIL;
-a missing key or dependency fails rather than inventing a result. Commit and
-push the panels as part of the run; do not copy private plan inputs or logs.
+`site/reports/integration/<platform>.xhtml` from that JUnit. The shared renderer
+also writes a run page with its panel under `site/reports/` and updates
+`site/reports/index.html`, newest first. The report records the plan-anchor
+source separately from the sc-agent wheel pin. FAIL remains FAIL; a missing key
+or dependency fails rather than inventing a result. Commit and push the panel,
+run page, run directory and updated index as part of the integration process;
+do not copy private plan inputs or logs.
 
 For a clean account such as atmbench, put Python, the canonical install root,
 selector directory, tools, caches, both source archives and temporary files in

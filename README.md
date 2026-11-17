@@ -243,4 +243,5 @@ MIT. See [LICENSE](LICENSE).
 
 [The manual integration workflow](docs/integration.md) runs plan-anchor's real
 judge, batch-order and auth/redaction cases against an installed sc-decidr wheel
-and commits per-platform XHTML panels under `site/reports/integration/`.
+and generates per-platform XHTML panels and linked run pages under `site/reports/`.
+The integration process commits and pushes the generated reports.

@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--venv', required=True, type=Path)
     parser.add_argument('--env-file', required=True, type=Path, help='Consumed and deleted, including on failure')
     parser.add_argument('--key-variable', required=True, help='TypeSafe credential variable name from the sc-agent export')
-    parser.add_argument('--sc-agent-source', required=True, type=Path, help='Pinned sc-agent source providing its existing report renderer')
+    parser.add_argument('--sc-agent-source', required=True, type=Path, help='sc-agent checkout providing the shared report renderer')
     parser.add_argument('--source-sha', required=True, help='plan-anchor revision under test')
     parser.add_argument('--pin-tag', required=True, help='Published tag or explicit source-build label')
     parser.add_argument('--wheel-version', help='Distribution version for a source-build label')
@@ -58,7 +58,9 @@ def main():
         subprocess.run([str(python), str(renderer), str(junit),
                         '--platform', args.platform, '--mode', 'live', '--source-revision', args.source_sha,
                         '--wheel-revision', f'{args.pin_tag}@{args.pin_sha}', '--output',
-                        str(ROOT / f'site/reports/integration/{args.platform}.xhtml')], check=True, timeout=60)
+                        str(ROOT / f'site/reports/integration/{args.platform}.xhtml'),
+                        '--reports-dir', str(ROOT / 'site/reports'),
+                        '--title', 'Plan-anchor integration report'], check=True, timeout=60)
         return completed.returncode
     finally:
         args.env_file.unlink(missing_ok=True)
