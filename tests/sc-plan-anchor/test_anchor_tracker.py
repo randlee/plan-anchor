@@ -1,6 +1,7 @@
 """Anchor tracker selection: .sc/plan-anchor/settings.yaml, detection, br init, CLI envelope."""
 
 import ast
+import importlib
 import importlib.util
 import json
 import os
@@ -30,17 +31,11 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-result = _load("result")
-settings_mod = _load("plan_anchor_settings")
-tracker = _load("anchor_tracker")
+# Reuse the rendered modules already loaded by the suite so Result variants
+# retain one identity regardless of test collection order.
+result = importlib.import_module("result")
+settings_mod = importlib.import_module("plan_anchor_settings")
+tracker = importlib.import_module("anchor_tracker")
 
 EXPECTED_FILE = (
     "# .sc/plan-anchor/settings.yaml\n"

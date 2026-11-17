@@ -134,7 +134,7 @@ class JudgeAndCheckFixtures(ProcessCase):
     @needs_yaml
     def test_judge_with_jev_unreachable_exits_2_and_keeps_the_partial_run(self):
         self.consent()
-        out = self.failed(*self.judge_argv("--no-confirm"), code="JEV.NETWORK", live=True)
+        out = self.failed(*self.judge_argv("--no-confirm"), code="DECIDR.NETWORK", live=True)
         self.assertTrue(out["error"]["recoverable"])
         self.assertEqual(sorted(f["id"] for f in out["data"]["failures"]), ["ANC-001", "ANC-002"])
         on_disk = json.loads(Path(out["data"]["run_path"]).read_text(encoding="utf-8"))
@@ -171,7 +171,7 @@ class JudgeAndCheckFixtures(ProcessCase):
     def test_check_fixtures_with_jev_unreachable_exits_2(self):
         self.consent()
         self.failed("check-fixtures", "--anchors", self.fixture_anchors(), "--gate", "plan", "--all", "--no-confirm",
-                    "--run-dir", str(self.d / "runs"), code="JEV.NETWORK", live=True)
+                    "--run-dir", str(self.d / "runs"), code="DECIDR.NETWORK", live=True)
 
     def test_check_fixtures_with_nothing_judged_is_not_a_pass(self):
         # a structural anchor at the plan gate is deterministic_only: no fixture is sent to Jev, so nothing was tested
@@ -188,7 +188,7 @@ class DedupeAndRubric(ProcessCase):
     @needs_yaml
     def test_dedupe_with_jev_unreachable_exits_2(self):
         self.consent()
-        out = self.failed("dedupe", "--anchors", self.pair(), "--threshold", "0.2", "--jev", code="JEV.NETWORK", live=True)
+        out = self.failed("dedupe", "--anchors", self.pair(), "--threshold", "0.2", "--jev", code="DECIDR.NETWORK", live=True)
         self.assertEqual([f["id"] for f in out["data"]["failures"]], ["ANC-001|ANC-002"])
 
     def test_dedupe_with_a_missing_fixture_pair_exits_2(self):
@@ -198,7 +198,7 @@ class DedupeAndRubric(ProcessCase):
     @needs_yaml
     def test_rubric_with_jev_unreachable_exits_2(self):
         self.consent()
-        out = self.failed("rubric", "--statement", STATEMENT, "--quote", QUOTE, code="JEV.NETWORK", live=True)
+        out = self.failed("rubric", "--statement", STATEMENT, "--quote", QUOTE, code="DECIDR.NETWORK", live=True)
         self.assertEqual(out["data"]["anchors"][0]["verdict"], "error")
 
     def test_rubric_with_a_missing_fixture_entry_exits_2(self):
@@ -221,7 +221,7 @@ class DedupeAndRubric(ProcessCase):
         for extra in ([], ["--allow-untestable"]):
             with self.subTest(extra=extra):
                 self.failed("add", "--anchors", str(path), "--statement", STATEMENT, "--quote", QUOTE, "--rubric", *extra,
-                            code="JEV.NETWORK", live=True)
+                            code="DECIDR.NETWORK", live=True)
                 self.assertFalse(path.exists())
 
 
