@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.6
+
+- Adopt the sc-decidr 0.2.5 consumer template and preserve plan-anchor context-overflow shortening with shared error codes.
+
 ## 0.12.5
 
 - Adopt the sc-decidr 0.2.4 generated client and its shared ClientError for wheel and local errors; remove local conversions and action overrides, preserving Rust messages and context-shortening state.
