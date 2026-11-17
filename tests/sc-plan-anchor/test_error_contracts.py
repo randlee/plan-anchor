@@ -367,10 +367,10 @@ class JevTransportErrorContracts(unittest.TestCase):
         self.assertNotIn("Bearer", out["error"]["message"])
 
     def test_wheel_retryable_categories_report_attempts_without_consumer_resend(self):
-        cases = (("http.provider_busy", "busy", "JEV.OVERLOADED"),
-                 ("http.quota_exhausted", "quota", "JEV.RATE_LIMITED"),
-                 ("http.network", "network", "JEV.NETWORK"),
-                 ("decision.response_parse", "response_invalid", "JEV.RESPONSE_INVALID"))
+        cases = (("http.provider_busy", "busy", "DECIDR.OVERLOADED"),
+                 ("http.quota_exhausted", "quota", "DECIDR.RATE_LIMITED"),
+                 ("http.network", "network", "DECIDR.NETWORK"),
+                 ("decision.response_parse", "response_invalid", "DECIDR.RESPONSE_INVALID"))
         for identifier, category, code_expected in cases:
             with self.subTest(category=category):
                 failure = self.wheel_error(identifier, category, "typed failure", attempts=5, retry_after_ms=7000)
@@ -383,7 +383,7 @@ class JevTransportErrorContracts(unittest.TestCase):
         failure = self.wheel_error("decision.api_validation", "validation", "invalid question", status=422)
         code, out, calls = self.judge([failure])
         result = out["data"]["results"][0]
-        self.assertEqual((code, calls, out["error"]["code"], result["attempts"]), (2, 1, "JEV.VALIDATION", 1))
+        self.assertEqual((code, calls, out["error"]["code"], result["attempts"]), (2, 1, "DECIDR.VALIDATION", 1))
 
     def test_planning_gate_refuses_context_overflow_and_dev_gate_halves(self):
         overflow = (context_overflow_line(), "JEV.CONTEXT_EXCEEDED")

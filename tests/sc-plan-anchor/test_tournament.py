@@ -622,7 +622,7 @@ class BatchTests(TournamentCase):
             result = jj.pump_batch([request], settings, None, path, True)
         self.assertIsInstance(result, jj.Ok)
         self.assertEqual([row["candidate_id"] for row in result.value], ["c1", "c2"])
-        self.assertEqual((result.value[1]["error"]["code"], result.value[1]["retry_count"]), ("JEV.OVERLOADED", 4))
+        self.assertEqual((result.value[1]["error"]["code"], result.value[1]["retry_count"]), ("DECIDR.OVERLOADED", 4))
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         self.assertEqual([row["candidate_id"] for row in rows], ["c2", "c1"])
         self.assertEqual(rows, [result.value[1], result.value[0]])

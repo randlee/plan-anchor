@@ -1832,12 +1832,12 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
         if exc.code in ABORT_CODES:
             return answered
         exc.data = dict(exc.data or {}, **meta)
-        if exc.code == "JEV.CONTEXT_EXCEEDED" and item is not None and not shorten:
+        if exc.code == "DECIDR.CONTEXT_EXCEEDED" and item is not None and not shorten:
             final = plan_too_large(item, f"Jev rejected it for context size ({exc.message})")
             final.data = dict(meta, **final.data)
             final.attempts = meta["attempts"]
             return Err(final)
-        if exc.code == "JEV.CONTEXT_EXCEEDED":
+        if exc.code == "DECIDR.CONTEXT_EXCEEDED":
             if item is not None and halve_item(item, min_item_chars, meta):
                 meta["request_bytes"] = len(encode_body(body))
                 continue

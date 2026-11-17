@@ -103,11 +103,11 @@ Agents and plan-anchor never add provider retry loops around the client. Typed f
 | `AUTH.CREDENTIALS` | pre-flight, 401 | Key missing, malformed, or rejected. Not retried |
 | `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | `allow_remote_judge` is `false` or absent. Absent: ask the user once, record it with `plan_anchor_settings.py set`, commit. `false`: only the user changes it. `--dry-run` works either way |
 | `DEPENDENCY.PYYAML`, `SETTINGS.*`, `REPO.NOT_FOUND` | pre-flight | The settings file could not be read; fix what the error names. Never a silent default |
-| `JEV.RATE_LIMITED`, `JEV.OVERLOADED`, `JEV.HTTP`, `JEV.NETWORK` | transport | Transient; retried 3 times, then the command exits 2 (the cell is `error` in the partial run) |
-| `JEV.RESPONSE_INVALID` | validation | Malformed or oversized response; retried, then the command exits 2 (the cell is `error` in the partial run) |
+| `DECIDR.RATE_LIMITED`, `DECIDR.OVERLOADED`, `DECIDR.NETWORK` | sc-decidr transport | The shared client reports the failure and observed attempt count; plan-anchor does not resend it |
+| `DECIDR.RESPONSE_INVALID`, `JEV.RESPONSE_INVALID` | provider or answer validation | Malformed provider result or answer; plan-anchor does not resend it |
 | `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
 | `PLAN.TOO_LARGE` | planning-gate pre-flight or 422 | The bead does not fit one request after code reduction; triage per `plan-size-and-shape.md`. Never trim or raise the cap to pass |
-| `JEV.VALIDATION` | 422 other | Request rejected; usually a malformed override |
+| `DECIDR.VALIDATION` | 422 other | Request rejected; usually a malformed override |
 | `VALIDATION.ANCHORS`, `VALIDATION.INPUT` | record / arguments | Fix `anchors.json` (`validate`) or the flags |
 | `QUESTIONS.ROLES` | question set | An override renamed a question ID; keep the default IDs |
 | `ANCHOR.UNKNOWN`, `ANCHOR.NONE`, `ANCHOR.NOT_LOCKED` | record | Wrong ID; nothing locked; `--anchor` named a proposed or retired anchor (`--include-unlocked` is for fixtures only) |

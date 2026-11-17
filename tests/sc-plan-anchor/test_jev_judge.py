@@ -141,14 +141,14 @@ def client_transport(transport):
             "AUTH.CREDENTIALS": "auth", "JEV.RATE_LIMITED": "quota", "JEV.OVERLOADED": "busy",
             "JEV.NETWORK": "network", "JEV.RESPONSE_INVALID": "response_invalid",
             "JEV.CONTEXT_EXCEEDED": "validation", "JEV.VALIDATION": "validation", "JEV.HTTP": "other",
-        }.get(error.code, "other")
-        if error.code == "JEV.CONTEXT_EXCEEDED":
+        }.get(error.code.replace("DECIDR.", "JEV."), "other")
+        if error.code in ("JEV.CONTEXT_EXCEEDED", "DECIDR.CONTEXT_EXCEEDED"):
             return context_overflow_line(sends=error.attempts)
         identifier = {
             "AUTH.CREDENTIALS": "auth.credentials", "JEV.RATE_LIMITED": "http.quota_exhausted",
             "JEV.OVERLOADED": "http.provider_busy", "JEV.NETWORK": "http.network",
             "JEV.RESPONSE_INVALID": "decision.response_parse", "JEV.VALIDATION": "decision.api_validation",
-        }.get(error.code, "other.error")
+        }.get(error.code.replace("DECIDR.", "JEV."), "other.error")
         detail = {"id": identifier, "category": category, "message": error.message,
                   "attempts": error.attempts}
         if error.status is not None:
@@ -232,8 +232,8 @@ class CredentialLookupTests(unittest.TestCase):
 
     def test_wheel_failures_are_forwarded_once_with_overrides_and_attempts(self):
         cases = (("auth.credentials", "auth", "AUTH.CREDENTIALS", 0, 401),
-                 ("http.provider_busy", "busy", "JEV.OVERLOADED", 5, 529),
-                 ("http.network", "network", "JEV.NETWORK", 2, None))
+                 ("http.provider_busy", "busy", "DECIDR.OVERLOADED", 5, 529),
+                 ("http.network", "network", "DECIDR.NETWORK", 2, None))
         for identifier, category, code, attempts, status in cases:
             with self.subTest(category=category):
                 detail = {"id": identifier, "category": category, "message": "provider detail",
@@ -678,9 +678,9 @@ class DedupeTests(unittest.TestCase):
             t = Transport(http(429, attempts=4))
             with live(), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            self.assertEqual((code, out["error"]["code"]), (2, "JEV.RATE_LIMITED"))
+            self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RATE_LIMITED"))
             self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"],
-                              out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.RATE_LIMITED", 4))
+                              out["data"]["pairs"][0]["jev"]["attempts"]), ("DECIDR.RATE_LIMITED", 4))
             self.assertEqual(len(t.bodies), 1)
             self.assertEqual(t.bodies[0]["state"]["a"]["id"], "ANC-001")
             t = Transport(http(401))
@@ -690,8 +690,8 @@ class DedupeTests(unittest.TestCase):
             t = Transport(http(503, attempts=5))
             with live(), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.OVERLOADED"))
-            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.OVERLOADED", 5))
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "DECIDR.OVERLOADED"))
+            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("DECIDR.OVERLOADED", 5))
 
     def test_add_refuses_duplicate_candidates_unless_allowed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1156,7 +1156,7 @@ class ConfirmTests(unittest.TestCase):
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(503, attempts=5))
             j = Judged(d, t)
         # 0.8.3: a confirmation Jev never answered is a Jev failure: exit 2; the run keeps the first answer
-        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "JEV.OVERLOADED", "satisfied", 6, "JEV.OVERLOADED"))
+        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "DECIDR.OVERLOADED", "satisfied", 6, "DECIDR.OVERLOADED"))
         self.assertEqual(j.sleeps, [])
         with tempfile.TemporaryDirectory() as d:  # the second call hitting 401 still aborts the run
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(401))
@@ -1324,15 +1324,15 @@ class ResponseValidationTests(unittest.TestCase):
 
 class WheelErrorMappingTests(unittest.TestCase):
     def test_typed_categories_map_without_reading_provider_messages(self):
-        examples = (("auth", "AUTH.CREDENTIALS"), ("quota", "JEV.RATE_LIMITED"),
-                    ("busy", "JEV.OVERLOADED"), ("network", "JEV.NETWORK"),
-                    ("response_invalid", "JEV.RESPONSE_INVALID"), ("validation", "JEV.VALIDATION"))
+        examples = (("auth", "AUTH.CREDENTIALS"), ("quota", "DECIDR.RATE_LIMITED"),
+                    ("busy", "DECIDR.OVERLOADED"), ("network", "DECIDR.NETWORK"),
+                    ("response_invalid", "DECIDR.RESPONSE_INVALID"), ("validation", "DECIDR.VALIDATION"))
         for category, code in examples:
             with self.subTest(category=category):
                 error = shared_error(None, {"id": "provider.error", "category": category, "message": "typed message"})
                 self.assertEqual(error.code, code)
         context = jj.decidr_client.decode_result(context_overflow_line(sends=4))["error"]
-        self.assertEqual((context.code, context.attempts), ("JEV.CONTEXT_EXCEEDED", 4))
+        self.assertEqual((context.code, context.attempts), ("DECIDR.CONTEXT_EXCEEDED", 4))
 
     def test_retry_after_metadata_comes_from_wheel_detail(self):
         error = shared_error("JEV.OVERLOADED", {
@@ -1774,7 +1774,7 @@ class TransportPolicyTests(unittest.TestCase):
         self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (2, "error", 5))
         self.assertEqual(j.sleeps, [])
         self.assertEqual(len(t.bodies), 1)
-        self.assertEqual(j.result["error"]["code"], "JEV.RATE_LIMITED")
+        self.assertEqual(j.result["error"]["code"], "DECIDR.RATE_LIMITED")
         with tempfile.TemporaryDirectory() as d:
             j = Judged(d, Transport(http(529, attempts=5)))
         self.assertEqual((j.result["attempts"], j.sleeps), (5, []))
@@ -1784,7 +1784,7 @@ class TransportPolicyTests(unittest.TestCase):
             t = Transport(http(529, attempts=5))
             j = Judged(d, t)
         self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 5))  # attempts are reported by the wheel
-        self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("JEV.OVERLOADED", "JEV.OVERLOADED"))
+        self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("DECIDR.OVERLOADED", "DECIDR.OVERLOADED"))
         self.assertTrue(j.result["error"]["recoverable"])
         self.assertEqual(len(t.bodies), 1)
         self.assertEqual(j.sleeps, [])
@@ -1792,7 +1792,7 @@ class TransportPolicyTests(unittest.TestCase):
         self.assertFalse(j.run["summary"]["pass"])
         with tempfile.TemporaryDirectory() as d:
             j = Judged(d, Transport(http(503, attempts=5)))
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.OVERLOADED", 5))
+        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "DECIDR.OVERLOADED", 5))
 
     def test_invalid_response_is_retried_like_a_transport_failure(self):
         good = {"model": "jev-1.13.0", "answers": plan_answers()}
@@ -1811,8 +1811,8 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "questions.addressed.criteria must be an object"))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "JEV.VALIDATION"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"], j.sleeps), ("error", "JEV.VALIDATION", 1, []))
+        self.assertEqual((j.code, j.out["error"]["code"]), (2, "DECIDR.VALIDATION"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
+        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"], j.sleeps), ("error", "DECIDR.VALIDATION", 1, []))
         self.assertIn("questions.addressed.criteria", j.result["error"]["message"])
 
     def test_one_anchor_failing_does_not_lose_the_others(self):
@@ -1823,7 +1823,7 @@ class TransportPolicyTests(unittest.TestCase):
         verdicts = {r["anchor_id"]: r["verdict"] for r in j.run["results"]}
         self.assertEqual(verdicts, {"ANC-001": "error", "ANC-002": "satisfied"})
         # 0.8.3: the command exits 2, and the run file on disk still keeps the answered anchor
-        self.assertEqual((j.code, j.out["error"]["code"], j.out["data"]["failures"][0]["id"]), (2, "JEV.OVERLOADED", "ANC-001"))
+        self.assertEqual((j.code, j.out["error"]["code"], j.out["data"]["failures"][0]["id"]), (2, "DECIDR.OVERLOADED", "ANC-001"))
         self.assertEqual({r["anchor_id"]: r["verdict"] for r in on_disk["results"]}, verdicts)
         self.assertEqual([r["verdict"] for r in j.run["results"]], ["satisfied", "error"])  # severity order: error sorts last
 
