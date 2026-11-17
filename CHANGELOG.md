@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.7
+
+- Update transport error references to the shared client codes.
+
 ## 0.12.6
 
 - Adopt the sc-decidr 0.2.5 consumer template and preserve plan-anchor context-overflow shortening with shared error codes.

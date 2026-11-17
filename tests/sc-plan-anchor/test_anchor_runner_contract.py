@@ -78,7 +78,7 @@ class RunnerContractTests(unittest.TestCase):
             "aborted_by": None,
             "data": {} if success else None,
             "error": None if success else {
-                "code": "JEV.TIMEOUT",
+                "code": "DECIDR.NETWORK",
                 "message": "request timed out",
                 "recoverable": True,
                 "suggested_action": "retry once",
@@ -200,7 +200,7 @@ class RunnerContractTests(unittest.TestCase):
                 finished_at_ms=25,
                 outcome="timeout",
                 source_sha256="a" * 64,
-                error_code="JEV.TIMEOUT",
+                error_code="DECIDR.NETWORK",
             ))
             rendered = json.dumps(attestation)
             self.assertNotIn("sk-canary", rendered)

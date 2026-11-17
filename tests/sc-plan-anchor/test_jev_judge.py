@@ -138,17 +138,17 @@ def client_transport(transport):
             return wheel_line({"response": got.value})
         error = got.error
         category = {
-            "AUTH.CREDENTIALS": "auth", "JEV.RATE_LIMITED": "quota", "JEV.OVERLOADED": "busy",
-            "JEV.NETWORK": "network", "JEV.RESPONSE_INVALID": "response_invalid",
-            "JEV.CONTEXT_EXCEEDED": "validation", "JEV.VALIDATION": "validation", "JEV.HTTP": "other",
-        }.get(error.code.replace("DECIDR.", "JEV."), "other")
+            "AUTH.CREDENTIALS": "auth", "DECIDR.RATE_LIMITED": "quota", "DECIDR.OVERLOADED": "busy",
+            "DECIDR.NETWORK": "network", "JEV.RESPONSE_INVALID": "response_invalid", "DECIDR.RESPONSE_INVALID": "response_invalid",
+            "JEV.CONTEXT_EXCEEDED": "validation", "DECIDR.VALIDATION": "validation", "DECIDR.ERROR": "other",
+        }.get(error.code, "other")
         if error.code in ("JEV.CONTEXT_EXCEEDED", "DECIDR.CONTEXT_EXCEEDED"):
             return context_overflow_line(sends=error.attempts)
         identifier = {
-            "AUTH.CREDENTIALS": "auth.credentials", "JEV.RATE_LIMITED": "http.quota_exhausted",
-            "JEV.OVERLOADED": "http.provider_busy", "JEV.NETWORK": "http.network",
-            "JEV.RESPONSE_INVALID": "decision.response_parse", "JEV.VALIDATION": "decision.api_validation",
-        }.get(error.code.replace("DECIDR.", "JEV."), "other.error")
+            "AUTH.CREDENTIALS": "auth.credentials", "DECIDR.RATE_LIMITED": "http.quota_exhausted",
+            "DECIDR.OVERLOADED": "http.provider_busy", "DECIDR.NETWORK": "http.network",
+            "JEV.RESPONSE_INVALID": "decision.response_parse", "DECIDR.RESPONSE_INVALID": "decision.response_parse", "DECIDR.VALIDATION": "decision.api_validation",
+        }.get(error.code, "other.error")
         detail = {"id": identifier, "category": category, "message": error.message,
                   "attempts": error.attempts}
         if error.status is not None:
@@ -1335,7 +1335,7 @@ class WheelErrorMappingTests(unittest.TestCase):
         self.assertEqual((context.code, context.attempts), ("DECIDR.CONTEXT_EXCEEDED", 4))
 
     def test_retry_after_metadata_comes_from_wheel_detail(self):
-        error = shared_error("JEV.OVERLOADED", {
+        error = shared_error("DECIDR.OVERLOADED", {
             "id": "http.provider_busy", "category": "busy", "message": "busy",
             "attempts": 5, "retry_after_ms": 1250,
         })
@@ -2398,7 +2398,7 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
         if with_quote:
             r["quote"] = QUOTE if r["source_type"] == "ANC" else r["statement"]
         if r["verdict"] == "error":
-            r["error"] = {"code": "JEV.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
+            r["error"] = {"code": "DECIDR.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
     failing = [a for a, v in verdicts.items() if v in jj.FAILING]
     run = {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-{created_at}-{item}", "gate": gate, "created_at": created_at,
            "anchors_path": "anchors.json", "plan": "phase-a",
@@ -2446,7 +2446,7 @@ class ReportTests(unittest.TestCase):
             # a register anchor whose quote differs from its statement shows both
             self.assertIn('Anchor: The CLI layer only parses arguments and prints JSON. ADR-0007 (ADR register) says: "The CLI stays thin." The directive was followed and evidenced.', md)
             self.assertIn("> **sprint-2 · ANC-020 · error**", md)
-            self.assertIn(">   Error JEV.OVERLOADED: Jev HTTP 529; response body withheld", md)
+            self.assertIn(">   Error DECIDR.OVERLOADED: Jev HTTP 529; response body withheld", md)
             self.assertEqual(code, 0)
 
     def test_all_passing_message_and_bad_inputs(self):

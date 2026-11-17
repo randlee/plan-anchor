@@ -97,7 +97,7 @@ class TriageDefaultTests(unittest.TestCase):
 
     def test_a_failed_triage_request_costs_the_cell_nothing(self):
         with tempfile.TemporaryDirectory() as d:
-            bad = jj.ClientError("JEV.HTTP", "boom", retryable=False)
+            bad = jj.ClientError("DECIDR.ERROR", "boom", retryable=False)
             t = Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad)
             j = Judged(d, t)
             self.assertEqual((j.code, j.result["verdict"]), (0, "not_addressed"), j.out)

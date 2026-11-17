@@ -107,7 +107,7 @@ class JevPropagationTests(unittest.TestCase):
     def test_partial_run_wrapper_preserves_rust_text_and_action(self):
         for action in (None, "Rust recovery text"):
             with self.subTest(action=action):
-                error = jj.ClientError("JEV.NETWORK", "Rust network failure", action=action)
+                error = jj.ClientError("DECIDR.NETWORK", "Rust network failure", action=action)
                 wrapped = jj.jev_failure("cells", [("ANC-001", error)], 2, {"run_path": "runs/partial.json"}).error
                 self.assertIn(error.message, wrapped.message)
                 self.assertEqual(wrapped.action, action)
@@ -123,7 +123,7 @@ class JevPropagationTests(unittest.TestCase):
         self.assertEqual(called.call_count, 1)
 
     def test_wheel_attempt_count_is_returned_without_consumer_retry(self):
-        down = jj.ClientError("JEV.NETWORK", "down", retryable=True)
+        down = jj.ClientError("DECIDR.NETWORK", "down", retryable=True)
         down.attempts = 5
         with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called:
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})

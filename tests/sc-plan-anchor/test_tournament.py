@@ -288,7 +288,7 @@ class TournamentTests(TournamentCase):
         ok = {role: answer(choice, 0.9) for role, choice in CASES[0][3].items()}
         fixture = fixture_for(conf={"S0": 0.95}, failures={
             "FX-PASS/S0/r1": ok,
-            "FX-PASS/S1/r1": {"__error__": "JEV.OVERLOADED"},
+            "FX-PASS/S1/r1": {"__error__": "DECIDR.OVERLOADED"},
         })
         data = self.ran(fixture)
         self.assertEqual((data["accepted"], data["retries"], data["failed_calls"]), (True, 0, [f"{CORRELATION}/FX-PASS/ANC-001/S1/r1"]))
@@ -509,14 +509,14 @@ class BatchTests(TournamentCase):
         call.assert_not_called()
 
     def test_failed_call_is_a_line_and_exit_2_with_the_error_on_stderr(self):
-        self.FIXTURE = {"s1/cur": {"__error__": "JEV.OVERLOADED"}, "*": plan_answers()}
+        self.FIXTURE = {"s1/cur": {"__error__": "DECIDR.OVERLOADED"}, "*": plan_answers()}
         proc = self.subprocess_batch("runs", "--repeat", "1", stdin=jsonl(self.LINES[:1]).encode("utf-8"))
         self.assertEqual(proc.returncode, 2)
         lines = [json.loads(x) for x in proc.stdout.decode("utf-8").splitlines()]
         failed = next(x for x in lines if x["candidate_id"] == "cur")
-        self.assertEqual((failed["ok"], failed["retry_count"], failed["error"]["code"], failed["verdict"]), (False, 0, "JEV.OVERLOADED", None))
+        self.assertEqual((failed["ok"], failed["retry_count"], failed["error"]["code"], failed["verdict"]), (False, 0, "DECIDR.OVERLOADED", None))
         self.assertTrue(next(x for x in lines if x["candidate_id"] == "alt")["ok"])
-        self.assertEqual(json.loads(proc.stderr)["error"]["code"], "JEV.OVERLOADED")
+        self.assertEqual(json.loads(proc.stderr)["error"]["code"], "DECIDR.OVERLOADED")
         self.assertEqual(self.log("runs"), proc.stdout)
 
     def test_live_batch_uses_shared_client_attempt_count_and_keeps_input_order(self):
