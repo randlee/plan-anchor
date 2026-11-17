@@ -1,6 +1,8 @@
 """Live variants of the existing judge, batch-order and auth-error cases; no answer stubs."""
+import contextlib
 from functools import partial
 import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
@@ -12,8 +14,20 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/sc-plan-anchor'))
 from child_support import run_test_child
 from layout_support import SCRIPTS, TEST_TRACKER
-from jev_test_support import BATCH_LINES, PLAN_QS, anchor, jsonl, record, run_cli, write
+from jev_inputs import BATCH_LINES, PLAN_QS, anchor, jsonl, record, write
+
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj
+
+
+def run_cli(argv):
+    """Run the judge in-process while retaining the real sc_agent module."""
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = jj.main(argv)
+    return code, json.loads(output.getvalue())
+
 
 if os.environ.get('PLAN_ANCHOR_LIVE_INTEGRATION') != '1':
     pytest.skip('select the real-provider suite with scripts/integration.py', allow_module_level=True)
