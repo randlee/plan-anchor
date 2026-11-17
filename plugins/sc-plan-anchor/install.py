@@ -175,8 +175,9 @@ def _load_plain_script(name: str) -> ModuleType:
 
     Its rendering for either tracker is its body, byte for byte (test_install.py renders it
     strictly and compares), so the installer runs the code it installs without needing
-    sc-compose to import. Only result.py and plan_anchor_paths.py are loaded this way; the
-    tracker-specific scripts are rendered for one tracker and never imported here.
+    sc-compose to import. result.py, plan_anchor_paths.py and the shared decidr_client are
+    loaded this way; the tracker-specific scripts are rendered for one tracker and never
+    imported here.
     """
     path = SCRIPTS_DIR / f"{name}.py.j2"
     body = template_body(path.read_text(encoding="utf-8"))
@@ -191,6 +192,8 @@ def _load_plain_script(name: str) -> ModuleType:
 
 _result = _load_plain_script("result")
 _paths = _load_plain_script("plan_anchor_paths")
+_decidr_client = _load_plain_script("decidr_client")
+sys.modules["decidr_client"] = _decidr_client
 Err, Ok, Result, ToolError, err, utf8_stdio = (_result.Err, _result.Ok, _result.Result, _result.ToolError,
                                                _result.err, _result.utf8_stdio)
 find_lock, find_settings, global_location = _paths.find_lock, _paths.find_settings, _paths.global_location

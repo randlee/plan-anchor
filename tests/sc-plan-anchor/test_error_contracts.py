@@ -127,24 +127,22 @@ JEV_CASES = {
     # not be a substring of the message: output redacts it.
     "policy_disabled": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"}, LIVE, None, 2,
                         {"code": "POLICY.REMOTE_JUDGE_DISABLED",
-                         "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                         "message": "Sending text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
                                     ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
                          "recoverable": False,
-                         "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                         "suggested_action": "Ask the user once whether this text may be sent to TypeSafe (Jev), record the answer with "
                                              "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
-                                             ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
-                                             "Use --dry-run to inspect the request instead."}, None),
+                                             ".sc/plan-anchor/settings.yaml. Never infer consent from prior runs. Use --dry-run to inspect the request instead."}, None),
     # The variable that used to opt in has no effect any more.
     "policy_env_var_ignored": (JUDGE, {"anchors.json": LOCKED, "item.txt": ITEM, ".git/HEAD": "ref: refs/heads/main\n"},
                                dict(LIVE, PLAN_ANCHOR_ALLOW_REMOTE_JUDGE="1"), None, 2,
                                {"code": "POLICY.REMOTE_JUDGE_DISABLED",
-                                "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
+                                "message": "Sending text to TypeSafe is disabled. The anchor statement and the item text would leave this machine. "
                                            ".sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
                                 "recoverable": False,
-                                "suggested_action": "Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+                                "suggested_action": "Ask the user once whether this text may be sent to TypeSafe (Jev), record the answer with "
                                                     "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
-                                                    ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
-                                                    "Use --dry-run to inspect the request instead."}, None),
+                                                    ".sc/plan-anchor/settings.yaml. Never infer consent from prior runs. Use --dry-run to inspect the request instead."}, None),
     "allow_remote_flag_removed": (JUDGE + ["--allow-remote"], {"anchors.json": LOCKED, "item.txt": ITEM}, {"TYPESAFE_API_KEY": "sk"}, None, 2,
                                   {"code": "VALIDATION.INPUT", "message": "jev_judge.py: unrecognized arguments: --allow-remote",
                                    "recoverable": False,
@@ -270,7 +268,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
         for name, (argv, files, env, stdin, exit_code, error, data) in JEV_CASES.items():
             with self.subTest(name), Workspace(files):
                 # Auth-envelope cases control consent; real consent/settings cases remain separate.
-                consent = (mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None))
+                consent = (mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None)
                            if name in {"auth_missing_key", "auth_bad_format"} else contextlib.nullcontext())
                 with consent:
                     code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
@@ -354,7 +352,7 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def judge(self, calls, extra=(), gate="plan", item=ITEM):
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
-                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)):
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None):
             argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
             code, out = call_main(jj.main, argv, env=LIVE, client_calls=list(calls))

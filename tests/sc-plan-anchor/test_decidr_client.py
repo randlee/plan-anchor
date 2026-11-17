@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 from layout_support import SCRIPTS
+from sc_decidr_test_double import parse_result as parse_wheel_result
 
 
 def load_client():
@@ -26,13 +27,21 @@ class DecidrClientTests(unittest.TestCase):
         self.agent = types.ModuleType("sc_agent")
         class SagError(Exception):
             def __init__(self, identity):
-                super().__init__(identity)
-                self.id, self.message, self.detail = identity, identity, {}
+                detail = identity if isinstance(identity, dict) else {"id": identity, "message": identity}
+                super().__init__(detail.get("id", "unknown"))
+                self.id = detail.get("id")
+                self.message = detail.get("message")
+                self.detail = detail
+                self.category = detail.get("category", "other")
         self.agent.SagError = SagError
         self.agent.category = lambda detail: json.loads(detail).get("category", "other")
         self.agent.retryable = lambda detail: json.loads(detail).get("category") in {"busy", "network"}
         self.agent.CancelToken = type("CancelToken", (), {"cancel": Mock()})
+        self.agent.parse_result = lambda line: parse_wheel_result(line, self.agent)
         sys.modules["sc_agent"] = self.agent
+        self.consent = patch.object(self.client, "remote_preflight", return_value=None)
+        self.consent.start()
+        self.addCleanup(self.consent.stop)
 
     def tearDown(self):
         if self.old_agent is None:
@@ -145,8 +154,9 @@ class DecidrClientTests(unittest.TestCase):
     def test_module_import_is_offline_and_missing_wheel_is_typed(self):
         with patch.dict(sys.modules, {"sc_agent": None}):
             offline_client = load_client()
-            result = offline_client.call_result("request", model="m", project="p", agent_role="r",
-                                    abort_on=frozenset(), category_codes={}, cancel=Mock())
+            with patch.object(offline_client, "remote_preflight", return_value=None):
+                result = offline_client.call_result("request", model="m", project="p", agent_role="r",
+                                        abort_on=frozenset(), category_codes={}, cancel=Mock())
         self.assertEqual(result["error"].code, "DEPENDENCY.SC_DECIDR")
 
     def test_batch_maps_errors_cancels_and_forwards_callback(self):

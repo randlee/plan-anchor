@@ -32,7 +32,10 @@ ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only ad
 def clean_env():
     keep = ("PATH", "HOME", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "PYTHONPATH")
     # An explicitly empty environment key fails closed before native-store fallback.
-    return {**{k: os.environ[k] for k in keep if k in os.environ}, "TYPESAFE_API_KEY": ""}
+    environment = {k: os.environ[k] for k in keep if k in os.environ}
+    test_support = str(Path(__file__).resolve().parent)
+    environment["PYTHONPATH"] = os.pathsep.join(part for part in (test_support, environment.get("PYTHONPATH", "")) if part)
+    return {**environment, "TYPESAFE_API_KEY": ""}
 
 
 class ConventionCase(unittest.TestCase):
@@ -79,7 +82,7 @@ class ConventionCase(unittest.TestCase):
         output = io.StringIO()
         auth = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
         with mock.patch.dict(os.environ, clean_env(), clear=True), \
-                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send", return_value=auth), \
                 contextlib.redirect_stdout(output):

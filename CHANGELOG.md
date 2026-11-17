@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.8 — 2026-11-17
+
+- Render the sc-decidr 0.2.7 shared client, use typed answers and shared batch, consent, error and cancellation records, and remove plan-anchor duplicates.
+
 ## 0.12.7
 
 - Update transport error references to the shared client codes.

@@ -67,9 +67,9 @@ Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_r
 Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018. Status: shipped.
 Verified: `test_jev_judge.py::TransportPolicyTests`.
 
-**REQ-012** Every Jev answer shall be checked by `validate_response`, which requires exactly the requested answer IDs.
+**REQ-012** Every Jev answer shall be checked before use by sc-decidr's shared typed response decoder for live replies and the shared client fixture validator for fixture replies. The check requires exactly the requested answer IDs, a type matching each question, and finite probabilities and confidence values in the range 0 through 1. Invalid replies are `DECIDR.RESPONSE_INVALID`.
 Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
-Verified: `test_jev_judge.py::ResponseValidationTests.test_validate_response_requires_exact_answer_ids`.
+Verified: `test_jev_judge.py::JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid` (shared client fixture validation; runs in the sc-plan-anchor CI suite).
 
 **REQ-013** Each run shall be written to its own run file that copies the statement, quote and provenance it judged.
 Source: `design/data-model-and-gating.md` §1–2. Status: shipped.
@@ -204,7 +204,7 @@ Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.t
 Source: ANC-028, ANC-029, ANC-030. Status: shipped.
 Verified: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_triage_request_and_result_render_validate_relationally`.
 
-**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request to fast stand-in models (Claude `haiku`, Codex `luna`) in parallel with Jev, one session per cell per model in an empty temp dir with no tools, validate each answer with `validate_response`, and record it beside the Jev answer without changing gating.
+**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request to fast stand-in models (Claude `haiku`, Codex `luna`) in parallel with Jev, one session per cell per model in an empty temp dir with no tools, check each answer before use with sc-decidr's shared typed response decoder (exact answer IDs, matching answer types, and finite probabilities and confidence in the range 0 through 1; malformed replies are `DECIDR.RESPONSE_INVALID`), and record it beside the Jev answer without changing gating.
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md`. Status: planned.
 Verified: none.
 

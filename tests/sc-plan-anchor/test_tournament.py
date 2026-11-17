@@ -211,7 +211,8 @@ class TournamentTests(TournamentCase):
         by_id = {x["request_id"]: x for x in lines}
         line = by_id[f"{CORRELATION}/P-SILENT/ANC-001/S0/r2"]
         self.assertEqual(line["run_id"], hashlib.sha256(line["request_id"].encode()).hexdigest()[:16])
-        self.assertEqual(line["request_sha256"], hashlib.sha256(jj.encode_body(line["request"])).hexdigest())
+        request_bytes = json.dumps(line["request"], allow_nan=False).encode("utf-8")
+        self.assertEqual(line["request_sha256"], hashlib.sha256(request_bytes).hexdigest())
         self.assertEqual(line["request"]["state"]["anchor"]["statement"], STATEMENT)
         self.assertEqual(line["answers"], line["raw_response"]["answers"])
         self.assertEqual(json.loads((self.d / "t" / "oracle.frozen.json").read_text(encoding="utf-8")), oracle())
@@ -381,11 +382,11 @@ class TournamentTests(TournamentCase):
         self.assertFalse((self.d / "t" / "result_vars.json").exists())
 
     def test_live_run_fails_closed_without_credentials(self):
-        auth = sc_agent.SagError("auth.credentials", "missing key", json.dumps({
-            "id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}))
+        auth = sc_agent.SagError({
+            "id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0})
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None), \
                 mock.patch("sc_agent.send_batch", side_effect=auth):
             self.refused("AUTH.CREDENTIALS", None)
         self.assertFalse((self.d / "t" / "results.jsonl").exists())
@@ -403,6 +404,15 @@ class BatchTests(TournamentCase):
 
     LINES = BATCH_LINES
     FIXTURE = {"s1/cur": plan_answers(), "s1/alt/r2": plan_answers(comp="no"), "alt": plan_answers(), "*": plan_answers(conf="yes")}
+
+    def run_recorded(self, lines, settings, fixture, path, *, echo=False):
+        question_sets = jj.load_question_set("plan").value["roles"]
+        with mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None):
+            return jj.run_recorded_batch(lines, settings, fixture, path, echo=echo, question_sets=question_sets)
+
+    @staticmethod
+    def records(path):
+        return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()]
 
     def subprocess_batch(self, run_dir, *extra, stdin=None):
         """The installed script as a separate process: stdout bytes exactly as a caller sees them."""
@@ -427,7 +437,7 @@ class BatchTests(TournamentCase):
         line = by_key[("s1", "alt", 2)]
         self.assertEqual(line["answers"]["addressed"]["probabilities"], answer("no")["probabilities"])
         self.assertEqual((line["run_id"], line["ok"], line["retry_count"], line["schema"]),
-                         (hashlib.sha256(b"run-7/s1/ANC-001/alt/r2").hexdigest()[:16], True, 0, "plan-anchor/jev-batch-result/1"))
+                         (hashlib.sha256(b"run-7/s1/ANC-001/alt/r2").hexdigest()[:16], True, 0, "jev-batch-result/1"))
         self.assertEqual(line["request"]["questions"], alt_set(1))
         self.assertEqual(line["request"]["state"]["item"], {"id": "s1", "title": "Sprint 1", "text": "We copy the legacy crates."})
         self.assertEqual(by_key[("s1", "cur", 1)]["request_sha256"], by_key[("s1", "cur", 2)]["request_sha256"])
@@ -470,41 +480,35 @@ class BatchTests(TournamentCase):
     def test_results_stream_preserves_request_order(self):
         """Fixture answers produce the same result order as their requests."""
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]), ("c3", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
 
-        async def consume():
-            got = []
-            async for result in jj.stream_batch([line], settings, {"*": plan_answers()}):
-                got.append(result["candidate_id"])
-            return got
-
-        self.assertEqual(jj.asyncio.run(consume()), ["c1", "c2", "c3"])
+        result = self.run_recorded([line], settings, {"*": plan_answers()}, self.d / "ordered.jsonl")
+        self.assertIsInstance(result, jj.Ok)
+        self.assertEqual([row["candidate_id"] for row in self.records(self.d / "ordered.jsonl")], ["c1", "c2", "c3"])
 
     def test_fixture_auth_failure_stops_later_jobs(self):
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
-
-        async def consume():
-            return [result async for result in jj.stream_batch(
-                [line], settings, {"c1": {"__error__": "AUTH.CREDENTIALS"}, "*": plan_answers()})]
+        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
 
         with mock.patch.object(jj, "run_batch_job", wraps=jj.run_batch_job) as run_job:
-            results = jj.asyncio.run(consume())
-        self.assertEqual([r["candidate_id"] for r in results], ["c1"])
+            result = self.run_recorded([line], settings,
+                                       {"c1": {"__error__": "AUTH.CREDENTIALS"}, "*": plan_answers()},
+                                       self.d / "auth.jsonl")
+            self.assertIsInstance(result, jj.Ok)
+            results = self.records(self.d / "auth.jsonl")
+        self.assertEqual([r["candidate_id"] for r in results], ["c1", "c2"])
         self.assertEqual(results[0]["error"]["code"], "AUTH.CREDENTIALS")
-        self.assertEqual(run_job.call_count, 1)
+        self.assertTrue(results[1]["ok"])
+        self.assertEqual(run_job.call_count, 2)
 
     def test_stream_batch_refuses_live_calls_before_running_jobs(self):
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)
-
-        async def consume():
-            return [result async for result in jj.stream_batch(self.LINES, settings)]
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)
 
         with mock.patch.object(jj, "run_batch_job") as run_job, \
-                mock.patch.object(jj, "call_jev") as call:
-            with self.assertRaises(jj.BatchInputError) as raised:
-                jj.asyncio.run(consume())
-        self.assertEqual(raised.exception.error.code, "VALIDATION.INPUT")
+                mock.patch.object(jj.decidr_client, "call_batch_results") as call:
+            result = self.run_recorded([{}], settings, None, self.d / "invalid.jsonl")
+        self.assertIsInstance(result, jj.Err)
+        self.assertEqual(result.error.code, "VALIDATION.INPUT")
         run_job.assert_not_called()
         call.assert_not_called()
 
@@ -523,15 +527,15 @@ class BatchTests(TournamentCase):
         request = request_line("s1", "We copy the legacy crates.", ("c1", PLAN_QS["questions"]))
         wheel_error = wheel_line({"error": {"id": "http.provider_busy", "category": "busy", "message": "busy",
                                               "attempts": 5, "retry_after_ms": 2500}})
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
         log_path = self.d / "live.jsonl"
         cancel_token = mock.Mock()
         with mock.patch("sc_agent.CancelToken", return_value=cancel_token), \
                 mock.patch("sc_agent.send_batch", return_value=[wheel_error]) as send_batch, \
                 mock.patch.object(jj.decidr_client, "call_batch_results", wraps=jj.decidr_client.call_batch_results) as boundary:
-            result = jj.pump_batch([request], settings, None, log_path, False)
+            result = self.run_recorded([request], settings, None, log_path)
         self.assertIsInstance(result, jj.Ok)
-        line = result.value[0]
+        line = self.records(log_path)[0]
         self.assertEqual((line["request_id"], line["ok"], line["retry_count"], line["attempts"][0]["attempt"]),
                          ("live/s1/ANC-001/c1/r1", False, 4, 5))
         self.assertEqual(json.loads(log_path.read_text(encoding="utf-8")), line)
@@ -547,28 +551,28 @@ class BatchTests(TournamentCase):
 
     def test_successful_batch_uses_observed_sends_without_inventing_unknown(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "jev", 1, "counts", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev", 1, "counts", 0.6, 30.0, 1, 24000, False)
         for index, sends in enumerate((5, None)):
             with self.subTest(sends=sends):
                 wire = wheel_line({"response": {"model": "controlled", "answers": plan_answers()}}, sends=sends)
                 with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                         mock.patch("sc_agent.send_batch", return_value=[wire]):
-                    result = jj.pump_batch([request], settings, None, self.d / f"counts-{index}.jsonl", False)
+                    result = self.run_recorded([request], settings, None, self.d / f"counts-{index}.jsonl")
                 self.assertIsInstance(result, jj.Ok)
-                self.assertEqual(result.value[0]["attempts"], [{"attempt": sends, "ok": True}])
-                self.assertEqual(result.value[0]["retry_count"], 4 if sends == 5 else None)
+                self.assertEqual(self.records(self.d / f"counts-{index}.jsonl")[0]["attempts"], [{"attempt": sends, "ok": True}])
+                self.assertEqual(self.records(self.d / f"counts-{index}.jsonl")[0]["retry_count"], 4 if sends == 5 else 0)
 
     def test_batch_auth_result_surfaces_once_with_shared_abort_and_overrides(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
         detail = {"id": "auth.credentials", "category": "auth", "message": "authentication failed (HTTP 401); provider response body withheld", "attempts": 1, "status": 401}
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send_batch", return_value=[wheel_line({"error": detail})]) as send_batch, \
                 mock.patch.object(jj.decidr_client, "call_batch_results", wraps=jj.decidr_client.call_batch_results) as boundary:
-            result = jj.pump_batch([request], settings, None, self.d / "auth.jsonl", False)
+            result = self.run_recorded([request], settings, None, self.d / "auth.jsonl")
         send_batch.assert_called_once()
         self.assertIsInstance(result, jj.Ok)
-        line = result.value[0]
+        line = self.records(self.d / "auth.jsonl")[0]
         self.assertEqual((line["error"]["code"], line["attempts"][0]["attempt"], line["retry_count"]),
                          ("AUTH.CREDENTIALS", 1, 0))
         self.assertEqual(line["error"]["message"], "authentication failed (HTTP 401); provider response body withheld")
@@ -579,7 +583,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callback_is_durable_before_interruption(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "interrupt", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "interrupt", 0.6, 30.0, 2, 24000, False)
         wire = wheel_line({"position": 1, "response": {"model": "controlled", "answers": plan_answers()}})
         path = self.d / "interrupted.jsonl"
         during, echoed = [], []
@@ -593,9 +597,9 @@ class BatchTests(TournamentCase):
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send_batch", side_effect=interrupted), \
-                mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
+                mock.patch.object(jj.decidr_client, "write_stdout_line", side_effect=echoed.append):
             with self.assertRaises(KeyboardInterrupt):
-                jj.pump_batch([request], settings, None, path, True)
+                self.run_recorded([request], settings, None, path, echo=True)
         self.assertTrue(during[0], "completed result was not durable inside the callback")
         self.assertEqual(path.read_text(), during[0])
         self.assertEqual("".join(echoed), during[0])
@@ -603,7 +607,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callbacks_log_finish_order_but_return_input_order_once(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "ordered", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "ordered", 0.6, 30.0, 2, 24000, False)
         first = wheel_line({"position": 0, "response": {"model": "controlled", "answers": plan_answers()}})
         second = wheel_line({"position": 1, "error": {"id": "http.provider_busy", "category": "busy",
                                                     "message": "busy", "attempts": 5}})
@@ -618,19 +622,19 @@ class BatchTests(TournamentCase):
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send_batch", side_effect=finish_second_first), \
-                mock.patch.object(jj, "write_stdout_line", side_effect=echoed.append):
-            result = jj.pump_batch([request], settings, None, path, True)
+                mock.patch.object(jj.decidr_client, "write_stdout_line", side_effect=echoed.append):
+            result = self.run_recorded([request], settings, None, path, echo=True)
         self.assertIsInstance(result, jj.Ok)
-        self.assertEqual([row["candidate_id"] for row in result.value], ["c1", "c2"])
-        self.assertEqual((result.value[1]["error"]["code"], result.value[1]["retry_count"]), ("DECIDR.OVERLOADED", 4))
+        self.assertEqual([row["candidate_id"] for row in self.records(path)], ["c2", "c1"])
+        self.assertEqual((self.records(path)[0]["error"]["code"], self.records(path)[0]["retry_count"]), ("DECIDR.OVERLOADED", 4))
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         self.assertEqual([row["candidate_id"] for row in rows], ["c2", "c1"])
-        self.assertEqual(rows, [result.value[1], result.value[0]])
+        self.assertEqual(rows, self.records(path))
         self.assertEqual("".join(echoed), path.read_text())
 
     def test_live_callback_rejects_invalid_carried_positions(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "invalid", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "invalid", 0.6, 30.0, 1, 24000, False)
         for index, position in enumerate((None, True, "0", 0.5, -1, 1)):
             with self.subTest(position=position):
                 value = {"response": {"model": "controlled", "answers": plan_answers()}}
@@ -644,14 +648,14 @@ class BatchTests(TournamentCase):
 
                 with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                         mock.patch("sc_agent.send_batch", side_effect=invalid):
-                    result = jj.pump_batch([request], settings, None, path, False)
+                    result = self.run_recorded([request], settings, None, path)
                 self.assertIsInstance(result, jj.Err)
                 self.assertEqual(result.error.code, "DECIDR.INVALID_RESULT")
                 self.assertFalse(path.exists())
 
     def test_live_callback_log_failure_is_typed(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.BatchSettings("plan", "jev-latest", 1, "io", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "io", 0.6, 30.0, 1, 24000, False)
         parent = self.d / "not-a-directory"
         parent.write_text("occupied")
 
@@ -661,7 +665,7 @@ class BatchTests(TournamentCase):
 
         with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send_batch", side_effect=completed):
-            result = jj.pump_batch([request], settings, None, parent / "log.jsonl", False)
+            result = self.run_recorded([request], settings, None, parent / "log.jsonl")
         self.assertIsInstance(result, jj.Err)
         self.assertEqual(result.error.code, "SCRIPT.IO")
 
@@ -682,11 +686,11 @@ class BatchTests(TournamentCase):
         self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))  # no log directory
 
     def test_live_run_fails_closed_before_any_line(self):
-        error = sc_agent.SagError("auth.credentials", "missing key", json.dumps({
-            "id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}))
+        error = sc_agent.SagError({
+            "id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0})
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}), \
                 mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None)), \
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None), \
                 mock.patch("sc_agent.send_batch", side_effect=error) as send_batch:
             code, out = run_cli(["batch", "--input", self.put("in.jsonl", jsonl(self.LINES)), "--run-dir", str(self.d / "runs")])
         send_batch.assert_called_once()

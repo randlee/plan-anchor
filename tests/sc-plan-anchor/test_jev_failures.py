@@ -30,12 +30,15 @@ DUMMY_KEY = "sk-test-closed-port-0000"  # never a real key: nothing is ever sent
 # argv[1] is the scripts directory, the rest is the command line.
 REFUSED_RUNNER = (
     "import json, sys\n"
+    "sys.path.insert(0, sys.argv[2])\n"
+    "import sc_decidr_test_double\n"
+    "sys.modules['sc_agent'] = sc_decidr_test_double.as_module()\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
     "def refused(*args, **kwargs):\n"
     "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}})\n"
     "import sc_agent; sc_agent.send = refused\n"
-    "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
+    "raise SystemExit(jev_judge.main(sys.argv[3:]))\n"
 )
 # Runs a CLI as __main__ and interrupts it exactly where it reads one input file: the first Path.read_text of
 # argv[2] sends SIGINT to the process itself. kill() to the calling single-threaded process delivers the
@@ -67,6 +70,8 @@ needs_yaml = unittest.skipUnless(HAVE_YAML, "live-path cases read allow_remote_j
 
 def child_env(**extra):
     environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+    test_support = str(Path(__file__).resolve().parent)
+    environment["PYTHONPATH"] = os.pathsep.join(part for part in (test_support, environment.get("PYTHONPATH", "")) if part)
     environment.update(extra)
     return environment
 
@@ -92,7 +97,7 @@ class ProcessCase(unittest.TestCase):
 
     def run_jj(self, *argv, live=False, env=None):
         if live:
-            cmd = [sys.executable, "-c", REFUSED_RUNNER, str(SCRIPTS), *argv]
+            cmd = [sys.executable, "-c", REFUSED_RUNNER, str(SCRIPTS), str(Path(__file__).parent), *argv]
             environment = child_env(TYPESAFE_API_KEY=DUMMY_KEY, **(env or {}))
         else:
             cmd = [sys.executable, str(JJ), *argv]
@@ -151,7 +156,7 @@ class JudgeAndCheckFixtures(ProcessCase):
     def test_judge_with_a_malformed_fixture_answer_exits_2(self):
         bad = plan_answers()
         bad["relevant"]["probabilities"]["yes"] = 0.1
-        self.failed(*self.judge_argv("--answers-file", self.put("a.json", {"*": bad})), code="JEV.RESPONSE_INVALID")
+        self.failed(*self.judge_argv("--answers-file", self.put("a.json", {"*": bad})), code="DECIDR.RESPONSE_INVALID")
 
     def test_an_answers_file_that_is_not_an_object_stays_exit_2(self):
         rc, out = self.run_jj(*self.judge_argv("--answers-file", self.put("a.json", [1])))

@@ -10,12 +10,16 @@ class ChildSupportTests(unittest.TestCase):
     def test_input_and_shorter_timeout_are_preserved(self):
         with mock.patch("child_support.subprocess.run") as run:
             run_test_child(["child"], input=b"data", timeout=30)
-        self.assertEqual(run.call_args.kwargs, {"input": b"data", "timeout": 30})
+        self.assertEqual(run.call_args.kwargs["input"], b"data")
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertIn("sc-plan-anchor", run.call_args.kwargs["env"]["PYTHONPATH"])
 
     def test_no_input_closes_stdin(self):
         with mock.patch("child_support.subprocess.run") as run:
             run_test_child(["child"])
-        self.assertEqual(run.call_args.kwargs, {"stdin": subprocess.DEVNULL, "timeout": HANG_GUARD_SECONDS})
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], HANG_GUARD_SECONDS)
+        self.assertIn("sc-plan-anchor", run.call_args.kwargs["env"]["PYTHONPATH"])
 
     def test_timeout_fails_with_the_original_cause(self):
         error = subprocess.TimeoutExpired(["child"], 30)

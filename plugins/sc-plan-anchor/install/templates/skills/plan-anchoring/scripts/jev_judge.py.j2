@@ -119,7 +119,6 @@ import asyncio
 import datetime as _dt
 import hashlib
 import json
-import math
 import os
 import pathlib
 import re
@@ -145,7 +144,6 @@ DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a plant
 DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
 DEFAULT_MIN_ITEM_CHARS = 2000      # below this the item is not shortened further on a context overflow
-PROBABILITY_ROUNDING = 0.01        # Jev rounds each probability; the sum may be off by this per option
 TRUNCATION_MARKER = "\n[... truncated by jev_judge; keep the state small ...]"
 HERE = pathlib.Path(__file__).resolve().parent
 QUESTIONS_DIR = HERE.parent / "assets" / "questions"
@@ -245,7 +243,7 @@ def redact_sensitive(value):
 
 
 def emit(obj, fmt: str = "json") -> None:
-    obj = redact_sensitive(obj)
+    obj = redact_sensitive(decidr_client._json_answers(obj))
     if fmt == "json":
         print(json.dumps(obj, indent=2, ensure_ascii=False))
     else:
@@ -316,7 +314,7 @@ def write_text_atomic(path: str, text: str) -> None:
 
 def save_json(path: str, obj: dict) -> None:
     """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout (REQ-017): no key or bearer token reaches a file."""
-    write_text_atomic(path, json.dumps(redact_sensitive(obj), indent=2, ensure_ascii=False) + "\n")
+    write_text_atomic(path, json.dumps(redact_sensitive(decidr_client._json_answers(obj)), indent=2, ensure_ascii=False) + "\n")
 
 
 def short_date(iso: str) -> str:
@@ -1710,11 +1708,6 @@ def merge_overrides(base: dict, override: dict) -> Result[dict, ClientError]:
     return Ok(merged)
 
 
-def questions_digest(questions: dict) -> str:
-    canonical = json.dumps(questions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
 def build_state(anchor: dict, item: dict) -> dict:
     return {
         "anchor": {
@@ -1730,39 +1723,18 @@ def build_state(anchor: dict, item: dict) -> dict:
     }
 
 
-def encode_body(body: dict) -> bytes:
-    return json.dumps(body, allow_nan=False).encode("utf-8")
-
-
-class _JevResponse(dict):
-    """A domain response carrying the wheel's observed send count."""
-
-    def __init__(self, response: dict, attempts):
-        super().__init__(response)
-        self.sc_agent_sends = attempts
-
-
-def _add_attempts(total, count):
-    return total + count if total is not None and count is not None else None
-
-
-def _total_attempts(counts):
-    total = 0
-    for count in counts:
-        total = _add_attempts(total, count)
-    return total
-
-
 def call_jev(body: dict, timeout: float) -> Result[dict, ClientError]:
     """Author the domain request; the generated client owns the wheel boundary."""
     record = decidr_client.call_result(
-        encode_body(body).decode("utf-8"), model=body["model"], project="plan-anchor", agent_role="judge",
+        body, model=body["model"], project="plan-anchor", agent_role="judge",
         abort_on=frozenset({"auth"}), keyring_service=CREDENTIAL_SERVICE,
         keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
+        consent_what="The anchor statement and the item text",
     )
     if not record["ok"]:
         return Err(record["error"])
-    return Ok(_JevResponse(record["value"], record["attempts"]))
+    return Ok({"model": record.get("model_answered"), "answers": record["value"],
+               "usage": record.get("usage"), "attempts": record.get("attempts")})
 
 
 def item_core(text: str) -> str:
@@ -1786,7 +1758,7 @@ def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: d
     A state without an item (dedupe, rubric) has nothing to shorten: over the cap it is refused outright.
     """
     item = body["state"].get("item")
-    size = len(encode_body(body))
+    size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
     while size > max_request_bytes:
         if item is None:
             exc = ClientError("JEV.CONTEXT_EXCEEDED", f"request is {size} bytes, over --max-request-bytes {max_request_bytes}, and has no item to shorten",
@@ -1802,7 +1774,7 @@ def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: d
             exc.data = dict(exc.data or {}, **meta)
             exc.attempts = meta.get("attempts", 0)
             return Err(exc)
-        size = len(encode_body(body))
+        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
     meta["request_bytes"] = size
     return Ok(None)
 
@@ -1819,12 +1791,14 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
         meta["item_chars_sent"] = len(item["text"]) if item else 0
         answered = call_jev(body, timeout)
         if isinstance(answered, Ok):
-            meta["attempts"] = _add_attempts(meta["attempts"], answered.value.sc_agent_sends)
-            answered = validate_response(answered.value, questions, optional)
-            if isinstance(answered, Ok):
-                return Ok((answered.value, meta))
+            sends = answered.value.get("attempts")
+            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+            return Ok((answered.value, meta))
         else:
-            meta["attempts"] = _add_attempts(meta["attempts"], answered.error.attempts)
+            sends = answered.error.attempts
+            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
             if answered.error.retry_after_ms is not None:
                 meta["retry_after_ms"] = answered.error.retry_after_ms
         exc = answered.error
@@ -1839,7 +1813,7 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
             return Err(final)
         if exc.code == "DECIDR.CONTEXT_EXCEEDED":
             if item is not None and halve_item(item, min_item_chars, meta):
-                meta["request_bytes"] = len(encode_body(body))
+                meta["request_bytes"] = len(json.dumps(body, allow_nan=False).encode("utf-8"))
                 continue
             final = ClientError("JEV.CONTEXT_EXCEEDED",
                                f"Jev rejected the request for context size with the item at {len(item['text']) if item else 0} chars "
@@ -1852,76 +1826,21 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
         return answered
 
 
-def is_probability(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
-
-
-def noul_probability(ans: dict):
-    for key in ("noul", "probability", "p"):
-        if key in ans:
-            return ans[key]
-    return None
-
-
-def answer_problem(ans, question) -> str:
-    """Why an answer cannot be gated, or None when it can (modelled on process-porn's validator, minus the model check)."""
-    if not isinstance(ans, dict):
-        return "answer is not an object"
-    kind = ans.get("type", "choice")
-    if kind == "noul":
-        if not is_probability(noul_probability(ans)):
-            return "noul probability is missing or not in [0, 1]"
-        return None
-    if kind != "choice":
-        return f"answer type {kind!r} is not choice or noul"
-    criteria = question.get("criteria") if isinstance(question, dict) else None
-    options = set(criteria) if isinstance(criteria, dict) else set()
-    if "choice" not in ans:
-        return "choice answer has no 'choice'"
-    if options and ans["choice"] not in options:
-        return f"choice {ans['choice']!r} is not one of {sorted(options)}"
-    if not is_probability(ans.get("confidence")):
-        return "confidence is missing or not in [0, 1]"
-    probs = ans.get("probabilities")
-    if not isinstance(probs, dict):
-        return "probabilities missing"
-    if options and set(probs) != options:
-        return "probability keys differ from the options"
-    if not all(is_probability(p) for p in probs.values()):
-        return "a probability is out of range"
-    total = sum(probs.values())
-    if abs(total - 1) > PROBABILITY_ROUNDING * max(len(probs), 1):
-        return f"probabilities sum to {total:.4f}"
-    return None
-
-
-def validate_response(resp: dict, questions: dict, optional=frozenset()) -> Result[dict, ClientError]:
-    """Every question must be answered except the ``optional`` (extra, never-gating) ones; no unknown ids."""
-    if not isinstance(resp, dict) or not isinstance(resp.get("answers"), dict):
-        return fail("JEV.RESPONSE_INVALID", "Jev response has no 'answers' object", retryable=True,
-                    action="Retry; if it repeats, check the --model name.")
-    answers = resp["answers"]
-    required = set(questions) - set(optional)
-    if not required <= set(answers) or not set(answers) <= set(questions):
-        missing, extra = sorted(required - set(answers)), sorted(set(answers) - set(questions))
-        return fail("JEV.RESPONSE_INVALID", f"Jev answer ids differ from the questions (missing {missing}, unexpected {extra})", retryable=True,
-                    action="Retry; if it repeats, check the question ids in the overrides.")
-    for qid, q in questions.items():
-        if qid not in answers:
-            continue  # an optional question left unanswered
-        problem = answer_problem(answers[qid], q)
-        if problem:
-            return fail("JEV.RESPONSE_INVALID", f"invalid answer for {qid}: {problem}", retryable=True,
-                        action="Retry; if it repeats, the question set or the model changed shape.")
-    return Ok(resp)
-
-
 def answer_choice(ans: dict) -> tuple:
-    """Return (choice, confidence) for a choice answer; tolerate noul answers."""
-    if ans.get("type") == "noul" or "noul" in ans:
-        p = float(noul_probability(ans) or 0.0)
+    """Return (choice, confidence) from the wheel's typed answer."""
+    if hasattr(ans, "noul"):
+        p = float(ans.noul)
         return ("yes" if p >= 0.5 else "no", abs(p - 0.5) * 2)
-    return (ans.get("choice", "unclear"), float(ans.get("confidence", 0.0)))
+    return (ans.choice, float(ans.confidence))
+
+
+def fixture_response(answers: dict, questions: dict) -> Result[dict, ClientError]:
+    """Parse controlled fixture answers through sc-decidr's typed response parser."""
+    job = decidr_client.BatchJob("fixture", None, "fixture", 1, "fixture", {}, questions, {}, "fixture")
+    try:
+        return Ok({**decidr_client._fixture_attempt(job, {"*": answers}, 1), "usage": {}})
+    except ClientError as exc:
+        return Err(exc)
 
 
 def role_answers(answers: dict, roles: dict) -> dict:
@@ -2093,7 +2012,7 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
     # The triage questions are asked in a second request, and only for a cell that failed, so the gate request (and so every
     # verdict) is exactly what it is without them. Questions from --extra-questions stay in the gate request.
     ctx["deferred_ids"] = set(ctx["extra_questions"][-1]["ids"]) if triage_default else set()
-    loaded = load_answers_fixture(getattr(args, "answers_file", ""), "anchor id")
+    loaded = answers_file(getattr(args, "answers_file", ""), "anchor id")
     if isinstance(loaded, Err):
         return loaded
     ctx["answers_fixture"] = loaded.value
@@ -2108,9 +2027,10 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
         return fail("INPUT.MALFORMED", "overrides file must be an object keyed by anchor id")
     ctx["live"] = not ctx["dry_run"] and ctx["answers_fixture"] is None
     if ctx["live"] and remote:
-        cleared = remote_preflight(args, "The anchor statement and the item text")
-        if isinstance(cleared, Err):
-            return cleared
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."), "The anchor statement and the item text")
+        except ClientError as error:
+            return Err(error)
     return Ok(ctx)
 
 
@@ -2119,69 +2039,14 @@ def confirm_enabled(args) -> bool:
     return not getattr(args, "no_confirm", False)
 
 
-REMOTE_JUDGE_SETTING = ".sc/plan-anchor/settings.yaml"
-REPO_ROOT_HELP = ("any path inside the repository; the nearest .sc/plan-anchor/settings.yaml at or above it holds "
-                  "allow_remote_judge (read for live Jev calls only; default .)")
-REMOTE_JUDGE_SET = "python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false"
-
-
-def remote_judge_consent(args, what: str) -> Result[None, ClientError]:
-    """The repository's committed answer to whether plan text may go to TypeSafe: ``allow_remote_judge`` in
-    .sc/plan-anchor/settings.yaml. Only ``true`` passes; ``false`` and an absent answer refuse.
-
-    The settings module (and PyYAML behind it) is imported only here, so only a live call needs it.
-    """
-    import plan_anchor_settings as settings  # lazy: dry runs and fixture answers stay stdlib-only
-
-    start = pathlib.Path(getattr(args, "repository_root", "") or ".")
-    root = settings.find_repo_root(start)  # consent is a repository's answer: outside one there is none
-    if not root.ok:
-        return Err(_from_tool_error(root.error))
-    # The nearest settings file at or above the given path wins (REQ-070), not the one at the git top level:
-    # an install in a folder inside the repository writes its settings there.
-    answer = settings.remote_judge_consent(start.resolve())
-    if answer.ok and answer.value is True:
-        return Ok(None)
-    disabled = f"Sending plan text to TypeSafe is disabled. {what} would leave this machine."
-    if answer.ok:  # False: the user said no
-        return fail("POLICY.REMOTE_JUDGE_DISABLED",
-                    f"{disabled} {REMOTE_JUDGE_SETTING} sets allow_remote_judge: false.",
-                    action="The user declined remote judging; only the user changes it (`python3 scripts/plan_anchor_settings.py "
-                           "set allow_remote_judge true`, then commit). Use --dry-run to inspect the request instead.")
-    if answer.error.code == "SETTINGS.REMOTE_JUDGE_UNSET":
-        return fail("POLICY.REMOTE_JUDGE_DISABLED",
-                    f"{disabled} {REMOTE_JUDGE_SETTING} does not set allow_remote_judge.",
-                    action="Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer "
-                           f"with `{REMOTE_JUDGE_SET}`, and commit {REMOTE_JUDGE_SETTING}. Never infer consent from "
-                           "existing run files or past runs. Use --dry-run to inspect the request instead.")
-    return Err(_from_tool_error(answer.error))  # DEPENDENCY.PYYAML, SETTINGS.*: never a silent default
-
-
-def _from_tool_error(error) -> ClientError:
-    out = ClientError(error.code, error.message, action=error.action or "")
-    out.data = dict(error.data) if error.data is not None else None
-    return out
-
-
-def remote_preflight(args, what: str) -> Result[None, ClientError]:
-    """Check consent before a live call; sc-decidr resolves credentials and refuses before sending if absent."""
-    consent = remote_judge_consent(args, what)
-    if isinstance(consent, Err):
-        return consent
-    return Ok(None)
-
-
-def load_answers_fixture(path: str, keyed_by: str) -> Result[Any, ClientError]:
-    """A fixture of Jev answers keyed by id (or '*'); Ok(None) when no path is given."""
-    if not path:
-        return Ok(None)
-    loaded = load_json(path, "answers fixture")
-    if isinstance(loaded, Err):
-        return loaded
-    fixture = loaded.value
-    if not isinstance(fixture, dict):
-        return fail("INPUT.MALFORMED", f"answers fixture must be an object keyed by {keyed_by} (or '*')")
-    return Ok(fixture)
+def answers_file(path: str, keyed_by: str) -> Result[Any, ClientError]:
+    """Use the shared fixture loader and preserve this consumer's Result return convention."""
+    try:
+        return Ok(decidr_client.load_answers_fixture(path, keyed_by, load_json))
+    except decidr_client.BatchInputError as exc:
+        return Err(exc.error)
+    except ClientError as exc:
+        return Err(exc)
 
 
 def load_simple_question_set(name: str, required: tuple) -> Result[dict, ClientError]:
@@ -2212,10 +2077,10 @@ def ask_jev_once(args, body: dict, questions: dict, fixture, fixture_keys: tuple
         if fx is None:
             return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_keys[0]} (or '*')",
                         action=f"Add an entry for {fixture_keys[0]} (or '*') to the answers file.")
-        checked = validate_response({"model": "fixture", "answers": fx}, questions)
-        if isinstance(checked, Err):
-            return checked
-        return Ok((checked.value, {"attempts": 1}))
+        parsed = fixture_response(fx, questions)
+        if isinstance(parsed, Err):
+            return parsed
+        return Ok((parsed.value, {"attempts": 1}))
     return judge_with_policy(body, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
 
 
@@ -2256,11 +2121,14 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
         meta["attempts"] = 1
         sent = body["questions"]
         left_out = set(qs["questions"]) - set(sent)  # extra questions dropped from this request for size
-        checked = validate_response({"model": "fixture", "answers": {k: v for k, v in fx.items() if k not in left_out}}, sent,
-                                    qs.get("optional") or ())
-        if isinstance(checked, Err):
-            return checked
-        return Ok((checked.value, meta))
+        fixture_answers = {k: v for k, v in fx.items() if k not in left_out}
+        required = set((qs.get("roles") or {}).values())
+        fixture_questions = {k: v for k, v in qs["questions"].items()
+                             if k not in left_out and (k in required or k in fixture_answers)}
+        parsed = fixture_response(fixture_answers, fixture_questions)
+        if isinstance(parsed, Err):
+            return parsed
+        return Ok((parsed.value, meta))
     return judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
                              shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
 
@@ -2299,7 +2167,7 @@ def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_
         entry["triage_questions"] = [k for k in asked if k in entry["answers"]]
         return Ok(0)
     body = {"model": ctx["model"], "state": build_state(a, item), "questions": asked}
-    if len(encode_body(body)) > ctx["max_request_bytes"]:
+    if len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
         entry["extra_questions_dropped"] = sorted(set(entry.get("extra_questions_dropped") or ()) | deferred)
         return Ok(0)
     got = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
@@ -2327,7 +2195,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         body = {"model": ctx["model"], "state": build_state(a, item),
                 "questions": {k: v for k, v in qs["questions"].items() if k not in deferred}}
         dropped = []
-        if (set(qs.get("optional") or ()) - deferred) and len(encode_body(body)) > ctx["max_request_bytes"]:
+        if (set(qs.get("optional") or ()) - deferred) and len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
             # extra questions never cost a verdict: over the size cap they are left out of this request, not the item
             dropped = sorted(set(qs["optional"]) - deferred)
             body["questions"] = {k: v for k, v in body["questions"].items() if k not in dropped}
@@ -2335,10 +2203,10 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
             # the gate questions' digest: extra questions never change it (they get their own)
-            "questions_sha256": questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
+            "questions_sha256": decidr_client.questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
         })
         if qs.get("optional"):
-            entry["extra_questions_sha256"] = questions_digest({k: qs["questions"][k] for k in qs["optional"]})
+            entry["extra_questions_sha256"] = decidr_client.questions_digest({k: qs["questions"][k] for k in qs["optional"]})
         if overridden:
             entry["questions"] = qs["questions"]
         if dropped:
@@ -2375,7 +2243,9 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                                            shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
-                    meta["attempts"] = _add_attempts(meta["attempts"], meta2.get("attempts"))
+                    sends = meta2.get("attempts")
+                    meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     verdict2, min_conf2 = decide(resp2["answers"], qs["roles"], ctx["threshold"], entry["kind"])
                     if verdict2 == verdict:
                         entry["confirmed"] = True
@@ -2386,7 +2256,9 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                     exc2 = second.error
                     if exc2.code in ABORT_CODES:
                         return second
-                    meta["attempts"] = _add_attempts(meta["attempts"], exc2.attempts)
+                    sends = exc2.attempts
+                    meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     entry["confirm_error"] = exc2.to_json()["error"]
             entry.update({"verdict": verdict, "answers": resp["answers"], "min_confidence": round(min_conf, 3),
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
@@ -2462,7 +2334,7 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
     }
     if ctx["dry_run"]:
         run["requests"] = requests_out
-        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out),
+        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out),
                          "max_request_bytes": ctx["max_request_bytes"]}
     return run
 
@@ -2542,7 +2414,7 @@ def cmd_judge(args) -> Result[dict, ClientError]:
             trial = dict(item, text=text)
             for a, qs, _ in prepared:
                 gate_questions = {k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}
-                size = len(encode_body({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}))
+                size = len(json.dumps({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}, allow_nan=False).encode("utf-8"))
                 if size > ctx["max_request_bytes"]:
                     return f"with {a['id']} and its questions the request is {size} bytes, over --max-request-bytes {ctx['max_request_bytes']}"
             return None
@@ -2634,7 +2506,7 @@ def cmd_check_fixtures(args) -> Result[dict, ClientError]:
         return jev_failure("fixture checks", failures, len(checks), data)
     if ctx["dry_run"]:
         data["requests"] = [b for r in runs for b in r.get("requests", [])]
-        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(encode_body(b)) for b in data["requests"]),
+        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in data["requests"]),
                           "max_request_bytes": ctx["max_request_bytes"]}
     return Ok({"success": True, "data": data, "error": None})
 
@@ -2722,6 +2594,14 @@ def check_threshold(value: float, name: str = "--threshold") -> Result[float, Cl
     return Ok(value)
 
 
+def batch_request_cap(gate: str, requested: Optional[int]) -> Result[int, ClientError]:
+    if requested is None:
+        return Ok(DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        return fail("VALIDATION.INPUT", "--max-request-bytes must be a positive integer")
+    return Ok(requested)
+
+
 def cmd_dedupe(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
@@ -2741,7 +2621,7 @@ def cmd_dedupe(args) -> Result[dict, ClientError]:
             if score >= threshold:
                 pairs.append({"a": a.get("id"), "b": b.get("id"), "jaccard": round(score, 3), "field_a": fa, "field_b": fb})
     pairs.sort(key=lambda p: (-p["jaccard"], str(p["a"]), str(p["b"])))
-    loaded = load_answers_fixture(args.answers_file, "'<a>|<b>'")
+    loaded = answers_file(args.answers_file, "'<a>|<b>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -2756,9 +2636,10 @@ def cmd_dedupe(args) -> Result[dict, ClientError]:
         qs = loaded.value
 
         if pairs and not dry_run and fixture is None:
-            cleared = remote_preflight(args, "The anchor statements")
-            if isinstance(cleared, Err):
-                return cleared
+            try:
+                decidr_client.remote_preflight(getattr(args, "repository_root", "."), "The anchor statements")
+            except ClientError as error:
+                return Err(error)
 
         by_id = {a.get("id"): a for a in anchors}
         requests_out, failures = [], []
@@ -2788,7 +2669,7 @@ def cmd_dedupe(args) -> Result[dict, ClientError]:
                 failures.append((f"{pair['a']}|{pair['b']}", exc))
         if dry_run:
             data["requests"] = requests_out
-            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
             data["likely_duplicates"] = [p for p in pairs if p["jaccard"] >= LIKELY_DUPLICATE_JACCARD]
         else:
             data["likely_duplicates"] = [p for p in pairs if p.get("jev") and p["jev"].get("choice") == "yes" and (p["jev"].get("confidence") or 0.0) >= DEFAULT_THRESHOLD]
@@ -2891,7 +2772,7 @@ def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: d
             return fail("FIXTURE.MISSING", f"answers fixture has no confirmation {index + 1} for {keys[0]}",
                         action=f"Give {keys[0]} one answer object per confirmation in the answers file.")
         value = value[index]
-    return validate_response({"model": "fixture", "answers": value}, questions)
+    return fixture_response(value, questions)
 
 
 def _rubric_ask(args, body: dict, qs: dict, fixture, cid, index: int) -> Result[tuple, ClientError]:
@@ -2914,7 +2795,9 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts = _add_attempts(attempts, meta.get("attempts"))
+        sends = meta.get("attempts")
+        attempts = (None if attempts is None or sends is None else
+                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
     first_choices = [answer_choice(responses[0]["answers"][qid])[0] for qid in qs["questions"]]
     second_choices = [answer_choice(responses[1]["answers"][qid])[0] for qid in qs["questions"]]
     if first_choices != second_choices:
@@ -2923,7 +2806,9 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts = _add_attempts(attempts, meta.get("attempts"))
+        sends = meta.get("attempts")
+        attempts = (None if attempts is None or sends is None else
+                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
     outcome = rubric_confirmation_outcome(responses, tuple(qs["questions"]), threshold, lint_errors)
     if isinstance(outcome, Err):
         return outcome
@@ -2946,7 +2831,7 @@ def load_rubric_inputs(args) -> Result[tuple, ClientError]:
 
     root = settings.find_repo_root(pathlib.Path(getattr(args, "repository_root", ".")))
     if isinstance(root, Err):
-        return Err(_from_tool_error(root.error))
+        return Err(decidr_client.from_tool_error(root.error))
 
     def reject_constant(value):
         raise ValueError(f"non-finite number {value}")
@@ -2983,7 +2868,7 @@ def load_rubric_inputs(args) -> Result[tuple, ClientError]:
             return fail("RUBRIC.QUESTIONS", "sealed rubric requires exactly questions and digest")
         checked = validate_questions("testability", sealed)
         if isinstance(checked, Err):
-            return Err(_from_tool_error(checked.error))
+            return Err(decidr_client.from_tool_error(checked.error))
         for question in sealed["questions"].values():
             if (not isinstance(question, dict) or set(question) != {"type", "instructions", "criteria"}
                     or question["type"] != "choice" or not isinstance(question["instructions"], str)
@@ -2998,7 +2883,7 @@ def load_rubric_inputs(args) -> Result[tuple, ClientError]:
             return loaded
         checked = validate_intent_descriptor(loaded.value)
         if isinstance(checked, Err):
-            return Err(_from_tool_error(checked.error))
+            return Err(decidr_client.from_tool_error(checked.error))
         intent = loaded.value
     return Ok((qs, intent, True))
 
@@ -3028,9 +2913,11 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
         bodies.append(body)
 
     if candidates and not dry_run and fixture is None:
-        cleared = remote_preflight(args, what + (" and the explicitly selected approved intent" if intent is not None else ""))
-        if isinstance(cleared, Err):
-            return cleared
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                           what + (" and the explicitly selected approved intent" if intent is not None else ""))
+        except ClientError as error:
+            return Err(error)
 
     entries, requests_out, failures = [], [], []
     for c, body in zip(candidates, bodies):
@@ -3039,8 +2926,8 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
         entry = {"id": c["id"], "statement": c["statement"], "quote": c["quote"], "scope": c.get("scope") or "",
                  "verdict": None, "failing": list(lint_errors), "answers": None, "lint": {"warnings": warnings, "errors": lint_errors}}
         if explicit_inputs:
-            entry["inputs"] = {"question_seal": questions_digest({"questions": qs["questions"]}),
-                               "request_sha256": questions_digest(body)}
+            entry["inputs"] = {"question_seal": decidr_client.questions_digest({"questions": qs["questions"]}),
+                               "request_sha256": decidr_client.questions_digest(body)}
             if intent is not None:
                 entry["inputs"]["intent"] = {key: intent[key] for key in ("id", "version", "sha256")}
         if dry_run:
@@ -3082,7 +2969,7 @@ def cmd_rubric(args) -> Result[dict, ClientError]:
     if isinstance(checked, Err):
         return checked
     threshold = checked.value
-    loaded = load_answers_fixture(args.answers_file, "anchor id (or 'candidate')")
+    loaded = answers_file(args.answers_file, "anchor id (or 'candidate')")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -3121,7 +3008,7 @@ def cmd_rubric(args) -> Result[dict, ClientError]:
             "pass": bool(entries) and all(e["verdict"] == "testable" for e in entries) and not dry_run}
     if dry_run:
         data["requests"] = requests_out
-        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
     return Ok({"success": True, "data": data, "error": None})
 
 
@@ -3132,7 +3019,7 @@ def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Resul
     --allow-untestable was given, else None. Err when the rubric could not run (a Jev failure or a missing
     answers entry): exit 2 and nothing is recorded, --allow-untestable or not.
     """
-    loaded = load_answers_fixture(getattr(args, "answers_file", ""), "'candidate'")
+    loaded = answers_file(getattr(args, "answers_file", ""), "'candidate'")
     if isinstance(loaded, Err):
         return loaded
     candidate = {"id": "candidate", "statement": statement, "quote": quote, "scope": args.scope or "", "source_type": source_type}
@@ -3167,9 +3054,10 @@ def triage_lines(r: dict) -> list:
     verdict; they are what triage/rules.json routes on, so the reader sees why a cell goes to exclude, plan, question or human."""
     lines = []
     answers = r.get("answers") or {}
+    answers = {qid: decidr_client._typed_answer(answer) for qid, answer in answers.items()}
     shown = []
     for qid in r.get("triage_questions") or []:
-        if isinstance(answers.get(qid), dict):
+        if qid in answers:
             choice, conf = answer_choice(answers[qid])
             shown.append(f"`{qid}` {choice} ({conf:.2f})")
     if shown:
@@ -3431,60 +3319,26 @@ def cmd_diff(args) -> Result[dict, ClientError]:
 # --------------------------------------------------------------------------- #
 # batch (low layer, tracker-neutral): request lines in, one result line per (item, candidate, repeat) out
 # --------------------------------------------------------------------------- #
-BATCH_RESULT_SCHEMA = "plan-anchor/jev-batch-result/1"
-BATCH_MAX_WORKERS = 4              # parallel Jev evaluators; the anchor-tuning protocol's cap
-BATCH_FIXTURE_ERROR = "__error__"  # an answers-file value {"__error__": "<code>"} simulates a failed call
-BATCH_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 QUESTION_BEAD_KEYS = {"plan": "plan_questions", "dev": "dev_questions"}
 JSON_FENCE_RE = re.compile(r"```json[ \t]*\r?\n(.*?)\r?\n```", re.DOTALL)
 
 
-class BatchSettings(NamedTuple):
-    gate: str              # plan | dev: the default roles when a candidate carries none
-    model: str
-    repeat: int
-    prefix: str            # request ids are <prefix>/<item>/<anchor>/<candidate>/r<n>
-    threshold: float       # the line's verdict; leaning is the same answers at threshold 0
-    timeout: float
-    max_workers: int
-    max_request_bytes: int
-    dry_run: bool
 
 
-class BatchJob(NamedTuple):
-    item_id: str
-    anchor_id: str
-    candidate_id: str
-    repeat: int
-    request_id: str
-    body: dict
-    questions: dict
-    roles: dict
-    kind: str
 
 
 def canonical_digest(value) -> str:
     """SHA-256 of canonical JSON (sorted keys, no spaces): the digest every contract in this skill uses."""
-    return questions_digest(value)
+    return decidr_client.questions_digest(value)
 
 
-def batch_request_id(prefix: str, item_id: str, anchor_id: str, candidate_id: str, repeat: int) -> str:
-    return f"{prefix}/{item_id}/{anchor_id}/{candidate_id}/r{repeat}"
 
 
-def batch_run_id(request_id: str) -> str:
-    """Deterministic run id: the first 16 hex digits of SHA-256 over the request id."""
-    return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
 
 
-def _safe_id(value, what: str) -> Result[str, ClientError]:
-    if not isinstance(value, str) or not BATCH_ID_RE.match(value):
-        return fail("VALIDATION.INPUT", f"{what} {value!r} is not a safe id (letters, digits and _.:- only)",
-                    action="See assets/schemas/jev-batch-request.schema.json.")
-    return Ok(value)
 
 
-def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> Result[list, ClientError]:
+def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_roles: dict) -> Result[list, ClientError]:
     """One request line -> its jobs (candidates x repeats, in order). Refuses a malformed line or an oversized request before any call."""
     where = f"request line {number}"
     if not isinstance(line, dict) or set(line) - {"item", "anchor", "questions"}:
@@ -3493,14 +3347,16 @@ def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> 
     item, anchor_rec, candidates = line.get("item"), line.get("anchor"), line.get("questions")
     if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
         return fail("VALIDATION.INPUT", f"{where}: item needs id and non-empty text")
-    checked = _safe_id(item.get("id"), f"{where}: item id")
-    if isinstance(checked, Err):
-        return checked
+    try:
+        item_id = decidr_client._safe_id(item.get("id"), f"{where}: item id")
+    except ClientError as error:
+        return Err(error)
     if not isinstance(anchor_rec, dict) or not isinstance(anchor_rec.get("statement"), str) or not anchor_rec["statement"].strip():
         return fail("VALIDATION.INPUT", f"{where}: anchor needs id and statement")
-    checked = _safe_id(anchor_rec.get("id"), f"{where}: anchor id")
-    if isinstance(checked, Err):
-        return checked
+    try:
+        anchor_id = decidr_client._safe_id(anchor_rec.get("id"), f"{where}: anchor id")
+    except ClientError as error:
+        return Err(error)
     if not isinstance(candidates, list) or not candidates:
         return fail("VALIDATION.INPUT", f"{where}: questions must be a non-empty array of candidates")
     jobs, seen = [], set()
@@ -3509,124 +3365,66 @@ def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> 
     for cand in candidates:
         if not isinstance(cand, dict):
             return fail("VALIDATION.INPUT", f"{where}: every candidate is an object with candidate_id, questions and optional roles")
-        cid = _safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
-        if isinstance(cid, Err):
-            return cid
-        if cid.value in seen:
-            return fail("VALIDATION.INPUT", f"{where}: candidate {cid.value} is listed twice", action="Use --repeat for repeats.")
-        seen.add(cid.value)
+        try:
+            cid = decidr_client._safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
+        except ClientError as error:
+            return Err(error)
+        if cid in seen:
+            return fail("VALIDATION.INPUT", f"{where}: candidate {cid} is listed twice", action="Use --repeat for repeats.")
+        seen.add(cid)
         qs = {"questions": cand.get("questions"), "roles": cand.get("roles") or base_roles}
-        checked = check_roles(qs, f"{where}: candidate {cid.value}")
+        checked = check_roles(qs, f"{where}: candidate {cid}")
         if isinstance(checked, Err):
             return checked
         body = {"model": settings.model, "state": state, "questions": qs["questions"]}
-        size = len(encode_body(body))
+        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
         if size > settings.max_request_bytes:
-            return fail("JEV.CONTEXT_EXCEEDED", f"{where}: the request for {item['id']}/{cid.value} is {size} bytes, over --max-request-bytes {settings.max_request_bytes}",
+            return fail("JEV.CONTEXT_EXCEEDED", f"{where}: the request for {item['id']}/{cid} is {size} bytes, over --max-request-bytes {settings.max_request_bytes}",
                         action="Shorten the item (see references/plan-size-and-shape.md); never raise the cap to make it fit.")
         for r in range(1, settings.repeat + 1):
-            rid = batch_request_id(settings.prefix, item["id"], anchor_rec["id"], cid.value, r)
-            jobs.append(BatchJob(item["id"], anchor_rec["id"], cid.value, r, rid, body, qs["questions"], qs["roles"], kind))
+            rid = decidr_client.batch_request_id(settings.prefix, item_id, anchor_id, cid, r)
+            jobs.append(decidr_client.BatchJob(item_id, anchor_id, cid, r, rid, body, qs["questions"], qs["roles"], kind))
     return Ok(jobs)
 
 
-def _fixture_attempt(job: BatchJob, fixture: dict) -> Result[dict, ClientError]:
-    keys = (f"{job.item_id}/{job.candidate_id}/r{job.repeat}", f"{job.item_id}/{job.candidate_id}", job.candidate_id, "*")
-    entry = next((fixture[k] for k in keys if k in fixture), None)
-    if entry is None:
-        return fail("FIXTURE.MISSING", f"answers fixture has no entry for {keys[0]} (or {keys[1]}, {keys[2]}, '*')",
-                    action=f"Add an entry for {keys[0]} to the answers file.")
-    if isinstance(entry, list):
-        if not entry:
-            return fail("FIXTURE.MISSING", f"answers fixture entry for {keys[0]} is an empty list")
-        entry = entry[0]
-    if isinstance(entry, dict) and BATCH_FIXTURE_ERROR in entry:
-        code = str(entry[BATCH_FIXTURE_ERROR])
-        return fail(code, f"fixture failure {code}", retryable=False)
-    return Ok({"model": "fixture", "answers": entry})
 
 
-def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dry_run: bool,
-          wheel_attempts: Optional[int] = None) -> dict:
-    verdict = min_conf = leaning = None
-    if raw is not None:
-        verdict, min_conf = decide(raw["answers"], job.roles, settings.threshold, job.kind)
-        leaning = decide(raw["answers"], job.roles, 0.0, job.kind)[0]
-    count = wheel_attempts if wheel_attempts is not None else (
-        None if any(attempt.get("attempt") is None for attempt in attempts) else len(attempts))
-    return redact_sensitive({
-        "schema": BATCH_RESULT_SCHEMA, "request_id": job.request_id, "run_id": batch_run_id(job.request_id),
-        "item_id": job.item_id, "anchor_id": job.anchor_id, "candidate_id": job.candidate_id, "repeat": job.repeat,
-        "request_sha256": hashlib.sha256(encode_body(job.body)).hexdigest(), "questions_sha256": questions_digest(job.questions),
-        "request": job.body, "roles": job.roles, "kind": job.kind, "dry_run": dry_run, "ok": raw is not None,
-        "raw_response": raw, "answers": raw["answers"] if raw is not None else None,
-        "model_answered": raw.get("model") if raw is not None else None,
-        "threshold": settings.threshold, "verdict": verdict, "min_confidence": min_conf, "leaning": leaning,
-        "retry_count": max(count - 1, 0) if count is not None else None, "attempts": attempts,
-        "error": None if error is None else {"code": error.code, "message": error.message, "recoverable": error.retryable},
-    })
 
 
-def run_batch_job(job: BatchJob, settings: BatchSettings, fixture) -> dict:
+def run_batch_job(job: decidr_client.BatchJob, settings: decidr_client.BatchSettings, fixture) -> dict:
     """Run one controlled fixture or dry-run job; live batches use the wheel."""
     if settings.dry_run:
-        return _line(job, settings, None, [], None, True)
+        return decidr_client._line(job, settings, None, [], None, True)
     if fixture is None:
-        raise BatchInputError(fail("VALIDATION.INPUT", "run_batch_job requires fixture answers; use pump_batch for live calls").error)
-    got = _fixture_attempt(job, fixture)
-    if isinstance(got, Ok):
-        got = validate_response(got.value, job.questions)
-    if isinstance(got, Ok):
-        attempts, wheel_attempts = [{"attempt": 1, "ok": True}], 1
-        raw, error = got.value, None
-    else:
-        error = got.error
-        wheel_attempts = 1
-        attempts = [{"attempt": wheel_attempts, "ok": False,
-                     "error": {"code": error.code, "message": error.message, "recoverable": error.retryable}}]
-        raw = None
-    return _line(job, settings, raw, attempts, error, False, wheel_attempts)
+        error = ClientError("VALIDATION.INPUT", "run_batch_job requires fixture answers; live calls use call_batch_results")
+        return decidr_client._line(job, settings, None, [], error, False, result_fields=batch_result_fields,
+                                   error_message_limit=900)
+    try:
+        raw = decidr_client._fixture_attempt(job, fixture, 1)
+    except ClientError as error:
+        attempts = [{"attempt": 1, "ok": False,
+                     "error": {"code": error.code, "message": error.message,
+                               "recoverable": getattr(error, "recoverable", error.retryable)}}]
+        return decidr_client._line(job, settings, None, attempts, error, False, result_fields=batch_result_fields,
+                                   error_message_limit=900)
+    attempts = [{"attempt": 1, "ok": True}]
+    return decidr_client._line(job, settings, raw, attempts, None, False, result_fields=batch_result_fields,
+                               error_message_limit=900)
 
 
-async def _aiter(source):
-    if hasattr(source, "__aiter__"):
-        async for value in source:
-            yield value
-    else:
-        for value in source:
-            yield value
+def batch_result_fields(job, settings, raw) -> dict:
+    if raw is None:
+        return {}
+    answers = raw["answers"]
+    verdict, min_confidence = decide(answers, job.roles, settings.threshold, job.kind)
+    return {"verdict": verdict, "min_confidence": round(min_confidence, 3),
+            "leaning": leaning_of(answers, job.roles, job.kind)}
 
 
-class BatchInputError(Exception):
-    """A request line the async API cannot judge; carries the typed ClientError. The CLI validates every line first, so it never sees one."""
-
-    def __init__(self, error: ClientError):
-        super().__init__(error.message)
-        self.error = error
 
 
-async def stream_batch(source, settings: BatchSettings, fixture=None):
-    """Yield fixture/dry-run results in request order; live batches use pump_batch.
 
-    Raises BatchInputError for live use or an invalid request line. An auth
-    failure is yielded once and stops consumption before any later job runs.
-    """
-    if fixture is None and not settings.dry_run:
-        raise BatchInputError(fail("VALIDATION.INPUT", "stream_batch supports fixtures and dry runs only; use pump_batch for live calls").error)
-    base = load_question_set(settings.gate)
-    if isinstance(base, Err):
-        raise BatchInputError(base.error)
-    number = 0
-    async for line in _aiter(source):
-        number += 1
-        jobs = batch_jobs(line, number, settings, base.value["roles"])
-        if isinstance(jobs, Err):
-            raise BatchInputError(jobs.error)
-        for job in jobs.value:
-            result = run_batch_job(job, settings, fixture)
-            yield result
-            if result["error"] is not None and result["error"]["code"] == "AUTH.CREDENTIALS":
-                return
+
 
 
 def read_request_lines(path: str) -> Result[list, ClientError]:
@@ -3671,30 +3469,17 @@ def read_batch_results(path: str) -> Result[list, ClientError]:
             line = json.loads(raw)
         except json.JSONDecodeError as exc:
             return fail("INPUT.MALFORMED", f"result stream line {n} is not JSON: {exc}")
-        if not isinstance(line, dict) or line.get("schema") != BATCH_RESULT_SCHEMA:
-            return fail("INPUT.MALFORMED", f"result stream line {n} is not a {BATCH_RESULT_SCHEMA} record")
+        if not isinstance(line, dict) or line.get("schema") != decidr_client.BATCH_RESULT_SCHEMA:
+            return fail("INPUT.MALFORMED", f"result stream line {n} is not a {decidr_client.BATCH_RESULT_SCHEMA} record")
         lines.append(line)
     return Ok(lines)
 
 
-def write_stdout_line(text: str) -> None:
-    """One JSONL line to stdout, byte for byte as written to the log: through the binary buffer, because a text-mode
-    stdout on Windows turns "\n" into "\r\n". A stream without a buffer (a test's StringIO) gets the text."""
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-        return
-    sys.stdout.flush()
-    buffer.write(text.encode("utf-8"))
-    buffer.flush()
 
 
-def encode_result_line(line: dict) -> str:
-    return json.dumps(line, ensure_ascii=False) + "\n"  # key order kept: request_sha256 hashes the request as sent
 
 
-def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, ClientError]:
+def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, ClientError]:
     """Validate and persist domain results; the generated client streams wheel records."""
     base = load_question_set(settings.gate)
     if isinstance(base, Err):
@@ -3711,121 +3496,73 @@ def _live_batch_results(lines: list, settings: BatchSettings, log_path: pathlib.
         position = record["position"]
         job = jobs[position]
         wheel_attempts = record["attempts"]
-        checked = validate_response(record["value"], job.questions) if record["ok"] else Err(record["error"])
-        if isinstance(checked, Ok):
+        if record["ok"]:
             attempts = [{"attempt": wheel_attempts, "ok": True}]
-            line = _line(job, settings, checked.value, attempts, None, False, wheel_attempts)
+            line = decidr_client._line(job, settings, record, attempts, None, False,
+                                       result_fields=batch_result_fields, error_message_limit=900)
         else:
-            error = checked.error
+            error = record["error"]
             attempts = [{"attempt": wheel_attempts, "ok": False,
-                         "error": {"code": error.code, "message": error.message, "recoverable": error.retryable}}]
-            line = _line(job, settings, None, attempts, error, False, wheel_attempts)
+                         "error": {"code": error.code, "message": error.message,
+                                   "recoverable": getattr(error, "recoverable", error.retryable)}}]
+            line = decidr_client._line(job, settings, None, attempts, error, False,
+                                       result_fields=batch_result_fields, error_message_limit=900)
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(log_path, "a", encoding="utf-8", newline="\n") as log:
-                text = encode_result_line(line)
+                text = decidr_client.encode_result_line(line, redact=redact_sensitive)
                 log.write(text)
                 log.flush()
                 if echo:
-                    write_stdout_line(text)
+                    decidr_client.write_stdout_line(text)
         except OSError as exc:
-            raise BatchInputError(fail("SCRIPT.IO", f"batch result log could not be written: {exc}",
+            raise decidr_client.BatchInputError(fail("SCRIPT.IO", f"batch result log could not be written: {exc}",
                                        action="Check the run directory is writable.").error) from exc
         completed[position] = line
 
     try:
         result = decidr_client.call_batch_results(
-            [encode_body(job.body).decode("utf-8") for job in jobs],
+            [job.body for job in jobs],
             model=settings.model, project="plan-anchor", agent_role="tournament",
             abort_on=frozenset({"auth"}), keyring_service=CREDENTIAL_SERVICE,
             keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=settings.timeout,
             workers=settings.max_workers, on_result=persist,
+            consent_what="The anchor statements, scopes and item texts in the request stream",
         )
-    except BatchInputError as exc:
+    except decidr_client.BatchInputError as exc:
         return Err(exc.error)
     if not result["ok"]:
         return Err(result["error"])
     return Ok([completed[record["position"]] for record in result["value"]])
 
 
-def batch_settings(args, prefix: str) -> Result[BatchSettings, ClientError]:
-    if getattr(args, "repeat", 1) < 1:
-        return fail("VALIDATION.INPUT", "--repeat must be at least 1")
-    if not 1 <= args.max_workers <= BATCH_MAX_WORKERS:
-        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {BATCH_MAX_WORKERS}")
-    if not prefix.strip() or any(c.isspace() for c in prefix):
-        return fail("VALIDATION.INPUT", "--request-prefix must be non-empty and contain no whitespace")
-    threshold = check_threshold(getattr(args, "threshold", DEFAULT_THRESHOLD))
-    if isinstance(threshold, Err):
-        return threshold
-    gate = getattr(args, "gate", "plan")
-    cap = getattr(args, "max_request_bytes", None) or (DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
-    return Ok(BatchSettings(gate, args.model, getattr(args, "repeat", 1), prefix, threshold.value, args.timeout,
-                            args.max_workers, cap, bool(args.dry_run)))
 
 
 def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, ClientError]:
     name = run_name or stamp()
-    checked = _safe_id(name, "--run-name")
-    if isinstance(checked, Err):
-        return checked
-    return Ok(pathlib.Path(run_dir) / f"tournament-{name}.jsonl")
-
-
-def pump_batch(lines: list, settings: BatchSettings, fixture, log_path: pathlib.Path, echo: bool) -> Result[list, ClientError]:
-    """Run the low layer over validated request lines; tee every result line, unchanged, to stdout (when ``echo``)
-    and to the append-only log, flushing both after every line so a crash keeps the evidence."""
-    if fixture is None and not settings.dry_run:
-        return _live_batch_results(lines, settings, log_path, echo)
-
-    async def drive() -> list:
-        out = []
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8", newline="\n") as log:
-            async for line in stream_batch(lines, settings, fixture):
-                text = encode_result_line(line)
-                log.write(text)
-                log.flush()
-                if echo:
-                    write_stdout_line(text)
-                out.append(line)
-        return out
-
     try:
-        return Ok(asyncio.run(drive()))
-    except BatchInputError as exc:
-        return Err(exc.error)
+        checked = decidr_client._safe_id(name, "--run-name")
+    except ClientError as error:
+        return Err(error)
+    return Ok(pathlib.Path(run_dir) / f"tournament-{checked}.jsonl")
 
 
-def validate_request_lines(lines: list, settings: BatchSettings) -> Result[int, ClientError]:
-    """Every line checked before any call: a bad line late in the stream never leaves earlier requests half-sent."""
-    base = load_question_set(settings.gate)
-    if isinstance(base, Err):
-        return base
-    total, keys = 0, set()
-    for number, line in enumerate(lines, start=1):
-        jobs = batch_jobs(line, number, settings, base.value["roles"])
-        if isinstance(jobs, Err):
-            return jobs
-        for job in jobs.value:
-            if job.request_id in keys:
-                return fail("VALIDATION.INPUT", f"request {job.request_id} appears twice in the stream",
-                            action="Pair each item, anchor and candidate once; use --repeat for repeats.")
-            keys.add(job.request_id)
-        total += len(jobs.value)
-    return Ok(total)
+
+
 
 
 def run_low_layer(args, lines: list) -> Result[Any, ClientError]:
     """The shared CLI path for `batch` and `bead-batch`: validate, consent, stream, log. Stdout carries only result lines."""
-    settings = batch_settings(args, args.request_prefix)
-    if isinstance(settings, Err):
-        return settings
-    settings = settings.value
-    checked = validate_request_lines(lines, settings)
-    if isinstance(checked, Err):
-        return checked
-    loaded = load_answers_fixture(args.answers_file, "'<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>'")
+    try:
+        settings = decidr_client.batch_settings(args, args.request_prefix, check_threshold=check_threshold,
+                                                request_cap=batch_request_cap)
+    except ClientError as error:
+        return Err(error)
+    base = load_question_set(settings.gate)
+    if isinstance(base, Err):
+        return base
+    question_sets = base.value["roles"]
+    loaded = answers_file(args.answers_file, "'<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -3838,19 +3575,60 @@ def run_low_layer(args, lines: list) -> Result[Any, ClientError]:
         return log_path
 
     if not settings.dry_run and fixture is None:
-        cleared = remote_preflight(args, "The anchor statements, scopes and item texts in the request stream")
-        if isinstance(cleared, Err):
-            return cleared
-
-    pumped = pump_batch(lines, settings, fixture, log_path.value, echo=True)
-    if isinstance(pumped, Err):
-        return pumped
-    return Ok(StreamedResult([x for x in pumped.value if not x["ok"] and not x["dry_run"]]))
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                           "The anchor statements, scopes and item texts in the request stream")
+        except ClientError as error:
+            return Err(error)
+    return run_recorded_batch(lines, settings, fixture, log_path.value, echo=True, question_sets=question_sets)
 
 
-class StreamedResult(NamedTuple):
-    """A command whose stdout was the result lines: main prints nothing more; exit 2 when any line has no answer."""
-    failed: list
+def run_recorded_batch(lines: list, settings: decidr_client.BatchSettings, fixture, log_path: pathlib.Path,
+                       *, echo: bool, question_sets: dict) -> Result[decidr_client.StreamedResult, ClientError]:
+    """Connect the shared stream and durable record writer to plan-anchor's question and verdict rules."""
+    try:
+        decidr_client.validate_request_lines(lines, settings, question_sets, batch_jobs)
+        decidr_client.check_fixture_coverage(lines, settings, question_sets, batch_jobs, fixture)
+    except decidr_client.BatchInputError as error:
+        return Err(error.error)
+    except ClientError as error:
+        return Err(error)
+    if fixture is None and not settings.dry_run:
+        completed = _live_batch_results(lines, settings, log_path, echo)
+        if isinstance(completed, Err):
+            return completed
+        return Ok(decidr_client.streamed_result(completed.value))
+
+    async def records():
+        async for line in decidr_client.stream_batch(
+            lines, settings, make_jobs=batch_jobs,
+            run_job=lambda job, active_settings: run_batch_job(job, active_settings, fixture),
+            question_sets=question_sets,
+        ):
+            yield line
+
+    def persist(line):
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8", newline="\n") as log:
+                log.write(decidr_client.encode_result_line(line, redact=redact_sensitive))
+                log.flush()
+        except OSError as error:
+            return Err(fail("SCRIPT.IO", f"batch result log could not be written: {error}",
+                            action="Check the run directory is writable.").error)
+        return Ok(None)
+
+    try:
+        results = decidr_client.pump_batch(records(), log_result=persist, echo=echo)
+    except decidr_client.BatchInputError as error:
+        return Err(error.error)
+    except ClientError as error:
+        return Err(error)
+    except ClientError as error:
+        return Err(error)
+    return Ok(decidr_client.streamed_result(results))
+
+
 
 
 def cmd_batch(args) -> Result[Any, ClientError]:
@@ -3922,7 +3700,7 @@ def open_tracker(args) -> Result[TrackerReader, ClientError]:
 
     selected = anchor_tracker.resolve(pathlib.Path(getattr(args, "repository_root", "") or "."))
     if isinstance(selected, Err):
-        return Err(_from_tool_error(selected.error))
+        return Err(decidr_client.from_tool_error(selected.error))
     return Ok(TrackerReader(selected.value.cli_path, selected.value.root))
 
 
@@ -4027,8 +3805,8 @@ def cmd_bead_batch(args) -> Result[Any, ClientError]:
         return lines
     if args.emit:
         for line in lines.value:
-            write_stdout_line(json.dumps(line, ensure_ascii=False) + "\n")
-        return Ok(StreamedResult([]))
+            decidr_client.write_stdout_line(decidr_client.encode_result_line(line, redact=redact_sensitive))
+        return Ok(decidr_client.streamed_result([]))
     return run_low_layer(args, lines.value)
 
 
@@ -4196,7 +3974,7 @@ def _choice_question_problem(question) -> Optional[str]:
 
 
 def _expected_answers(roles: dict) -> dict:
-    return {qid: {"type": "choice", "choice": choice, "confidence": 1.0} for qid, choice in roles.items()}
+    return {qid: decidr_client.ChoiceAnswer(choice, 1.0, {choice: 1.0}) for qid, choice in roles.items()}
 
 
 def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str) -> Result[Oracle, ClientError]:
@@ -4226,7 +4004,7 @@ def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str)
         if not isinstance(c, dict):
             return bad("every case must be an object")
         cid = c.get("case_id")
-        if not isinstance(cid, str) or not BATCH_ID_RE.match(cid) or cid in seen:
+        if not isinstance(cid, str) or re.fullmatch(decidr_client.BATCH_ID_RE, cid) is None or cid in seen:
             return bad(f"case_id {cid!r} must be a unique safe id")
         seen.add(cid)
         if c.get("probe") not in ORACLE_PROBES:
@@ -4305,7 +4083,7 @@ def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, Cli
         if not isinstance(entries, dict) or len(entries) < request["candidate_minimum"]:
             return bad(f"role {role} needs at least candidate_minimum ({request['candidate_minimum']}) candidates")
         for cid, q in entries.items():
-            if not BATCH_ID_RE.match(cid):
+            if re.fullmatch(decidr_client.BATCH_ID_RE, cid) is None:
                 return bad(f"candidate id {cid!r} is not a safe id")
             problem = _choice_question_problem(q)
             if problem:
@@ -4330,7 +4108,7 @@ def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, Cli
     bundles, seen = [], set()
     for b in listed:
         bid = b.get("bundle_id") if isinstance(b, dict) else None
-        if not isinstance(bid, str) or not BATCH_ID_RE.match(bid) or bid in seen or bid == BASELINE_BUNDLE:
+        if not isinstance(bid, str) or re.fullmatch(decidr_client.BATCH_ID_RE, bid) is None or bid in seen or bid == BASELINE_BUNDLE:
             return bad(f"bundle_id {bid!r} must be a unique safe id other than {BASELINE_BUNDLE!r}")
         seen.add(bid)
         roles = b.get("roles")
@@ -4492,13 +4270,15 @@ def index_stream(raw_lines: list, jobs: list) -> Result[dict, ClientError]:
             return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} is a dry run; nothing was judged",
                         action="Run the tournament without --dry-run.")
         if line.get("request_id") != job.request_id or canonical_digest(line.get("request")) != canonical_digest(job.body) \
-                or line.get("request_sha256") != hashlib.sha256(encode_body(line.get("request"))).hexdigest():
+                or line.get("request_sha256") != hashlib.sha256(json.dumps(line.get("request"), allow_nan=False).encode("utf-8")).hexdigest():
             return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} does not carry this tournament's request",
                         action="The oracle, candidates, model or correlation id changed since the stream was written; rerun into a new --out.")
         if line.get("ok"):
-            checked = validate_response(line.get("raw_response"), job.questions)
-            if isinstance(checked, Err) or line.get("answers") != line["raw_response"].get("answers"):
+            if line.get("answers") != line["raw_response"].get("answers"):
                 return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} has answers that differ from its raw response")
+        if line.get("ok"):
+            line = dict(line, answers={qid: decidr_client._typed_answer(answer)
+                                       for qid, answer in line["answers"].items()})
         indexed[key] = line
     return Ok(indexed)
 
@@ -4572,7 +4352,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     baseline = scores[0]
     score = chosen.semantic_score()
     explanation = (f"{len(bundles)} role-complete bundles (baseline included) x {len(oracle.cases)} frozen oracle cases x {repeat} repeats: "
-                   f"{len(all_lines)} calls, {_total_attempts(x['retry_count'] for x in all_lines)} retries. ")
+                   f"{len(all_lines)} calls, {sum(x['retry_count'] for x in all_lines)} retries. ")
     if tie and not accepted:
         explanation += (f"Bundles {', '.join(s.bundle.bundle_id for s in leaders)} are all semantically accepted and tie on every ranking key "
                         f"except complexity and id ({score['exact_role_cells']}/{score['total_role_cells']} role cells, "
@@ -4602,7 +4382,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
             "failed_calls": sorted(x["request_id"] for x in all_lines if not x.get("ok")),
             "missing_calls": sorted(f"{c.case_id}/{b.bundle_id}/r{r}" for c in oracle.cases for b in bundles
                                     for r in range(1, repeat + 1) if (c.case_id, b.bundle_id, r) not in indexed),
-            "retries": _total_attempts(x["retry_count"] for x in all_lines), "max_parallel_evaluators": workers,
+            "retries": sum(x["retry_count"] for x in all_lines), "max_parallel_evaluators": workers,
             "repeat_requests_byte_identical": all(
                 len({indexed[(c.case_id, b.bundle_id, r)]["request_sha256"] for r in range(1, repeat + 1) if (c.case_id, b.bundle_id, r) in indexed}) <= 1
                 for c in oracle.cases for b in bundles),
@@ -4634,7 +4414,7 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     variables = {"success": True, "canceled": False, "aborted_by": None, "data": data, "error": None,
                  "metadata": {"duration_ms": int((time.monotonic() - started) * 1000),
                               "tool_calls": sum(len(x.get("attempts") or []) for x in all_lines),
-                              "retry_count": _total_attempts(x["retry_count"] for x in all_lines), "correlation_id": request["correlation_id"],
+                              "retry_count": sum(x["retry_count"] for x in all_lines), "correlation_id": request["correlation_id"],
                               "jev_run_ids": sorted(x["run_id"] for x in all_lines), "planner_observation_trust": None,
                               "authoritative_sources_unchanged": True}}
     checked = contract.validate_result(dict(variables, schema_version="1.0.0"))
@@ -4646,8 +4426,8 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
 
 def cmd_tournament(args) -> Result[dict, ClientError]:
     started = time.monotonic()
-    if not 1 <= args.max_workers <= BATCH_MAX_WORKERS:
-        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {BATCH_MAX_WORKERS}")
+    if not 1 <= args.max_workers <= decidr_client.BATCH_MAX_WORKERS:
+        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {decidr_client.BATCH_MAX_WORKERS}")
     if args.choose and not args.results:
         return fail("VALIDATION.INPUT", "--choose seals a co-leader of an existing stream; pass that stream with --results",
                     action="Rerun as `tournament --results <out>/results.jsonl --choose <bundle_id> --out <new folder>`.")
@@ -4682,7 +4462,7 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
     frozen = freeze_oracle(out_dir, oracle_raw.value, oracle.sha256, request)
     if isinstance(frozen, Err):
         return frozen
-    loaded = load_answers_fixture(args.answers_file, "'<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>'")
+    loaded = answers_file(args.answers_file, "'<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -4692,7 +4472,7 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
                       "questions": [{"candidate_id": b.bundle_id, "questions": b.questions, "roles": roles} for b in bundles]}
                      for c in oracle.cases]
     max_bytes = DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV
-    settings = BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
+    settings = decidr_client.BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
                              args.timeout, args.max_workers, max_bytes, bool(args.dry_run))
     jobs = []
     for number, line in enumerate(request_lines, start=1):
@@ -4704,11 +4484,11 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
         results_path = pathlib.Path(args.results)
     elif args.dry_run:
         path = out_dir / TOURNAMENT_DRY_RESULTS
-        pumped = pump_batch(request_lines, settings, None, path, echo=False)
+        pumped = run_recorded_batch(request_lines, settings, None, path, echo=False, question_sets=roles)
         if isinstance(pumped, Err):
             return pumped
         return Ok({"success": True, "error": None, "data": {
-            "dry_run": True, "requests": len(pumped.value), "results": str(path), "oracle_sha256": oracle.sha256,
+            "dry_run": True, "requests": len(jobs), "results": str(path), "oracle_sha256": oracle.sha256,
             "bundles": [b.bundle_id for b in bundles], "cases": len(oracle.cases)}})
     else:
         results_path = out_dir / TOURNAMENT_RESULTS
@@ -4717,11 +4497,13 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
                         action="Pass a new --out, or rescore the existing stream with --results.")
 
         if fixture is None:
-            cleared = remote_preflight(args, "The anchor statement, scope and oracle case texts")
-            if isinstance(cleared, Err):
-                return cleared
+            try:
+                decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                               "The anchor statement, scope and oracle case texts")
+            except ClientError as error:
+                return Err(error)
 
-        pumped = pump_batch(request_lines, settings, fixture, results_path, echo=False)
+        pumped = run_recorded_batch(request_lines, settings, fixture, results_path, echo=False, question_sets=roles)
         if isinstance(pumped, Err):
             return pumped
     streamed = read_batch_results(str(results_path))
@@ -4755,13 +4537,13 @@ def add_stream_options(parser) -> None:
     parser.add_argument("--repeat", type=int, default=1, help="identical requests per (item, candidate); default 1")
     parser.add_argument("--request-prefix", default="batch", help="request ids are <prefix>/<item>/<anchor>/<candidate>/r<n>")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="confidence threshold of each line's verdict")
-    parser.add_argument("--max-workers", type=int, default=BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {BATCH_MAX_WORKERS}")
+    parser.add_argument("--max-workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
     parser.add_argument("--max-request-bytes", type=int, default=None, help="refuse any request over this before sending; default the gate's cap")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--dry-run", action="store_true", help="emit the result lines with the requests only; call nothing")
     parser.add_argument("--answers-file", default="", help="fixture answers keyed '<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>' or '*'; no network")
-    parser.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    parser.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
 
 
 def add_judge_options(parser, with_item: bool) -> None:
@@ -4815,7 +4597,7 @@ def add_judge_options(parser, with_item: bool) -> None:
     parser.add_argument("--run-dir", default="", help="judge: default <anchors dir>/anchor-runs; check-fixtures: write runs under <run-dir>/fixtures/")
     parser.add_argument("--dry-run", action="store_true", help="write the Jev requests; call nothing")
     parser.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id (check-fixtures: '<anchor>:pass:<n>') or '*'; no network")
-    parser.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    parser.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
 
 
 class _UsageError(Exception):
@@ -4845,7 +4627,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--rubric", action="store_true", help="ask Jev the testability rubric first; refuse (data.refused.code ANCHOR.NOT_TESTABLE) unless it passes")
     a.add_argument("--allow-untestable", action="store_true", help="with --rubric: record the anchor even when the rubric says needs_work")
     a.add_argument("--answers-file", default="", help="with --rubric: fixture answers keyed 'candidate' or '*'; no network")
-    a.add_argument("--repository-root", default=".", help="with --rubric: " + REPO_ROOT_HELP)
+    a.add_argument("--repository-root", default=".", help="with --rubric: " + decidr_client.REPO_ROOT_HELP)
     a.add_argument("--model", default=DEFAULT_MODEL, help="with --rubric: Jev model")
     a.add_argument("--timeout", type=float, default=30.0, help="with --rubric: seconds per request")
     a.add_argument("--stated-by", default=os.environ.get("USER", "user"))
@@ -4911,7 +4693,7 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--jev", action="store_true", help="ask Jev whether each reported pair is the same constraint")
     dd.add_argument("--dry-run", action="store_true", help="with --jev: show the requests; call nothing")
     dd.add_argument("--answers-file", default="", help="fixture answers keyed '<a>|<b>' or '*' (implies --jev); no network")
-    dd.add_argument("--repository-root", default=".", help="with --jev: " + REPO_ROOT_HELP)
+    dd.add_argument("--repository-root", default=".", help="with --jev: " + decidr_client.REPO_ROOT_HELP)
     dd.add_argument("--model", default=DEFAULT_MODEL)
     dd.add_argument("--timeout", type=float, default=30.0)
     dd.set_defaults(func=cmd_dedupe)
@@ -4928,7 +4710,7 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="minimum confidence for a yes to count")
     rb.add_argument("--dry-run", action="store_true", help="show the requests; call nothing")
     rb.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id ('candidate' for --statement) or '*'; no network")
-    rb.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    rb.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     rb.add_argument("--model", default=DEFAULT_MODEL)
     rb.add_argument("--timeout", type=float, default=30.0)
     rb.set_defaults(func=cmd_rubric)
@@ -5014,12 +4796,12 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--out", required=True, help="tournament folder: frozen oracle, result stream, result_vars.json")
     tn.add_argument("--results", default="", help="score this existing result stream instead of calling Jev")
     tn.add_argument("--choose", default="", help="seal this bundle: one of the tied co-leaders an earlier run returned (needs --results)")
-    tn.add_argument("--max-workers", type=int, default=BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {BATCH_MAX_WORKERS}")
+    tn.add_argument("--max-workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
     tn.add_argument("--model", default=DEFAULT_MODEL)
     tn.add_argument("--timeout", type=float, default=30.0)
     tn.add_argument("--dry-run", action="store_true", help="write the request lines; call nothing, score nothing")
     tn.add_argument("--answers-file", default="", help="fixture answers keyed '<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>' or '*'; no network")
-    tn.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    tn.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tn.set_defaults(func=cmd_tournament)
 
     rp = sub.add_parser("report", help="render a run")
@@ -5043,24 +4825,13 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-CANCELED_EXIT = 130
-
-
-def canceled_envelope() -> dict:
-    """The interrupt envelope: typed like every error, plus the canceled / aborted_by flags."""
-    out = ClientError("CANCELED", "interrupted before the command finished", retryable=True,
-                     action="Rerun the command; a judge run is written only when it completes, so nothing partial was recorded.").to_json()
-    out.update({"canceled": True, "aborted_by": "user"})
-    return out
-
-
 def main(argv=None) -> int:
     """0 when the command ran (its outcome, negative or not, is in data); 2 when it could not; 130 on interrupt."""
     try:
         return _main(argv)
     except KeyboardInterrupt:
-        emit(canceled_envelope())
-        return CANCELED_EXIT
+        emit(decidr_client.canceled_envelope())
+        return decidr_client.CANCELED_EXIT
 
 
 def _main(argv=None) -> int:
@@ -5079,7 +4850,7 @@ def _main(argv=None) -> int:
     if isinstance(outcome, Err):
         emit(outcome.error.to_json())
         return 2
-    if isinstance(outcome.value, StreamedResult):  # stdout already carried the result lines and nothing else
+    if isinstance(outcome.value, decidr_client.StreamedResult):  # stdout already carried the result lines and nothing else
         failed = outcome.value.failed
         if not failed:
             return 0
@@ -5099,6 +4870,6 @@ if __name__ == "__main__":
         utf8_stdio()
         code = main()
     except KeyboardInterrupt:  # between the imports and main's own handler
-        emit(canceled_envelope())
-        code = CANCELED_EXIT
+        emit(decidr_client.canceled_envelope())
+        code = decidr_client.CANCELED_EXIT
     sys.exit(code)

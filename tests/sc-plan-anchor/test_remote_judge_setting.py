@@ -41,9 +41,9 @@ HEADER = ("# .sc/plan-anchor/settings.yaml\n"
           "# Repository settings for the sc-plan-anchor plugin; commit this file, never put secrets in it.\n"
           "schema_version: 1\n")
 REMOTE_COMMENT = "# allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.\n"
-ABSENT_ACTION = ("Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+ABSENT_ACTION = ("Ask the user once whether this text may be sent to TypeSafe (Jev), record the answer with "
                  "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
-                 ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                 ".sc/plan-anchor/settings.yaml. Never infer consent from prior runs. "
                  "Use --dry-run to inspect the request instead.")
 AGENT_RULE = ("Never write `allow_remote_judge`; only the user decides it. "
               "On `POLICY.REMOTE_JUDGE_DISABLED`, return it unchanged.")
@@ -73,15 +73,16 @@ class Repo:
         self.settings.write_text(text, encoding="utf-8")
 
     def answer(self, value):
-        self.write(f"schema_version: 1\nallow_remote_judge: {value}\n")
+        self.write(f"schema_version: 1\nanchor_tracker: {TEST_TRACKER}\nallow_remote_judge: {value}\n")
         return self
 
 
 def judged(test, repo, env_values=None, transport=None, extra=()):
     transport = transport if transport is not None else Transport()
     d = tempfile.mkdtemp(dir=str(repo.root))
-    j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
-               extra_args=["--repository-root", str(repo.root), *extra])
+    with contextlib.chdir(repo.root):
+        j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
+                   extra_args=["--repository-root", str(repo.root), *extra])
     return j, transport
 
 
@@ -107,20 +108,20 @@ class LiveCallConsentTests(unittest.TestCase):
         self.assertEqual((j.code, len(t.bodies)), (0, 1))
 
     @yaml_test
-    def test_false_is_refused(self):
+    def test_send_with_false_consent_is_refused_before_transport(self):
         repo = Repo(self).answer("false")
         j, t = judged(self, repo)
         self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
         self.assertIn("sets allow_remote_judge: false", j.out["error"]["message"])
-        self.assertIn("only the user changes it", j.out["error"]["suggested_action"])
+        self.assertIn("only the user changes this setting", j.out["error"]["suggested_action"])
 
-    def test_absent_file_is_refused_with_the_ask_once_action(self):
+    def test_send_without_recorded_consent_is_refused_before_transport(self):
         repo = Repo(self)
         j, t = judged(self, repo)
         self.assertEqual(j.code, 2)
         self.assertEqual(j.out, {"success": False, "data": None, "error": {
             "code": "POLICY.REMOTE_JUDGE_DISABLED",
-            "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this "
+            "message": "Sending text to TypeSafe is disabled. The anchor statement and the item text would leave this "
                        "machine. .sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
             "recoverable": False, "suggested_action": ABSENT_ACTION}})
         self.assertEqual(t.bodies, [])
