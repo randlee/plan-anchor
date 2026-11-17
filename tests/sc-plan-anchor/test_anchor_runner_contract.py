@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
+from child_support import run_test_child
 from layout_support import SCRIPTS
 
 
@@ -218,7 +218,7 @@ class RunnerContractTests(unittest.TestCase):
         self.assertIsNotNone(binary, "sc-compose is required for contract rendering")
         with tempfile.TemporaryDirectory() as td:
             output = Path(td) / "invocation.md"
-            subprocess.run(
+            run_test_child(
                 [
                     binary,
                     "render",
