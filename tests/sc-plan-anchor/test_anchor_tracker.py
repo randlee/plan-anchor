@@ -859,16 +859,15 @@ class RepositoryContractTests(unittest.TestCase):
                     if script.name == "jev_judge.py":
                         # Lazy for consent and optional repository-confined input resolution;
                         # the settings module itself imports PyYAML only when reading settings.
-                        self.assertEqual(source.count("import plan_anchor_settings"), 2)
-                        self.assertIn("    import plan_anchor_settings as settings  # lazy", source)
-                        self.assertNotIn("\nimport plan_anchor_settings", source)
+                        self.assertEqual(source.count("import plan_anchor_settings"), 1)
+                        self.assertIn("    import plan_anchor_settings as settings  # stdlib-only until settings are read", source)
                         self.assertNotIn("\nfrom plan_anchor_settings", source)
                     elif script.name == "change_report.py":
                         # Lazy, for the optional issue_url_template; PyYAML only when a settings file exists.
                         self.assertEqual(source.count("import plan_anchor_settings"), 1)
                         self.assertIn("    import plan_anchor_settings as pas  # lazy", source)
                     else:
-                        self.assertNotIn("plan_anchor_settings", source)
+                        self.assertNotIn("import plan_anchor_settings", source)
         client = ast.parse((SCRIPTS / "decidr_client.py").read_text(encoding="utf-8"))
         runtime_imports = [node for node in ast.walk(client)
                            if isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names)]

@@ -39,7 +39,8 @@ class RubricInputTests(unittest.TestCase):
             transport.assert_not_called()
             self.assertFalse(out['data']['pass'])
             first, second = out['data']['requests']
-            self.assertEqual(jj.encode_body(first), jj.encode_body(second))
+            self.assertEqual(json.dumps(first, allow_nan=False).encode("utf-8"),
+                             json.dumps(second, allow_nan=False).encode("utf-8"))
             self.assertEqual(first['state']['intent'], intent)
             self.assertEqual(first['questions'], sealed['questions'])
             provenance = out['data']['anchors'][0]['inputs']

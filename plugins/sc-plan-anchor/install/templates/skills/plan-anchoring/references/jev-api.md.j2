@@ -70,7 +70,7 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 }
 ```
 
-`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). The script validates every response before gating: answer IDs equal the question IDs, each `choice` is a criteria option, `confidence` and every probability lie in [0, 1], and probabilities sum to 1 within rounding. Anything else is `JEV.RESPONSE_INVALID`, retried as transient. The response read is bounded at 1 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
+`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). sc-decidr parses provider responses into typed answers and returns its typed error for malformed responses. The response read is bounded at 1 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
 
 ## Size, context window, and shortening
 
@@ -104,7 +104,7 @@ Agents and plan-anchor never add provider retry loops around the client. Typed f
 | `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | `allow_remote_judge` is `false` or absent. Absent: ask the user once, record it with `plan_anchor_settings.py set`, commit. `false`: only the user changes it. `--dry-run` works either way |
 | `DEPENDENCY.PYYAML`, `SETTINGS.*`, `REPO.NOT_FOUND` | pre-flight | The settings file could not be read; fix what the error names. Never a silent default |
 | `DECIDR.RATE_LIMITED`, `DECIDR.OVERLOADED`, `DECIDR.NETWORK` | sc-decidr transport | The shared client reports the failure and observed attempt count; plan-anchor does not resend it |
-| `DECIDR.RESPONSE_INVALID`, `JEV.RESPONSE_INVALID` | provider or answer validation | Malformed provider result or answer; plan-anchor does not resend it |
+| `DECIDR.RESPONSE_INVALID` | sc-decidr response parsing | Malformed provider result or answer; plan-anchor does not resend it |
 | `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
 | `PLAN.TOO_LARGE` | planning-gate pre-flight or 422 | The bead does not fit one request after code reduction; triage per `plan-size-and-shape.md`. Never trim or raise the cap to pass |
 | `DECIDR.VALIDATION` | 422 other | Request rejected; usually a malformed override |

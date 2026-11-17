@@ -28,12 +28,13 @@
     "min_confidence",
     "leaning",
     "retry_count",
+    "sends",
     "attempts",
     "error"
   ],
   "properties": {
     "schema": {
-      "const": "plan-anchor/jev-batch-result/1"
+      "const": "jev-batch-result/1"
     },
     "request_id": {
       "type": "string",
@@ -149,6 +150,10 @@
     },
     "retry_count": {
       "type": "integer",
+      "minimum": 0
+    },
+    "sends": {
+      "type": ["integer", "null"],
       "minimum": 0
     },
     "attempts": {

@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import sys
 
+import sc_decidr_test_double
+sys.modules["sc_agent"] = sc_decidr_test_double.as_module()
+
 from layout_support import SCRIPTS
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))

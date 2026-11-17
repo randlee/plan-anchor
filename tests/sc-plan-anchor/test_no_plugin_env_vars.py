@@ -115,7 +115,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
                 with mock.patch.dict(os.environ, dict(environment, TYPESAFE_API_KEY="sk-test-0001"), clear=True), \
                         mock.patch("sc_agent.send", side_effect=send), \
                         mock.patch("sc_agent.CancelToken", return_value=object()), \
-                        mock.patch.object(module, "remote_judge_consent", return_value=module.Ok(None)), \
+                        mock.patch.object(module.decidr_client, "remote_preflight", return_value=None), \
                         contextlib.redirect_stdout(buf):
                     code = module.main(list(JUDGE))
             finally:

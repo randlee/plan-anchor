@@ -133,16 +133,18 @@ class JevPropagationTests(unittest.TestCase):
     def test_success_uses_observed_send_count_and_preserves_unknown(self):
         for sends in (5, None):
             with self.subTest(sends=sends), mock.patch.object(jj, "call_jev", return_value=Ok(
-                    jj._JevResponse({"answers": {}}, sends))) as called:
+                    {"answers": {}, "attempts": sends})) as called:
                 out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
             self.assertIsInstance(out, Ok)
             self.assertEqual(out.value[1]["attempts"], sends)
             called.assert_called_once()
 
-    def test_invalid_ok_response_becomes_err(self):
-        with mock.patch.object(jj, "call_jev", return_value=Ok(jj._JevResponse({"answers": []}, 1))):
+    def test_wheel_typed_response_error_is_returned_without_consumer_retry(self):
+        error = jj.ClientError("DECIDR.RESPONSE_INVALID", "invalid typed response")
+        with mock.patch.object(jj, "call_jev", return_value=Err(error)) as called:
             out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
-        self.assertEqual(out.error.code, "JEV.RESPONSE_INVALID")
+        self.assertIs(out.error, error)
+        called.assert_called_once()
 
     def run_main(self, argv):
         buf = io.StringIO()
