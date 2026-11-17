@@ -1389,7 +1389,7 @@ class OverrideTests(unittest.TestCase):
             code, out2 = run_cli(common + ["--overrides-file", override_path, "--out", str(Path(d) / "r2.json")])
             self.assertEqual(out2["data"]["requests"][0]["questions"]["addressed"]["instructions"], "from bead")
             self.assertNotEqual(entry["questions_sha256"], out2["data"]["results"][0]["questions_sha256"])
-            self.assertEqual(entry["questions_sha256"], jj.questions_digest(ok(jj.merge_overrides(base, a["question_overrides"]["plan"]))["questions"]))
+            self.assertEqual(entry["questions_sha256"], jj.decidr_client.questions_digest(ok(jj.merge_overrides(base, a["question_overrides"]["plan"]))["questions"]))
             # a bead override that renames a question without updating roles aborts before anything is sent
             bad_path = write(d, "bad.json", {"ANC-001": {"roles": {"compliance": "nope"}}})
             code, out3 = run_cli(common + ["--overrides-file", bad_path])

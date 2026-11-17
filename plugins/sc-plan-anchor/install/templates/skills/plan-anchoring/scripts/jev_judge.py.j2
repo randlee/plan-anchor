@@ -1752,11 +1752,6 @@ def halve_item(item: dict, min_item_chars: int, meta: dict) -> bool:
     return True
 
 
-def questions_digest(questions: dict) -> str:
-    canonical = json.dumps(questions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
 def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: dict) -> Result[None, ClientError]:
     """Pre-flight cap: shorten the item until the serialised request (state + questions) is under max_request_bytes.
 
@@ -2208,10 +2203,10 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
             # the gate questions' digest: extra questions never change it (they get their own)
-            "questions_sha256": questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
+            "questions_sha256": decidr_client.questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
         })
         if qs.get("optional"):
-            entry["extra_questions_sha256"] = questions_digest({k: qs["questions"][k] for k in qs["optional"]})
+            entry["extra_questions_sha256"] = decidr_client.questions_digest({k: qs["questions"][k] for k in qs["optional"]})
         if overridden:
             entry["questions"] = qs["questions"]
         if dropped:
@@ -2931,8 +2926,8 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
         entry = {"id": c["id"], "statement": c["statement"], "quote": c["quote"], "scope": c.get("scope") or "",
                  "verdict": None, "failing": list(lint_errors), "answers": None, "lint": {"warnings": warnings, "errors": lint_errors}}
         if explicit_inputs:
-            entry["inputs"] = {"question_seal": questions_digest({"questions": qs["questions"]}),
-                               "request_sha256": questions_digest(body)}
+            entry["inputs"] = {"question_seal": decidr_client.questions_digest({"questions": qs["questions"]}),
+                               "request_sha256": decidr_client.questions_digest(body)}
             if intent is not None:
                 entry["inputs"]["intent"] = {key: intent[key] for key in ("id", "version", "sha256")}
         if dry_run:
@@ -3334,7 +3329,7 @@ JSON_FENCE_RE = re.compile(r"```json[ \t]*\r?\n(.*?)\r?\n```", re.DOTALL)
 
 def canonical_digest(value) -> str:
     """SHA-256 of canonical JSON (sorted keys, no spaces): the digest every contract in this skill uses."""
-    return questions_digest(value)
+    return decidr_client.questions_digest(value)
 
 
 
