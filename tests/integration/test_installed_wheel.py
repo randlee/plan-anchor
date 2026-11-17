@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'tests/sc-plan-anchor'))
 from child_support import run_test_child
 from layout_support import SCRIPTS, TEST_TRACKER
 from jev_inputs import BATCH_LINES, PLAN_QS, anchor, jsonl, record, write
+from live_cli_output import parse_cli_output
 
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -22,11 +23,11 @@ import jev_judge as jj
 
 
 def run_cli(argv):
-    """Run the judge in-process while retaining the real sc_agent module."""
+    """Run the judge in-process, parsing batch stdout as JSONL."""
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         code = jj.main(argv)
-    return code, json.loads(output.getvalue())
+    return code, parse_cli_output(output.getvalue(), jsonl=bool(argv and argv[0] == 'batch'))
 
 
 if os.environ.get('PLAN_ANCHOR_LIVE_INTEGRATION') != '1':
@@ -80,7 +81,7 @@ def test_batch_preserves_correlation_and_durable_log(live, record_property):
                             '--model', 'jev-latest', '--max-workers', '2', '--timeout', '120',
                             '--repository-root', str(live)])
     assert code == 0, output
-    rows = [json.loads(line) for line in output.splitlines()]
+    rows = output
     assert sorted(row['request_id'] for row in rows) == sorted(['integration/s1/ANC-001/cur/r1',
                                                  'integration/s1/ANC-001/alt/r1',
                                                  'integration/s3/ANC-001/cur/r1'])

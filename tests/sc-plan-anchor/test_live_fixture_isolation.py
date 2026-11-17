@@ -6,6 +6,8 @@ import subprocess
 import sys
 import unittest
 
+from live_cli_output import parse_cli_output
+
 
 class LiveFixtureIsolationTests(unittest.TestCase):
     def test_real_wheel_harness_does_not_import_offline_support_module(self):
@@ -31,6 +33,22 @@ class LiveFixtureIsolationTests(unittest.TestCase):
         completed = subprocess.run([sys.executable, "-c", program], cwd=tests, env=environment,
                                    capture_output=True, text=True, timeout=30)
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_live_batch_output_parses_controlled_jsonl_rows(self):
+        output = (
+            '{"request_id":"integration/s1/ANC-001/cur/r1","ok":true}\n'
+            '{"request_id":"integration/s1/ANC-001/alt/r1","ok":true}\n'
+            '{"request_id":"integration/s3/ANC-001/cur/r1","ok":true}\n'
+        )
+        rows = parse_cli_output(output, jsonl=True)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row["request_id"] for row in rows], [
+            "integration/s1/ANC-001/cur/r1",
+            "integration/s1/ANC-001/alt/r1",
+            "integration/s3/ANC-001/cur/r1",
+        ])
+        self.assertTrue(all(row["ok"] for row in rows))
+        self.assertEqual(parse_cli_output('{"success":true}'), {"success": True})
 
 
 if __name__ == "__main__":
