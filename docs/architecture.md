@@ -278,7 +278,9 @@ unreliable.
 Decision: `judge --stand-ins` sends the identical Jev request to fast models
 (Claude `haiku`, Codex `luna`) configured under `fast_agents.profiles` in
 settings, one session per cell per model with no tools in an empty temp dir,
-validated by `validate_response`. Stand-in output is advisory and never gates;
+checked before use by sc-decidr's shared typed response decoder; malformed
+answers produce `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared
+client fixture validator. Stand-in output is advisory and never gates;
 divergence from Jev is a signal that the question and the text are misaligned.
 `follow-up` resumes the session of the model that answered. The tuner stays
 neutral, always runs the follow-up turns, makes one small edit (usually the

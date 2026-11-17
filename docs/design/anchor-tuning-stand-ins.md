@@ -31,8 +31,9 @@ which is exactly the context a fresh dev agent would have.
 - **Turn 1** is built by the tool and never written by the agent. It is the
   exact request body plus one instruction: answer with fenced JSON in Jev's
   response schema. It runs with no tools, in an empty temp dir, with one
-  session per cell per model. The answer is checked with the same
-  `validate_response` that checks Jev's answers.
+  session per cell per model. Before use, the answer is checked by
+  sc-decidr's shared typed response decoder, the same checker used for Jev's
+  answers. A malformed answer produces `DECIDR.RESPONSE_INVALID`.
 - **Turns 2..N** resume that same cell's session. The tuning agent writes the
   questions. A short list of suggested questions is offered but is not
   mandatory. The agent may send a dependency sprint's text and ask whether it

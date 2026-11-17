@@ -73,15 +73,16 @@ class Repo:
         self.settings.write_text(text, encoding="utf-8")
 
     def answer(self, value):
-        self.write(f"schema_version: 1\nallow_remote_judge: {value}\n")
+        self.write(f"schema_version: 1\nanchor_tracker: {TEST_TRACKER}\nallow_remote_judge: {value}\n")
         return self
 
 
 def judged(test, repo, env_values=None, transport=None, extra=()):
     transport = transport if transport is not None else Transport()
     d = tempfile.mkdtemp(dir=str(repo.root))
-    j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
-               extra_args=["--repository-root", str(repo.root), *extra])
+    with contextlib.chdir(repo.root):
+        j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
+                   extra_args=["--repository-root", str(repo.root), *extra])
     return j, transport
 
 
@@ -107,14 +108,14 @@ class LiveCallConsentTests(unittest.TestCase):
         self.assertEqual((j.code, len(t.bodies)), (0, 1))
 
     @yaml_test
-    def test_false_is_refused(self):
+    def test_send_with_false_consent_is_refused_before_transport(self):
         repo = Repo(self).answer("false")
         j, t = judged(self, repo)
         self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
         self.assertIn("sets allow_remote_judge: false", j.out["error"]["message"])
         self.assertIn("only the user changes this setting", j.out["error"]["suggested_action"])
 
-    def test_absent_file_is_refused_with_the_ask_once_action(self):
+    def test_send_without_recorded_consent_is_refused_before_transport(self):
         repo = Repo(self)
         j, t = judged(self, repo)
         self.assertEqual(j.code, 2)

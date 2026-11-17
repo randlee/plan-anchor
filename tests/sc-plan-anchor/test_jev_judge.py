@@ -212,7 +212,7 @@ class CredentialLookupTests(unittest.TestCase):
         for category, (code, action) in cases.items():
             with self.subTest(category=category):
                 detail = {"id": "example.error", "category": category, "message": "controlled failure", "recovery": action}
-                with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                with consented(), mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                         mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})):
                     result = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
                 self.assertEqual(result.code, code)
@@ -228,7 +228,7 @@ class CredentialLookupTests(unittest.TestCase):
         settings = mock.Mock(gate="plan", model="jev", timeout=30, max_workers=1)
         for code, action in cases.items():
             for batch in (False, True):
-                with self.subTest(code=code, batch=batch), \
+                with self.subTest(code=code, batch=batch), consented(), \
                         mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                         mock.patch.object(jj, "load_question_set", return_value=jj.Ok({"roles": {}})), \
                         mock.patch("sc_agent.send_batch" if batch else "sc_agent.send",
@@ -248,7 +248,7 @@ class CredentialLookupTests(unittest.TestCase):
     def test_call_forwards_keyring_overrides_to_shared_client_without_forwarding_a_key_or_session_log(self):
         token = mock.Mock()
         response = {"model": "jev-x", "answers": plan_answers()}
-        with mock.patch("sc_agent.CancelToken", return_value=token), \
+        with consented(), mock.patch("sc_agent.CancelToken", return_value=token), \
                 mock.patch("sc_agent.send", return_value=wheel_line({"response": response})) as send, \
                 mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
             result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
@@ -277,7 +277,7 @@ class CredentialLookupTests(unittest.TestCase):
                 detail = {"id": identifier, "category": category, "message": "provider detail",
                           "attempts": attempts, "status": status}
                 token = mock.Mock()
-                with mock.patch("sc_agent.CancelToken", return_value=token), \
+                with consented(), mock.patch("sc_agent.CancelToken", return_value=token), \
                         mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})) as send, \
                         mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
                     result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
@@ -294,7 +294,7 @@ class CredentialLookupTests(unittest.TestCase):
 
     def test_missing_key_is_the_wheels_typed_auth_error(self):
         auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
-        with mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+        with consented(), mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send", return_value=wheel_line({"error": auth})):
             error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
         self.assertEqual((error.code, error.message, error.attempts),
@@ -1453,12 +1453,22 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertTrue(Path(out["data"]["run_path"]).is_file())
 
     def test_malformed_fixture_answer_is_response_invalid(self):
-        bad = plan_answers()
-        bad["relevant"]["probabilities"]["yes"] = 0.1
-        fixture = write(self.d.name, "answers.json", {"*": bad})
-        code, out = self.judge("--anchor", "ANC-001", "--answers-file", fixture)
-        self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RESPONSE_INVALID"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual(out["data"]["results"][0]["error"]["code"], "DECIDR.RESPONSE_INVALID")
+        cases = {
+            "answer IDs": lambda answers: answers.update({"unexpected": answers.pop("relevant")}),
+            "answer type": lambda answers: answers["relevant"].update({"type": "noul"}),
+            "non-finite probability": lambda answers: answers["relevant"]["probabilities"].update({"yes": float("nan")}),
+            "out-of-range probability": lambda answers: answers["relevant"]["probabilities"].update({"yes": 1.1}),
+            "non-finite confidence": lambda answers: answers["relevant"].update({"confidence": float("nan")}),
+            "out-of-range confidence": lambda answers: answers["relevant"].update({"confidence": 1.1}),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                bad = plan_answers()
+                mutate(bad)
+                fixture = write(self.d.name, f"answers-{label.replace(' ', '-')}.json", {"*": bad})
+                code, out = self.judge("--anchor", "ANC-001", "--answers-file", fixture)
+                self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RESPONSE_INVALID"))
+                self.assertEqual(out["data"]["results"][0]["error"]["code"], "DECIDR.RESPONSE_INVALID")
 
     def test_explicit_anchor_must_be_locked_unless_included(self):
         fixture = write(self.d.name, "answers.json", {"*": plan_answers()})
