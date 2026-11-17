@@ -333,12 +333,15 @@ class AddTests(unittest.TestCase):
     def test_add_creates_file_and_allocates_ids(self):
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "anchors.json")
-            code, out = run_cli(["add", "--anchors", path, "--statement", "  The runtime crates must add no new dependency.  ", "--quote", " no new dependency for this ", "--status", "locked"])
+            fixed_date = _dt.date(2026, 1, 2)
+            with mock.patch.object(jj._dt, "date", wraps=_dt.date) as date_type:
+                date_type.today.return_value = fixed_date
+                code, out = run_cli(["add", "--anchors", path, "--statement", "  The runtime crates must add no new dependency.  ", "--quote", " no new dependency for this ", "--status", "locked"])
             self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["anchor"]["id"], "ANC-001")
             self.assertEqual(out["data"]["anchor"]["statement"], "The runtime crates must add no new dependency.")
             self.assertEqual(out["data"]["anchor"]["quote"], "no new dependency for this")
-            self.assertEqual(out["data"]["anchor"]["stated_at"], _dt.date.today().isoformat())
+            self.assertEqual(out["data"]["anchor"]["stated_at"], "2026-01-02")
             self.assertEqual((out["data"]["lint"], out["data"]["similar"]), ({"warnings": []}, []))
             code, out = run_cli(["add", "--anchors", path, "--statement", "The CLI layer only parses arguments and prints JSON.", "--quote", "keep the CLI thin"])
             self.assertEqual(out["data"]["anchor"]["id"], "ANC-002")
