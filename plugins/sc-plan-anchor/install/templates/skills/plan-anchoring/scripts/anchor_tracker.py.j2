@@ -89,7 +89,7 @@ from plan_anchor_settings import (  # noqa: E402
     settings_path,
     write_settings_file,
 )
-from result import Err, Ok, Result, ToolError, err, run_main, utf8_stdio  # noqa: E402
+from result import Err, Ok, Result, ToolError, err, run_main  # noqa: E402
 
 Which = Callable[[str], Optional[str]]
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]

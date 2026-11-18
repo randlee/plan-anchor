@@ -9,6 +9,7 @@ broken clone or a network.
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 from pathlib import Path
@@ -72,6 +73,20 @@ class CheckVersionSync(unittest.TestCase):
                     self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
                     self.assertIn(rel, proc.stderr)
 
+    def test_git_timeout_is_a_typed_failure(self):
+        check = load("check_version_sync")
+        err = io.StringIO()
+        with mock.patch.object(check.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired(["git", "rev-parse"], 30)) as run, \
+                mock.patch.object(check.sys, "argv", ["check_version_sync.py", "--base", "HEAD"]), \
+                contextlib.redirect_stderr(err):
+            code = check.main()
+        self.assertEqual(code, 2)
+        self.assertIn("git rev-parse --verify --quiet HEAD^{commit} timed out after 30 seconds", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], check.GIT_TIMEOUT_SECONDS)
+
 
 class GenInstallData(unittest.TestCase):
     def setUp(self):
@@ -110,6 +125,21 @@ class GenInstallData(unittest.TestCase):
                     self.assertEqual(code, 2)
                     self.assertIn(says, err)
 
+    def test_git_timeout_is_a_typed_failure(self):
+        with mock.patch.object(self.gen.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired(["git", "rev-parse"], 30)) as run:
+            code, err = self.main("--check")
+        self.assertEqual(code, 2)
+        self.assertIn("git rev-parse timed out after 30 seconds", err)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], self.gen.GIT_TIMEOUT_SECONDS)
+
+    def test_git_command_timeout_is_typed(self):
+        with mock.patch.object(self.gen.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired(["git", "status"], 30)):
+            with self.assertRaisesRegex(self.gen.Failure, "git status timed out after 30 seconds"):
+                self.gen._git("status")
+
 
 class InstallScComposeCi(unittest.TestCase):
     def test_any_failure_exits_2_with_a_message(self):
@@ -123,6 +153,58 @@ class InstallScComposeCi(unittest.TestCase):
                     code = ci.run(boom)
                 self.assertEqual(code, 2)
                 self.assertTrue(err.getvalue().startswith("install_sc_compose_ci: "), err.getvalue())
+
+    def test_download_timeout_is_typed_and_child_is_bounded(self):
+        ci = load("install_sc_compose_ci")
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.object(ci.sys, "platform", "darwin"), \
+                mock.patch.object(ci.platform, "machine", return_value="arm64"), \
+                mock.patch.dict(ci.os.environ, {"RUNNER_TEMP": temp}, clear=False), \
+                mock.patch.object(ci.subprocess, "run",
+                                  side_effect=subprocess.TimeoutExpired(["gh", "release"], 300)) as run, \
+                contextlib.redirect_stderr(err):
+            code = ci.run()
+        self.assertEqual(code, 2)
+        self.assertIn("timed out after 300 seconds", err.getvalue())
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], ci.DOWNLOAD_TIMEOUT_SECONDS)
+        self.assertNotIn("Traceback", err.getvalue())
+
+    def test_version_probe_timeout_is_typed_and_uses_platform_executable_name(self):
+        ci = load("install_sc_compose_ci")
+        content = b"controlled archive"
+        asset = "sc-compose-controlled.tar.gz"
+        key = ("darwin", "aarch64")
+        calls = []
+
+        def controlled_run(command, **options):
+            calls.append((command, options))
+            if command[0] == "gh":
+                destination = Path(command[command.index("--dir") + 1])
+                (destination / asset).write_bytes(content)
+                return subprocess.CompletedProcess(command, 0)
+            raise subprocess.TimeoutExpired(command, ci.VERSION_TIMEOUT_SECONDS)
+
+        def extract(_archive, destination):
+            (destination / "sc-compose").write_text("controlled executable", encoding="utf-8")
+
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.object(ci.sys, "platform", "darwin"), \
+                mock.patch.object(ci.platform, "machine", return_value="arm64"), \
+                mock.patch.dict(ci.os.environ, {"RUNNER_TEMP": temp}, clear=False), \
+                mock.patch.dict(ci.ASSETS, {key: (asset, hashlib.sha256(content).hexdigest())}), \
+                mock.patch.object(ci, "extract", side_effect=extract), \
+                mock.patch.object(ci.subprocess, "run", side_effect=controlled_run), \
+                contextlib.redirect_stderr(err):
+            code = ci.run()
+        self.assertEqual(code, 2)
+        self.assertIn("timed out after 30 seconds", err.getvalue())
+        self.assertTrue(str(calls[1][0][0]).endswith("/sc-compose"))
+        self.assertTrue(all(options["stdin"] == subprocess.DEVNULL for _, options in calls))
+        self.assertEqual([options["timeout"] for _, options in calls],
+                         [ci.DOWNLOAD_TIMEOUT_SECONDS, ci.VERSION_TIMEOUT_SECONDS])
 
 
 if __name__ == "__main__":

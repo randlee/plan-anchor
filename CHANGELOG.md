@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.13 — 2026-11-18
+
+- Bound and isolate CI child processes, return typed timeout failures, and remove unused imports from rendered scripts.
+
 ## 0.12.12 — 2026-11-18
 
 - Re-render the shared client from sc-decidr 0.2.8 and stop fixture batch jobs after authentication or policy errors.

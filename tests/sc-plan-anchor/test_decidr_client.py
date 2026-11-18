@@ -6,7 +6,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import threading
@@ -15,6 +14,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, call, patch
 
+from child_support import run_test_child
 from layout_support import SCRIPTS
 from sc_decidr_test_double import parse_result as parse_wheel_result
 
@@ -158,7 +158,7 @@ class DecidrClientTests(unittest.TestCase):
             self.assertTrue(ready.wait(5), "local runner did not become ready")
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=10)
+                run_test_child(["git", "init", "-q", str(root)], check=True, timeout=10)
                 config = root / "config"
                 config.mkdir()
                 (config / "default.json").write_text(json.dumps({

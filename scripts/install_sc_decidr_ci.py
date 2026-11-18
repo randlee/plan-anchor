@@ -19,6 +19,7 @@ PLATFORMS = {
     ("Windows", "X64"): "win_amd64",
     ("Windows", "ARM64"): "win_arm64",
 }
+COMMAND_TIMEOUT_SECONDS = 300
 
 
 def client_version():
@@ -39,9 +40,23 @@ def main():
         raise SystemExit(f"No sc-decidr wheel for {runner[0]}/{runner[1]}")
     version = client_version()
     asset = f"sc_decidr-{version}-cp311-abi3-{platform}.whl"
-    subprocess.run(["gh", "release", "download", f"prerelease/v{version}", "--repo", "randlee/sc-agent", "--pattern", asset], check=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", asset], check=True)
+    subprocess.run(["gh", "release", "download", f"prerelease/v{version}", "--repo", "randlee/sc-agent", "--pattern", asset],
+                   check=True, stdin=subprocess.DEVNULL, timeout=COMMAND_TIMEOUT_SECONDS)
+    subprocess.run([sys.executable, "-m", "pip", "install", asset],
+                   check=True, stdin=subprocess.DEVNULL, timeout=COMMAND_TIMEOUT_SECONDS)
+
+
+def run(entry=None) -> int:
+    try:
+        result = (entry or main)()
+        return result if isinstance(result, int) else 0
+    except subprocess.TimeoutExpired as exc:
+        print(f"install_sc_decidr_ci: command timed out after {exc.timeout} seconds", file=sys.stderr)
+        return 2
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"install_sc_decidr_ci: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run())
