@@ -91,6 +91,32 @@ def yaml_test(fn):
     return unittest.skipUnless(HAS_YAML, NO_YAML)(fn)
 
 
+class SettingsGitTimeoutTests(unittest.TestCase):
+    def test_rev_parse_timeout_returns_typed_failure_without_fallback(self):
+        repo = Repo(self)
+        timeout = subprocess.TimeoutExpired(["git", "rev-parse"], 30)
+        with mock.patch.object(settings_mod.subprocess, "run", side_effect=timeout) as run:
+            result = settings_mod.find_repo_root(repo.root)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "REPO.NOT_FOUND")
+        self.assertIn("git rev-parse did not finish within 30 s", result.error.message)
+        self.assertTrue(result.error.action)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_check_ignore_timeout_returns_a_diagnostic(self):
+        repo = Repo(self)
+        timeout = subprocess.TimeoutExpired(["git", "check-ignore"], 30)
+        with mock.patch.object(settings_mod.subprocess, "run", side_effect=timeout) as run:
+            result = settings_mod.git_ignored(repo.root, ".sc/plan-anchor/settings.yaml")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "git check-ignore did not finish within 30 s")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+
 class LiveCallConsentTests(unittest.TestCase):
     @yaml_test
     def test_true_lets_the_call_through(self):
@@ -103,7 +129,7 @@ class LiveCallConsentTests(unittest.TestCase):
         repo = Repo(self).answer("true")
         sub = repo.root / "doc" / "plan"
         sub.mkdir(parents=True)
-        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
             self.assertTrue(settings_mod.remote_judge_consent(settings_mod.find_repo_root(sub).value).value)
         j, t = judged(self, repo, extra=["--repository-root", str(sub)])  # the later flag wins
         self.assertEqual((j.code, len(t.bodies)), (0, 1))
@@ -240,7 +266,7 @@ class LiveCallConsentTests(unittest.TestCase):
 
     def test_outside_a_repository_is_a_typed_error(self):
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+            with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
                 outcome = settings_mod.find_repo_root(Path(d))
             if outcome.ok:
                 self.skipTest("the temporary directory is inside a repository here")
@@ -248,7 +274,7 @@ class LiveCallConsentTests(unittest.TestCase):
             anchors = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy runtime crates.")
             with env(**KEY), stub_client(t), \
-                    mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+                    mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
                 code, out = run_cli(["judge", "--anchors", anchors, "--gate", "plan", "--all", "--item-id", "x",
                                      "--item-file", item, "--repository-root", d])
             self.assertEqual((code, out["error"]["code"], t.bodies), (2, "REPO.NOT_FOUND", []))
@@ -370,7 +396,7 @@ class SetCommandTests(unittest.TestCase):
         if TEST_TRACKER == "bd":  # a bd install needs a Dolt-backed .beads/
             (repo.root / ".beads").mkdir()
             (repo.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
-        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
             outcome = tracker_mod.write(repo.root, which=lambda name: f"/fake/bin/{name}", run=lambda *a, **k: None)
         self.assertTrue(outcome.ok, getattr(outcome, "error", None))
         self.assertEqual(repo.settings.read_text(encoding="utf-8"),

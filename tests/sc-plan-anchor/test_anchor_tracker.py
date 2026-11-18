@@ -98,7 +98,7 @@ class RepoCase(unittest.TestCase):
         self.root = Path(self._tmp.name).resolve() / "repo"
         self.root.mkdir()
         (self.root / ".git").mkdir()  # fallback marker; real git repos are tested separately
-        patcher = mock.patch.object(settings_mod, "_git_toplevel", lambda start: None)
+        patcher = mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None))
         patcher.start()
         self.addCleanup(patcher.stop)
 

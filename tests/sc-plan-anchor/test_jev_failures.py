@@ -167,6 +167,12 @@ class JudgeAndCheckFixtures(ProcessCase):
         return self.put("anchors.json", record(anchor(fixtures={"pass": ["We copy the legacy runtime crates."],
                                                                  "fail": ["We write the runtime crates from scratch."]}, **fields)))
 
+    def test_check_fixtures_without_selection_explains_id_or_all(self):
+        code, out = self.run_jj("check-fixtures", "--anchors", self.fixture_anchors(), "--gate", "plan")
+        self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "VALIDATION.INPUT"))
+        self.assertIn("--id", out["error"]["suggested_action"])
+        self.assertIn("--all", out["error"]["suggested_action"])
+
     def test_check_fixtures_with_a_missing_fixture_entry_exits_2(self):
         out = self.failed("check-fixtures", "--anchors", self.fixture_anchors(), "--gate", "plan", "--all",
                           "--answers-file", self.put("a.json", {"other": plan_answers()}), "--run-dir", str(self.d / "runs"),
