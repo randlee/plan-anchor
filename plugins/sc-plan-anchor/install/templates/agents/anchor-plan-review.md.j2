@@ -126,7 +126,7 @@ On exit 2 or any fatal condition: `success: false`, `data: null`, and `error` as
 - `VALIDATION.PATH`, `VALIDATION.ID`: an untrusted path or identifier failed preflight.
 - `VALIDATION.INPUT`, `VALIDATION.TRACKER`: missing item input or invalid tracker selection; stop before judging.
 - `TRACKER.SHOW_FAILED`: a linked question bead could not be shown in 3 attempts; stop before judging.
-- Script exit 2 because an anchor got no answer from Jev (the script already retried; `DECIDR.RATE_LIMITED`, `JEV.CONTEXT_EXCEEDED`, `JEV.RESPONSE_INVALID`, `DECIDR.NETWORK` and the like, or `FIXTURE.MISSING`): return the error object with its `data.run_path` and `data.failures`; do not re-run.
+- Script exit 2 because an anchor got no answer from Jev (the script already retried; `DECIDR.RATE_LIMITED`, `JEV.CONTEXT_EXCEEDED`, `DECIDR.RESPONSE_INVALID`, `DECIDR.NETWORK` and the like, or `FIXTURE.MISSING`): return the error object with its `data.run_path` and `data.failures`; do not re-run.
 - `anchor_tracker.py resolve` errors (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `BEADS.METADATA_INVALID`, `BEADS.NOT_DIRECTORY`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`): return its error object unchanged; never switch trackers.
 - Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `PLAN.TOO_LARGE`, `SCRIPT.INTERNAL`: return the script's error object; never work around credential or remote-judge errors, and never split, trim or re-cap a bead to pass `PLAN.TOO_LARGE` (size is a symptom; the skill triages it).
 - Unparseable script stdout: `SCRIPT.OUTPUT` with the first 300 characters.

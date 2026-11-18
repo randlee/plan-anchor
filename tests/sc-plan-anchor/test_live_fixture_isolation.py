@@ -3,6 +3,7 @@ import ast
 import os
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import unittest
 
@@ -30,7 +31,7 @@ class LiveFixtureIsolationTests(unittest.TestCase):
             "import jev_inputs; "
             "assert sys.modules['sc_agent'] is wheel, 'fixture imports replaced the installed sc_agent wheel'"
         )
-        completed = subprocess.run([sys.executable, "-c", program], cwd=tests, env=environment,
+        completed = run_test_child([sys.executable, "-c", program], cwd=tests, env=environment,
                                    capture_output=True, text=True, timeout=30)
         self.assertEqual(completed.returncode, 0, completed.stderr)
 

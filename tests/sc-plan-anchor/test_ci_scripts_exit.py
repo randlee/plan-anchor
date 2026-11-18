@@ -14,6 +14,7 @@ import io
 from pathlib import Path
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -38,7 +39,7 @@ def repo_copy(dest: Path) -> Path:
 
 class CheckVersionSync(unittest.TestCase):
     def run_check(self, root: Path, *argv):
-        proc = subprocess.run([sys.executable, str(root / "scripts" / "check_version_sync.py"), *argv], cwd=str(root),
+        proc = run_test_child([sys.executable, str(root / "scripts" / "check_version_sync.py"), *argv], cwd=str(root),
                               capture_output=True, text=True, encoding="utf-8")
         self.assertNotIn("Traceback", proc.stderr)
         return proc
@@ -88,7 +89,8 @@ class GenInstallData(unittest.TestCase):
         def fake_run(cmd, *args, **kwargs):
             if kwargs.get("check"):  # _git's calls; _has_commit's (check=False) still answer
                 raise subprocess.CalledProcessError(128, cmd, output=b"", stderr=b"fatal: bad object")
-            return real(cmd, *args, **kwargs)
+            with mock.patch.object(self.gen.subprocess, "run", real):
+                return run_test_child(cmd, *args, **kwargs)
 
         with mock.patch.object(self.gen.subprocess, "run", fake_run):
             code, err = self.main("--check")

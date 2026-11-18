@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -51,7 +52,7 @@ class ConventionCase(unittest.TestCase):
         return str(path)
 
     def run_script(self, script, *argv):
-        proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(self.d), env=clean_env(),
+        proc = run_test_child([sys.executable, str(script), *argv], cwd=str(self.d), env=clean_env(),
                               capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(proc.returncode, 1, f"{script.name} {argv} exited 1: {proc.stdout}{proc.stderr}")
         try:
@@ -196,7 +197,7 @@ class JevJudgeErrors(ConventionCase):
                             "--out", str(self.d / "t")], None),
         }
         (self.d / "empty").mkdir()
-        listed = re.search(r"\{([a-z,-]+)\}", subprocess.run([sys.executable, str(JJ), "-h"], capture_output=True,
+        listed = re.search(r"\{([a-z,-]+)\}", run_test_child([sys.executable, str(JJ), "-h"], capture_output=True,
                                                             text=True, encoding="utf-8").stdout).group(1).split(",")
         self.assertEqual(sorted(cases), sorted(listed), "every subcommand needs an error-path case")
         for name, (argv, code) in cases.items():
@@ -220,9 +221,9 @@ class JevJudgeErrors(ConventionCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("the consent check reads settings.yaml with PyYAML")
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         # a dummy key only gets past the credential check; consent is absent, so nothing is sent
-        proc = subprocess.run([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
+        proc = run_test_child([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
                               capture_output=True, text=True, encoding="utf-8")
         out = json.loads(proc.stdout)
         self.assertEqual((proc.returncode, out["success"], out["error"]["code"]), (2, False, "POLICY.REMOTE_JUDGE_DISABLED"), out)
@@ -247,7 +248,7 @@ class OtherScripts(ConventionCase):
 
     def test_settings(self):
         script = SCRIPTS / "plan_anchor_settings.py"
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         try:
             import yaml  # noqa: F401
         except ImportError:  # the settings script needs PyYAML; its absence is a could-not-run error

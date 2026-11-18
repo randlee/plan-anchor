@@ -884,7 +884,7 @@ class RepositoryContractTests(unittest.TestCase):
                 self.assertEqual(imports, [])
         offline = ("import sys\nsys.modules['sc_agent'] = None\n"
                    f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport decidr_client\n")
-        proc = subprocess.run([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
+        proc = run_test_child([sys.executable, "-c", offline], capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         code = ("import sys\nsys.modules['yaml'] = None\nsys.modules['sc_agent'] = None\n"
                 f"sys.path.insert(0, {str(SCRIPTS)!r})\nimport jev_judge\n"

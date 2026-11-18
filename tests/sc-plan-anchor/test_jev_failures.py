@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -81,7 +82,7 @@ class ProcessCase(unittest.TestCase):
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         self.d = Path(td.name).resolve()
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
 
     def put(self, name, value):
         path = self.d / name
@@ -91,7 +92,7 @@ class ProcessCase(unittest.TestCase):
 
     def consent(self):
         """allow_remote_judge: true in this scratch repository's settings file (never the real one)."""
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "plan_anchor_settings.py"), "set", "allow_remote_judge", "true"],
+        proc = run_test_child([sys.executable, str(SCRIPTS / "plan_anchor_settings.py"), "set", "allow_remote_judge", "true"],
                               cwd=str(self.d), env=child_env(), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
@@ -102,8 +103,8 @@ class ProcessCase(unittest.TestCase):
         else:
             cmd = [sys.executable, str(JJ), *argv]
             environment = child_env(**(env or {}))
-        proc = subprocess.run(cmd, cwd=str(self.d), env=environment, capture_output=True, text=True,
-                              encoding="utf-8", timeout=300)
+        proc = run_test_child(cmd, cwd=str(self.d), env=environment, capture_output=True, text=True,
+                              encoding="utf-8", timeout=60)
         self.assertNotEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         try:
             out = json.loads(proc.stdout)
@@ -302,7 +303,7 @@ class Interrupts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             d = Path(td).resolve()
             if git:
-                subprocess.run(["git", "init", "-q", str(d)], check=True)
+                run_test_child(["git", "init", "-q", str(d)], check=True)
             for name, value in (files or {}).items():
                 (d / name).write_text(json.dumps(value), encoding="utf-8")
             target = d / input_rel
@@ -310,9 +311,9 @@ class Interrupts(unittest.TestCase):
             target.write_text("{}\n", encoding="utf-8")
             script, *rest = argv
             rest = [str(a).replace("{INPUT}", str(target)) for a in rest]
-            proc = subprocess.run([sys.executable, "-c", INTERRUPT_RUNNER, str(script), str(target), *rest], cwd=str(d),
+            proc = run_test_child([sys.executable, "-c", INTERRUPT_RUNNER, str(script), str(target), *rest], cwd=str(d),
                                   env=child_env(**(env or {})), preexec_fn=_default_sigint, capture_output=True,
-                                  text=True, encoding="utf-8", timeout=120)  # a hang guard only
+                                  text=True, encoding="utf-8", timeout=60)  # a hang guard only
         out, err = proc.stdout, proc.stderr
         self.assertEqual(proc.returncode, 130, out + err)
         envelope = json.loads(out)

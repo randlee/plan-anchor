@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import tomllib
@@ -38,12 +39,7 @@ def _run_subprocess(*popenargs, **kwargs):
     """Run one test child with a bound and no access to the test runner's stdin."""
     kwargs["timeout"] = _SUBPROCESS_TIMEOUT_SECONDS
     kwargs["stdin"] = subprocess.DEVNULL
-    try:
-        return subprocess.run(*popenargs, **kwargs)
-    except subprocess.TimeoutExpired as error:
-        raise AssertionError(
-            f"subprocess timed out after {error.timeout} seconds: {error.cmd!r}"
-        ) from error
+    return run_test_child(*popenargs, **kwargs)
 
 
 def _load(name, path):
@@ -113,7 +109,7 @@ class SubprocessRunnerTests(unittest.TestCase):
     def test_timeout_fails_without_retry(self):
         timeout = subprocess.TimeoutExpired(["example"], _SUBPROCESS_TIMEOUT_SECONDS)
         with mock.patch.object(subprocess, "run", side_effect=timeout) as run:
-            with self.assertRaisesRegex(AssertionError, "subprocess timed out"):
+            with self.assertRaisesRegex(AssertionError, "test child timed out"):
                 _run_subprocess(["example"])
 
         run.assert_called_once()
