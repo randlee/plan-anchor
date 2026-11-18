@@ -262,7 +262,7 @@ class CredentialLookupTests(unittest.TestCase):
         self.assertEqual((kwargs["project"], kwargs["agent_role"], boundary.call_args.kwargs["abort_on"]),
                          ("plan-anchor", "judge", frozenset({"auth"})))
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["timeout_secs"]),
-                         ("plan-anchor", "typesafe-api-key", 45))
+                         (None, None, 45))
         self.assertIs(kwargs["cancel"], token)
         self.assertEqual([name for name in kwargs if "key" in name.lower()
                           and name not in {"keyring_service", "keyring_account"}], [])
@@ -289,7 +289,7 @@ class CredentialLookupTests(unittest.TestCase):
                 self.assertEqual(result.error.message, expected)
                 kwargs = send.call_args.kwargs
                 self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
-                                 ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+                                 (None, None, frozenset({"auth"})))
                 self.assertIs(kwargs["cancel"], token)
 
     def test_missing_key_is_the_wheels_typed_auth_error(self):

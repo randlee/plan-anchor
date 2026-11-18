@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.9 — 2026-11-18
+
+- Use sc-decidr's shared default TypeSafe keyring entry for every decision call. The legacy `plan-anchor` / `typesafe-api-key` credential is no longer read; migrate it to service `TYPESAFE_API_KEY` and the current OS account, or supply `TYPESAFE_API_KEY` through the process environment or repository `.env`.
+- Add a real installed-wheel regression proving `.env` then process-environment precedence with platform keyring access trapped.
+
 ## 0.12.8 — 2026-11-17
 
 - Render the sc-decidr 0.2.7 shared client, use typed answers and shared batch, consent, error and cancellation records, and remove plan-anchor duplicates.

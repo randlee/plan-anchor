@@ -132,7 +132,8 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         code, out, requests = planted
         self.assertEqual(code, 0, out)
         self.assertEqual({body["model"] for body, _ in requests}, {"jev-latest"})
-        self.assertTrue(all(options["keyring_service"] == "plan-anchor" for _, options in requests))
+        self.assertTrue(all(options["keyring_service"] is None and options["keyring_account"] is None
+                            for _, options in requests))
         result = out["data"]["results"][0]
         # 0.65 is within 0.10 of the default 0.6: confirmation stays on (CONFIRM_NEAR=0 ignored), the item
         # is sent (MAX_ITEM_CHARS=5 ignored) and the verdict uses 0.6 (THRESHOLD=0.01 ignored).
