@@ -115,7 +115,6 @@ Plan-gate size handling
 from __future__ import annotations
 
 import argparse
-import asyncio
 import datetime as _dt
 import hashlib
 import json
@@ -2426,7 +2425,7 @@ def cmd_judge(args) -> Result[dict, ClientError]:
     results = results + [excluded_entry(a, exclusions[a["id"]], ctx["gate"]) for a in anchors if exclusions[a["id"]] is not None]
     results.sort(key=lambda r: (SEVERITY.get(r["verdict"] or "error", 99), r["anchor_id"]))
     run = assemble_run(ctx, rec, args.anchors, item, results, requests_out, model_answered)
-    path = write_run(run, args.out, default_run_dir(args))
+    write_run(run, args.out, default_run_dir(args))
     # a dry run asks Jev nothing, so an unsendable request is reported in its cell, not as a Jev failure
     failures = [] if ctx["dry_run"] else cell_failures(results)
     if failures:  # the partial run is kept on disk; the command still could not do its job
@@ -3419,12 +3418,6 @@ def batch_result_fields(job, settings, raw) -> dict:
             "leaning": leaning_of(answers, job.roles, job.kind)}
 
 
-
-
-
-
-
-
 def read_request_lines(path: str) -> Result[list, ClientError]:
     """Request lines from a file or stdin (``-``): the same parser for both, one JSON object per non-empty line."""
     if path == "-":
@@ -3467,14 +3460,11 @@ def read_batch_results(path: str) -> Result[list, ClientError]:
             line = json.loads(raw)
         except json.JSONDecodeError as exc:
             return fail("INPUT.MALFORMED", f"result stream line {n} is not JSON: {exc}")
-        if not isinstance(line, dict) or line.get("schema") != decidr_client.BATCH_RESULT_SCHEMA:
-            return fail("INPUT.MALFORMED", f"result stream line {n} is not a {decidr_client.BATCH_RESULT_SCHEMA} record")
+        if not isinstance(line, dict) or line.get("schema") not in {
+                decidr_client.BATCH_RESULT_SCHEMA, "plan-anchor/jev-batch-result/1"}:
+            return fail("INPUT.MALFORMED", f"result stream line {n} is not a supported batch result record")
         lines.append(line)
     return Ok(lines)
-
-
-
-
 
 
 def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, ClientError]:
@@ -3620,8 +3610,6 @@ def run_recorded_batch(lines: list, settings: decidr_client.BatchSettings, fixtu
         results = decidr_client.pump_batch(records(), log_result=persist, echo=echo)
     except decidr_client.BatchInputError as error:
         return Err(error.error)
-    except ClientError as error:
-        return Err(error)
     except ClientError as error:
         return Err(error)
     return Ok(decidr_client.streamed_result(results))
@@ -4852,12 +4840,10 @@ def _main(argv=None) -> int:
         failed = outcome.value.failed
         if not failed:
             return 0
-        first = failed[0]["error"] or {}
-        error = ClientError(first.get("code") or "EXECUTION.JEV",
-                           f"{len(failed)} request(s) got no answer; first {failed[0]['request_id']}: {first.get('message')}",
-                           retryable=bool(first.get("recoverable")),
-                           action="Read each failed line's error field; rerun only those requests once the cause is fixed.")
-        sys.stderr.write(json.dumps(error.to_json(), sort_keys=True) + "\n")  # stdout stays pure result lines
+        cause = next((row for row in failed if (row.get("error") or {}).get("code") != "CANCELED"), failed[0])
+        summary = {"success": False, "data": {"unanswered": len(failed), "request_id": cause.get("request_id")},
+                   "error": cause.get("error")}
+        sys.stderr.write(json.dumps(redact_sensitive(summary), sort_keys=True) + "\n")  # stdout stays pure result lines
         return 2
     emit(outcome.value, fmt)
     return 0
