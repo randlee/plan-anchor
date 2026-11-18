@@ -545,7 +545,7 @@ class BatchTests(TournamentCase):
         self.assertEqual((kwargs["model"], kwargs["project"], kwargs["agent_role"], kwargs["workers"]),
                          ("jev-latest", "plan-anchor", "tournament", 2))
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
-                         ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+                         (None, None, frozenset({"auth"})))
         self.assertIs(kwargs["cancel"], cancel_token)
         self.assertNotIn("session_log", kwargs)
 
@@ -579,7 +579,7 @@ class BatchTests(TournamentCase):
         self.assertNotIn("private response", json.dumps(line))
         kwargs = send_batch.call_args.kwargs
         self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
-                         ("plan-anchor", "typesafe-api-key", frozenset({"auth"})))
+                         (None, None, frozenset({"auth"})))
 
     def test_live_callback_is_durable_before_interruption(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))

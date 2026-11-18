@@ -133,8 +133,6 @@ import decidr_client  # noqa: E402
 from decidr_client import ClientError  # noqa: E402
 
 
-CREDENTIAL_SERVICE = "plan-anchor"
-CREDENTIAL_ACCOUNT = "typesafe-api-key"
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_ITEM_CHARS = 24000
@@ -1727,8 +1725,8 @@ def call_jev(body: dict, timeout: float) -> Result[dict, ClientError]:
     """Author the domain request; the generated client owns the wheel boundary."""
     record = decidr_client.call_result(
         body, model=body["model"], project="plan-anchor", agent_role="judge",
-        abort_on=frozenset({"auth"}), keyring_service=CREDENTIAL_SERVICE,
-        keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=timeout,
+        abort_on=frozenset({"auth"}), keyring_service=None,
+        keyring_account=None, timeout_secs=timeout,
         consent_what="The anchor statement and the item text",
     )
     if not record["ok"]:
@@ -3524,8 +3522,8 @@ def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_
         result = decidr_client.call_batch_results(
             [job.body for job in jobs],
             model=settings.model, project="plan-anchor", agent_role="tournament",
-            abort_on=frozenset({"auth"}), keyring_service=CREDENTIAL_SERVICE,
-            keyring_account=CREDENTIAL_ACCOUNT, timeout_secs=settings.timeout,
+            abort_on=frozenset({"auth"}), keyring_service=None,
+            keyring_account=None, timeout_secs=settings.timeout,
             workers=settings.max_workers, on_result=persist,
             consent_what="The anchor statements, scopes and item texts in the request stream",
         )

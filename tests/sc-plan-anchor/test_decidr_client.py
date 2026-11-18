@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import importlib
+import importlib.metadata
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
+import threading
 import types
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, call, patch
 
 from layout_support import SCRIPTS
@@ -61,8 +68,8 @@ class DecidrClientTests(unittest.TestCase):
         result = self.client.call_result(
             "request", model="model-selector", project="demo", agent_role="planner",
             abort_on=frozenset(), category_codes={}, cancel=cancel,
-            config_dir="/tmp/config", keyring_service="plan-anchor",
-            keyring_account="typesafe-api-key", general_log=general_sink,
+            config_dir="/tmp/config", keyring_service=None,
+            keyring_account=None, general_log=general_sink,
             timeout_secs=45,
         )
         self.assertTrue(result["ok"])
@@ -70,7 +77,7 @@ class DecidrClientTests(unittest.TestCase):
         self.agent.send.assert_called_once_with(
             "request", model="model-selector", project="demo", agent_role="planner",
             cancel=cancel, images=None, long_context=False, config_dir="/tmp/config",
-            keyring_service="plan-anchor", keyring_account="typesafe-api-key",
+            keyring_service=None, keyring_account=None,
             general_log=general_sink, timeout_secs=45,
         )
         self.assertNotIn("session_log", self.agent.send.call_args.kwargs)
@@ -98,6 +105,99 @@ class DecidrClientTests(unittest.TestCase):
                            abort_on=frozenset({"quota"}), category_codes={}, cancel=Mock())
         self.agent.send.assert_not_called()
         self.agent.send_batch.assert_not_called()
+
+
+    def test_real_wheel_prefers_dotenv_then_environment_with_keyring_trapped(self):
+        try:
+            importlib.metadata.distribution("sc-decidr")
+        except importlib.metadata.PackageNotFoundError:
+            self.skipTest("sc-decidr wheel is not installed")
+
+        # Other tests install a module double in sys.modules. Load the installed
+        # wheel itself and make it visible only for these client calls.
+        previous_agent = sys.modules.pop("sc_agent", None)
+        try:
+            wheel = importlib.import_module("sc_agent")
+        finally:
+            if previous_agent is not None:
+                sys.modules["sc_agent"] = previous_agent
+
+        seen = []
+        ready = threading.Event()
+
+        class LocalRunner(ThreadingHTTPServer):
+            def serve_forever(self, *args, **kwargs):
+                ready.set()
+                return super().serve_forever(*args, **kwargs)
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def reply(self, body):
+                data = json.dumps(body).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                self.reply({"ok": True, "model": "jev-latest"})
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                seen.append(self.headers.get("Authorization"))
+                self.reply({"model": "jev-latest", "answers": {"q": {"type": "noul", "noul": 0.5}},
+                            "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+        server = LocalRunner(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(ready.wait(5), "local runner did not become ready")
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=10)
+                config = root / "config"
+                config.mkdir()
+                (config / "default.json").write_text(json.dumps({
+                    "log_root": str(root / "logs"),
+                    "local_runners": {"dec": {"kind": "mapika", "host": "127.0.0.1",
+                                                "port": server.server_port, "model": "jev-latest",
+                                                "key_env": "TYPESAFE_API_KEY"}},
+                }))
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.endswith("_API_KEY") and not key.startswith("SC_AGENT__")}
+                environment.update(TYPESAFE_API_KEY="env-test-key", SC_AGENT_TEST_TRAP_PLATFORM_KEYRING="1")
+                request = {"model": "jev-latest", "state": "s", "questions": {"q": {"type": "noul"}}}
+                options = dict(model="dec", project="plan-anchor", agent_role="test", abort_on=frozenset(),
+                               category_codes={}, cancel=wheel.CancelToken(), config_dir=str(config))
+                client = load_client()
+                with patch.dict(os.environ, environment, clear=True), patch.object(client, "remote_preflight", return_value=None), \
+                        patch.dict(sys.modules, {"sc_agent": wheel}):
+                    previous_cwd = os.getcwd()
+                    os.chdir(root)
+                    try:
+                        dotenv = root / ".env"
+                        dotenv.write_text("TYPESAFE_API_KEY=dotenv-test-key\n")
+                        first = client.call_result(request, **options)
+                        self.assertTrue(first["ok"], first)
+                        dotenv.unlink()
+                        second = client.call_result(request, **options)
+                        self.assertTrue(second["ok"], second)
+                        del os.environ["TYPESAFE_API_KEY"]
+                        third = client.call_result(request, **options)
+                        self.assertFalse(third["ok"], third)
+                        self.assertIn("secrets.keyring_construction_refused", json.dumps(third["error"].data))
+                    finally:
+                        os.chdir(previous_cwd)
+            self.assertEqual(seen, ["Bearer dotenv-test-key", "Bearer env-test-key"])
+        finally:
+            server.shutdown()
+            thread.join(5)
+            server.server_close()
+
 
     def test_batch_missing_wheel_and_error_paths(self):
         common = dict(model="m", project="p", agent_role="r", abort_on=frozenset({"auth"}),

@@ -123,11 +123,11 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 **TypeSafe API key**
 
-The live judge looks for the key in this order: `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection.
+The live judge uses sc-decidr's shared credential lookup: repository `.env`, then `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection. The platform entry uses service `TYPESAFE_API_KEY` and the current OS account. Older plan-anchor installs may have stored the key under service `plan-anchor` / account `typesafe-api-key`; move it to the shared default entry or use `.env` / process environment, because plan-anchor no longer reads the legacy location.
 
-- macOS: Keychain generic-password item with service `plan-anchor` and account `typesafe-api-key`.
-- Windows: Credential Manager generic credential with target `plan-anchor:typesafe-api-key`.
-- Linux: Secret Service item returned by `secret-tool lookup service plan-anchor account typesafe-api-key`. Create it without putting the key on a command line with `secret-tool store --label="plan-anchor TypeSafe API key" service plan-anchor account typesafe-api-key` and enter the value on standard input.
+- macOS: Keychain generic-password item with service `TYPESAFE_API_KEY` and the current account.
+- Windows: Credential Manager generic credential with target `TYPESAFE_API_KEY` and the current account.
+- Linux: Secret Service item returned by `secret-tool lookup service TYPESAFE_API_KEY account "$USER"`.
 
 - Create a key at typesafe.ai. Read it silently so it does not appear in the command line, shell history, or terminal output, then export it in the shell that launches Claude Code or Codex:
   ```bash

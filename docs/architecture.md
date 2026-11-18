@@ -329,9 +329,11 @@ Consequences: A typo never falls back to a default. The keys are
 `schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
 `plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-082); the
 nearest file at or above the repository wins whole (ADR-015).
-The `sc-decidr` wheel owns credential lookup and precedence. Live calls pass
-the plan-anchor keyring service/account overrides through the generated client;
-the plugin does not query the platform credential store. The plugin reads
+The `sc-decidr` wheel owns credential lookup and precedence. Every live
+decision call passes `keyring_service=None` and `keyring_account=None` through
+the generated client, selecting the shared default TypeSafe keyring entry
+(service `TYPESAFE_API_KEY`, account the current OS user; REQ-SAG-0401). The
+plugin does not query the platform credential store. The plugin reads
 `TYPESAFE_API_KEY` only to redact it from emitted values and run files
 (REQ-017), never to resolve or pass a credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
