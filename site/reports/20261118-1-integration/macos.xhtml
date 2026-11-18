@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>sc-agent integration: macos</title>
+  <style type="text/css">
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #ffffff; }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    h3 { margin: 0; padding-bottom: 8px; border-bottom: 2px solid #2563eb; color: #1f2937; flex: 1; }
+    .meta { color: #64748b; font-size: 14px; margin-bottom: 12px; }
+    .actions { display: flex; gap: 8px; }
+    .icon-button { width: 30px; height: 30px; border-radius: 999px; border: 1px solid #cbd5e1; background: #ffffff; color: #334155; font-size: 14px; cursor: pointer; }
+    .source-tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-weight: 700; background: #eff6ff; color: #1e40af; }
+    .scratchpad { margin-top: 12px; padding: 12px; border-left: 4px solid #3b82f6; background: #eff6ff; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f3f4f6; }
+    pre { background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <h3>sc-agent integration: macos</h3>
+    <div class="actions">
+      <button class="icon-button" title="Copy JSON" data-copy-text='{&quot;run_id&quot;: &quot;20261118-1-integration&quot;, &quot;platform&quot;: &quot;macos&quot;, &quot;source_revision&quot;: &quot;06714811325bedfb168c2313f44f291c46f693cb&quot;, &quot;wheel_revision&quot;: &quot;prerelease/v0.2.8@f1a192dd76d8c3c4e1dd11c0df4a36ee9fcbf56e&quot;, &quot;mode&quot;: &quot;live&quot;, &quot;cases&quot;: [{&quot;case&quot;: &quot;test_judge_writes_real_run_artifact&quot;, &quot;status&quot;: &quot;PASS&quot;, &quot;detail&quot;: &quot;assertions passed&quot;, &quot;provider&quot;: &quot;typesafe&quot;, &quot;model&quot;: &quot;jev-latest&quot;, &quot;mode&quot;: &quot;live&quot;, &quot;result&quot;: &quot;real judge artifact; verdict=satisfied&quot;}, {&quot;case&quot;: &quot;test_batch_preserves_correlation_and_durable_log&quot;, &quot;status&quot;: &quot;PASS&quot;, &quot;detail&quot;: &quot;assertions passed&quot;, &quot;provider&quot;: &quot;typesafe&quot;, &quot;model&quot;: &quot;jev-latest&quot;, &quot;mode&quot;: &quot;live&quot;, &quot;result&quot;: &quot;three real results; complete correlation; echoed completion order equals durable JSONL&quot;}, {&quot;case&quot;: &quot;test_invalid_key_maps_auth_and_withholds_body&quot;, &quot;status&quot;: &quot;PASS&quot;, &quot;detail&quot;: &quot;assertions passed&quot;, &quot;provider&quot;: &quot;typesafe&quot;, &quot;model&quot;: &quot;jev-latest&quot;, &quot;mode&quot;: &quot;live&quot;, &quot;result&quot;: &quot;HTTP401 maps to AUTH.CREDENTIALS; body withheld; key redacted&quot;}]}'>{}</button>
+      <button class="icon-button" title="Copy Context" data-copy-text='macos 20261118-1-integration'>⎘</button>
+    </div>
+  </div>
+  <p class="meta">
+    <span class="source-tag">pytest / live</span>
+  </p>
+  <p><strong>run_id</strong>: 20261118-1-integration</p>
+  <p><strong>platform</strong>: macos</p>
+  <p><strong>source_revision</strong>: 06714811325bedfb168c2313f44f291c46f693cb</p>
+  <p><strong>wheel_revision</strong>: prerelease/v0.2.8@f1a192dd76d8c3c4e1dd11c0df4a36ee9fcbf56e</p>
+  <p><strong>mode</strong>: live</p>
+  <table><thead><tr><th>Case</th><th>Provider</th><th>Model</th><th>Result</th><th>Observed</th><th>Detail</th></tr></thead><tbody>
+    <tr><td>test_judge_writes_real_run_artifact</td><td>typesafe</td><td>jev-latest</td><td>PASS</td><td>real judge artifact; verdict=satisfied</td><td>assertions passed</td></tr>
+    <tr><td>test_batch_preserves_correlation_and_durable_log</td><td>typesafe</td><td>jev-latest</td><td>PASS</td><td>three real results; complete correlation; echoed completion order equals durable JSONL</td><td>assertions passed</td></tr>
+    <tr><td>test_invalid_key_maps_auth_and_withholds_body</td><td>typesafe</td><td>jev-latest</td><td>PASS</td><td>HTTP401 maps to AUTH.CREDENTIALS; body withheld; key redacted</td><td>assertions passed</td></tr>
+  </tbody></table>
+  <script type="text/javascript">
+    document.addEventListener("click", async function (event) {
+      const button = event.target.closest("[data-copy-text]");
+      if (!button) return;
+      const text = button.getAttribute("data-copy-text") || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        button.setAttribute("title", "Copied");
+      } catch (err) {
+        button.setAttribute("title", "Copy failed");
+      }
+    });
+  </script>
+</body>
+</html>
