@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import textwrap
@@ -45,7 +46,7 @@ class TrustNeedsTheInstallLock(Scratch):
     def preflight(self, scripts: Path, cwd: Path):
         (cwd / "anchors.json").write_text(json.dumps(ANCHORS), encoding="utf-8")
         script = scripts / "jev_judge.py"
-        proc = subprocess.run([sys.executable, str(script), "agent-preflight", "--workspace-root", str(cwd),
+        proc = run_test_child([sys.executable, str(script), "agent-preflight", "--workspace-root", str(cwd),
                                "--script", str(script), "--anchors", "anchors.json"], cwd=str(cwd),
                               env=child_env(self.home), capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(proc.returncode, 1, proc.stdout + proc.stderr)
@@ -53,7 +54,7 @@ class TrustNeedsTheInstallLock(Scratch):
 
     def workspace(self, name):
         ws = self.tmp / name
-        subprocess.run(["git", "init", "-q", str(ws)], check=True)
+        run_test_child(["git", "init", "-q", str(ws)], check=True)
         return ws
 
     def test_an_installer_written_copy_is_trusted(self):
@@ -92,7 +93,7 @@ class SubfolderInstall(Scratch):
         bin_dir.mkdir(exist_ok=True)
         _write_fake_cli(bin_dir, "br", FAKE_BR)
         path = dest / ".claude" / "skills" / "plan-anchoring" / "scripts" / script
-        proc = subprocess.run([sys.executable, str(path), *argv], cwd=str(cwd), env=child_env(self.home, bin_dir),
+        proc = run_test_child([sys.executable, str(path), *argv], cwd=str(cwd), env=child_env(self.home, bin_dir),
                               capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)["data"]

@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -146,7 +147,7 @@ def render_cli(template: Path, tracker: str, out: Path) -> None:
                            "(scripts/install_sc_compose_ci.py) must be available")
     version = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))["version"]
     out.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run([binary, "render", "--root", str(template.parent), "--strict", "--var", f"tracker={tracker}",
+    proc = run_test_child([binary, "render", "--root", str(template.parent), "--strict", "--var", f"tracker={tracker}",
                            "--var", f"version={version}", "--file", str(template), "--output", str(out)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:

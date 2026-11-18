@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -118,7 +119,7 @@ class RubricInputTests(unittest.TestCase):
                     f"sys.path.insert(0, {str(Path(jj.__file__).parent)!r})\n"
                     "import jev_judge\n"
                     f"sys.exit(jev_judge.main({self.args(root) + ['--dry-run']!r}))\n")
-            proc = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+            proc = run_test_child([sys.executable, '-c', code], capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(json.loads(proc.stdout)['success'])
 

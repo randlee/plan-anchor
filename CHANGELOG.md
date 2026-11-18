@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.10 — 2026-11-18
+
+- Correct the review agent’s invalid response error code and bound test child processes.
+
 ## 0.12.9 — 2026-11-18
 
 - Use sc-decidr's shared default TypeSafe keyring entry for every decision call. The legacy `plan-anchor` / `typesafe-api-key` credential is no longer read; migrate it to service `TYPESAFE_API_KEY` and the current OS account, or supply `TYPESAFE_API_KEY` through the process environment or repository `.env`.

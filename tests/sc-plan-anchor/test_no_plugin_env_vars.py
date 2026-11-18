@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -82,7 +83,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
     def dry_run(self, environment):
         with tempfile.TemporaryDirectory() as d:
             workspace(d)
-            proc = subprocess.run([sys.executable, str(JUDGE_SCRIPT), *JUDGE, "--dry-run"], cwd=d, env=environment,
+            proc = run_test_child([sys.executable, str(JUDGE_SCRIPT), *JUDGE, "--dry-run"], cwd=d, env=environment,
                                   capture_output=True, text=True, encoding="utf-8")
             runs = {p.name.split("-ex-")[-1]: json.loads(p.read_text(encoding="utf-8"))
                     for p in sorted((Path(d) / "runs").glob("*.json"))}

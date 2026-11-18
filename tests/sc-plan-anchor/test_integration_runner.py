@@ -1,5 +1,6 @@
 """Offline input-validation checks for the manual live runner."""
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -45,7 +46,7 @@ class IntegrationRunnerInputs(unittest.TestCase):
             credentials = root / 'credentials.env'
             credentials.write_text('EXPLICIT_TEST_KEY=synthetic-secret\n')
             source = root / 'absent-source'
-            result = subprocess.run(
+            result = run_test_child(
                 [sys.executable, str(ROOT / 'scripts/integration.py'),
                  '--venv', str(root / 'unused-venv'), '--env-file', str(credentials),
                  '--key-variable', 'EXPLICIT_TEST_KEY', '--sc-agent-source', str(source),

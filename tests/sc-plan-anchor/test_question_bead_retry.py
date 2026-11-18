@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -55,7 +56,7 @@ cat "{d}/show.json"
         (d / "anchors.json").write_text(json.dumps(anchors), encoding="utf-8")
         env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", W=str(work), ROOT=str(d), SCRIPT=str(d / "preflight.py"),
                    ANCHORS=str(d / "anchors.json"), RUN_DIR=str(d / "runs"), ANCHOR_TRACKER="fake-tracker")
-        proc = subprocess.run([BASH, "-c", override_loop(tracker)], env=env, capture_output=True, text=True, timeout=60)
+        proc = run_test_child([BASH, "-c", override_loop(tracker)], env=env, capture_output=True, text=True, timeout=60)
         calls = int((d / "calls").read_text()) if (d / "calls").exists() else 0
         sleeps = (d / "sleeps").read_text().split() if (d / "sleeps").exists() else []
         overrides = json.loads((work / "overrides.json").read_text()) if (work / "overrides.json").exists() else None
