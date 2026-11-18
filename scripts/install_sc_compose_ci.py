@@ -48,6 +48,10 @@ def normalized_machine() -> str:
     return {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
 
 
+def executable_name() -> str:
+    return "sc-compose.exe" if sys.platform == "win32" else "sc-compose"
+
+
 def safe_member(name: str) -> None:
     path = Path(name)
     if path.is_absolute() or ".." in path.parts:
@@ -96,11 +100,11 @@ def main() -> int:
         extracted = Path(temporary) / "extracted"
         extracted.mkdir()
         extract(archive, extracted)
-        executable_name = "sc-compose.exe" if sys.platform == "win32" else "sc-compose"
-        matches = [path for path in extracted.rglob(executable_name) if path.is_file()]
+        expected_executable = executable_name()
+        matches = [path for path in extracted.rglob(expected_executable) if path.is_file()]
         if len(matches) != 1:
             raise RuntimeError("sc-compose release archive lacks one executable")
-        target = install_dir / executable_name
+        target = install_dir / expected_executable
         shutil.copy2(matches[0], target)
         target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     version = subprocess.run([str(target), "--version"], capture_output=True, text=True, check=True,

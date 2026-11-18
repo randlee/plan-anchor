@@ -175,36 +175,38 @@ class InstallScComposeCi(unittest.TestCase):
         ci = load("install_sc_compose_ci")
         content = b"controlled archive"
         asset = "sc-compose-controlled.tar.gz"
-        key = ("darwin", "aarch64")
-        calls = []
+        for system, machine, key in (("darwin", "arm64", ("darwin", "aarch64")),
+                                     ("win32", "AMD64", ("win32", "x86_64"))):
+            with self.subTest(system=system), tempfile.TemporaryDirectory() as temp:
+                calls = []
 
-        def controlled_run(command, **options):
-            calls.append((command, options))
-            if command[0] == "gh":
-                destination = Path(command[command.index("--dir") + 1])
-                (destination / asset).write_bytes(content)
-                return subprocess.CompletedProcess(command, 0)
-            raise subprocess.TimeoutExpired(command, ci.VERSION_TIMEOUT_SECONDS)
+                def controlled_run(command, **options):
+                    calls.append((command, options))
+                    if command[0] == "gh":
+                        destination = Path(command[command.index("--dir") + 1])
+                        (destination / asset).write_bytes(content)
+                        return subprocess.CompletedProcess(command, 0)
+                    raise subprocess.TimeoutExpired(command, ci.VERSION_TIMEOUT_SECONDS)
 
-        def extract(_archive, destination):
-            (destination / "sc-compose").write_text("controlled executable", encoding="utf-8")
+                def extract(_archive, destination):
+                    (destination / ci.executable_name()).write_text("controlled executable", encoding="utf-8")
 
-        err = io.StringIO()
-        with tempfile.TemporaryDirectory() as temp, \
-                mock.patch.object(ci.sys, "platform", "darwin"), \
-                mock.patch.object(ci.platform, "machine", return_value="arm64"), \
-                mock.patch.dict(ci.os.environ, {"RUNNER_TEMP": temp}, clear=False), \
-                mock.patch.dict(ci.ASSETS, {key: (asset, hashlib.sha256(content).hexdigest())}), \
-                mock.patch.object(ci, "extract", side_effect=extract), \
-                mock.patch.object(ci.subprocess, "run", side_effect=controlled_run), \
-                contextlib.redirect_stderr(err):
-            code = ci.run()
-        self.assertEqual(code, 2)
-        self.assertIn("timed out after 30 seconds", err.getvalue())
-        self.assertTrue(str(calls[1][0][0]).endswith("/sc-compose"))
-        self.assertTrue(all(options["stdin"] == subprocess.DEVNULL for _, options in calls))
-        self.assertEqual([options["timeout"] for _, options in calls],
-                         [ci.DOWNLOAD_TIMEOUT_SECONDS, ci.VERSION_TIMEOUT_SECONDS])
+                err = io.StringIO()
+                with mock.patch.object(ci.sys, "platform", system), \
+                        mock.patch.object(ci.platform, "machine", return_value=machine), \
+                        mock.patch.dict(ci.os.environ, {"RUNNER_TEMP": temp}, clear=False), \
+                        mock.patch.dict(ci.ASSETS, {key: (asset, hashlib.sha256(content).hexdigest())}), \
+                        mock.patch.object(ci, "extract", side_effect=extract), \
+                        mock.patch.object(ci.subprocess, "run", side_effect=controlled_run), \
+                        contextlib.redirect_stderr(err):
+                    expected_executable = ci.executable_name()
+                    code = ci.run()
+                self.assertEqual(code, 2)
+                self.assertIn("timed out after 30 seconds", err.getvalue())
+                self.assertEqual(Path(calls[1][0][0]).name, expected_executable)
+                self.assertTrue(all(options["stdin"] == subprocess.DEVNULL for _, options in calls))
+                self.assertEqual([options["timeout"] for _, options in calls],
+                                 [ci.DOWNLOAD_TIMEOUT_SECONDS, ci.VERSION_TIMEOUT_SECONDS])
 
 
 if __name__ == "__main__":
