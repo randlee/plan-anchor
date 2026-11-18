@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.12 — 2026-11-18
+
+- Re-render the shared client from sc-decidr 0.2.8 and stop fixture batch jobs after authentication or policy errors.
+
 ## 0.12.11 — 2026-11-18
 
 - Keep tournament `--results` compatible with legacy `plan-anchor/jev-batch-result/1` logs without `sends`; current results use the shared `jev-batch-result/1` record and include `sends`.

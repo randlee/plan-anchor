@@ -505,7 +505,7 @@ class BatchTests(TournamentCase):
 
     def test_fixture_auth_failure_stops_later_jobs(self):
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 1, 24000, False)
 
         with mock.patch.object(jj, "run_batch_job", wraps=jj.run_batch_job) as run_job:
             result = self.run_recorded([line], settings,
@@ -513,10 +513,9 @@ class BatchTests(TournamentCase):
                                        self.d / "auth.jsonl")
             self.assertIsInstance(result, jj.Ok)
             results = self.records(self.d / "auth.jsonl")
-        self.assertEqual([r["candidate_id"] for r in results], ["c1", "c2"])
+        self.assertEqual([r["candidate_id"] for r in results], ["c1"])
         self.assertEqual(results[0]["error"]["code"], "AUTH.CREDENTIALS")
-        self.assertTrue(results[1]["ok"])
-        self.assertEqual(run_job.call_count, 2)
+        self.assertEqual(run_job.call_count, 1)
 
     def test_stream_batch_refuses_live_calls_before_running_jobs(self):
         settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)

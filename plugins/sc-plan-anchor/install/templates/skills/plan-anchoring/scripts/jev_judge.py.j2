@@ -3591,7 +3591,9 @@ def run_recorded_batch(lines: list, settings: decidr_client.BatchSettings, fixtu
         async for line in decidr_client.stream_batch(
             lines, settings, make_jobs=batch_jobs,
             run_job=lambda job, active_settings: run_batch_job(job, active_settings, fixture),
-            question_sets=question_sets,
+            question_sets=question_sets, window_factor=1,
+            abort=lambda result: result.get("error") is not None
+            and result["error"]["code"].startswith(("AUTH.", "POLICY.")),
         ):
             yield line
 
