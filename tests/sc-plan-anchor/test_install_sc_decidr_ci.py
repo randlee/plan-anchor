@@ -1,4 +1,4 @@
-"""The CI prerelease installer selects a matching wheel without a network call."""
+"""The CI PyPI installer selects a matching published wheel without a network call."""
 import contextlib
 import io
 import importlib.util
@@ -27,23 +27,19 @@ class DecidrWheelInstallerTests(unittest.TestCase):
                     mock.patch.object(installer.subprocess, 'run') as run:
                 installer.main()
             version = installer.client_version()
-            asset = f'sc_decidr-{version}-cp311-abi3-{suffix}.whl'
             self.assertEqual(run.call_args_list, [
-                mock.call(['gh', 'release', 'download', f'prerelease/v{version}', '--repo', 'randlee/sc-agent', '--pattern', asset],
-                          check=True, stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
-                mock.call([sys.executable, '-m', 'pip', 'install', asset], check=True,
+                mock.call([sys.executable, '-m', 'pip', 'install', '--index-url', 'https://pypi.org/simple',
+                           '--only-binary=:all:', f'sc-decidr=={version}'], check=True,
                           stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
             ])
 
     def test_command_timeouts_are_typed(self):
-        for timeout_call in (1, 2):
-            with self.subTest(timeout_call=timeout_call), \
-                    mock.patch.dict('os.environ', {'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64'}):
+        for runner in (('Linux', 'X64'), ('Windows', 'ARM64')):
+            with self.subTest(runner=runner), \
+                    mock.patch.dict('os.environ', {'RUNNER_OS': runner[0], 'RUNNER_ARCH': runner[1]}):
                 timed_out = subprocess.TimeoutExpired('child', installer.COMMAND_TIMEOUT_SECONDS)
-                outcomes = ([timed_out] if timeout_call == 1 else
-                            [subprocess.CompletedProcess(['gh'], 0), timed_out])
                 err = io.StringIO()
-                with mock.patch.object(installer.subprocess, 'run', side_effect=outcomes) as run, \
+                with mock.patch.object(installer.subprocess, 'run', side_effect=timed_out) as run, \
                         contextlib.redirect_stderr(err):
                     code = installer.run()
                 self.assertEqual(code, 2)
@@ -51,6 +47,7 @@ class DecidrWheelInstallerTests(unittest.TestCase):
                 self.assertNotIn('Traceback', err.getvalue())
                 self.assertEqual(run.call_args.kwargs['stdin'], subprocess.DEVNULL)
                 self.assertEqual(run.call_args.kwargs['timeout'], installer.COMMAND_TIMEOUT_SECONDS)
+                self.assertEqual(run.call_count, 1)
 
     def test_release_and_wheel_versions_follow_client_template(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -62,11 +59,8 @@ class DecidrWheelInstallerTests(unittest.TestCase):
                 installer.main()
 
         self.assertEqual(run.call_args_list, [
-            mock.call(['gh', 'release', 'download', 'prerelease/v9.8.7', '--repo', 'randlee/sc-agent',
-                       '--pattern', 'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True,
-                       stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
-            mock.call([sys.executable, '-m', 'pip', 'install',
-                       'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True,
+            mock.call([sys.executable, '-m', 'pip', 'install', '--index-url', 'https://pypi.org/simple',
+                       '--only-binary=:all:', 'sc-decidr==9.8.7'], check=True,
                        stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
         ])
 

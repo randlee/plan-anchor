@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.14 — 2026-11-18
+
+- Upgrade the generated shared client and supported wheel environment to the published sc-decidr/sitr 0.2.9 release without changing client behavior.
+- Install the exact pinned sc-decidr wheel from PyPI in CI instead of a prerelease GitHub tag.
+
 ## 0.12.13 — 2026-11-18
 
 - Bound and isolate CI child processes, return typed timeout failures, and remove unused imports from rendered scripts.

@@ -35,9 +35,7 @@ jobs:
       - run: python scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Install pinned sc-decidr prerelease wheel
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Install pinned sc-decidr published wheel
         run: python scripts/install_sc_decidr_ci.py
       # The scripts are rendered for one tracker; the suite runs against each render.
       - name: suite against the br render
@@ -65,9 +63,7 @@ jobs:
       - run: python scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Install pinned sc-decidr prerelease wheel
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Install pinned sc-decidr published wheel
         run: python scripts/install_sc_decidr_ci.py
       - name: suite without PyYAML
         run: python -m unittest discover -v -s tests/sc-plan-anchor
@@ -101,9 +97,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install "jsonschema>=4,<5" "pyyaml>=5.1" "sc-compose>=1.8.0,<2"
-      - name: Install pinned sc-decidr prerelease wheel
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Install pinned sc-decidr published wheel
         run: python scripts/install_sc_decidr_ci.py
       - run: python scripts/install_sc_compose_ci.py
         env:
