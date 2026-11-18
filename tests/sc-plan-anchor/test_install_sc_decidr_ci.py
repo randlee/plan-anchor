@@ -1,6 +1,9 @@
 """The CI prerelease installer selects a matching wheel without a network call."""
+import contextlib
+import io
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,9 +29,28 @@ class DecidrWheelInstallerTests(unittest.TestCase):
             version = installer.client_version()
             asset = f'sc_decidr-{version}-cp311-abi3-{suffix}.whl'
             self.assertEqual(run.call_args_list, [
-                mock.call(['gh', 'release', 'download', f'prerelease/v{version}', '--repo', 'randlee/sc-agent', '--pattern', asset], check=True),
-                mock.call([sys.executable, '-m', 'pip', 'install', asset], check=True),
+                mock.call(['gh', 'release', 'download', f'prerelease/v{version}', '--repo', 'randlee/sc-agent', '--pattern', asset],
+                          check=True, stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
+                mock.call([sys.executable, '-m', 'pip', 'install', asset], check=True,
+                          stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
             ])
+
+    def test_command_timeouts_are_typed(self):
+        for timeout_call in (1, 2):
+            with self.subTest(timeout_call=timeout_call), \
+                    mock.patch.dict('os.environ', {'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64'}):
+                timed_out = subprocess.TimeoutExpired('child', installer.COMMAND_TIMEOUT_SECONDS)
+                outcomes = ([timed_out] if timeout_call == 1 else
+                            [subprocess.CompletedProcess(['gh'], 0), timed_out])
+                err = io.StringIO()
+                with mock.patch.object(installer.subprocess, 'run', side_effect=outcomes) as run, \
+                        contextlib.redirect_stderr(err):
+                    code = installer.run()
+                self.assertEqual(code, 2)
+                self.assertIn('timed out after 300 seconds', err.getvalue())
+                self.assertNotIn('Traceback', err.getvalue())
+                self.assertEqual(run.call_args.kwargs['stdin'], subprocess.DEVNULL)
+                self.assertEqual(run.call_args.kwargs['timeout'], installer.COMMAND_TIMEOUT_SECONDS)
 
     def test_release_and_wheel_versions_follow_client_template(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -41,9 +63,11 @@ class DecidrWheelInstallerTests(unittest.TestCase):
 
         self.assertEqual(run.call_args_list, [
             mock.call(['gh', 'release', 'download', 'prerelease/v9.8.7', '--repo', 'randlee/sc-agent',
-                       '--pattern', 'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True),
+                       '--pattern', 'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True,
+                       stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
             mock.call([sys.executable, '-m', 'pip', 'install',
-                       'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True),
+                       'sc_decidr-9.8.7-cp311-abi3-manylinux_2_28_x86_64.whl'], check=True,
+                       stdin=subprocess.DEVNULL, timeout=installer.COMMAND_TIMEOUT_SECONDS),
         ])
 
     def test_client_template_must_define_one_version(self):

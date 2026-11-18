@@ -49,19 +49,20 @@ def main():
         cases = [f'{test_file}::{name}' for name in ('test_judge_writes_real_run_artifact',
                  'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body')]
         with tempfile.TemporaryDirectory(prefix='plan-anchor-integration-') as scratch:
-            try:
-                completed = subprocess.run([str(python), '-m', 'pytest', *cases, '-v',
-                                            '-o', 'junit_family=legacy', f'--junitxml={junit}'],
-                                           env=env, cwd=scratch, timeout=600)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(f'{args.platform}: plan-anchor integration timed out after 600s') from exc
+            completed = subprocess.run([str(python), '-m', 'pytest', *cases, '-v',
+                                        '-o', 'junit_family=legacy', f'--junitxml={junit}'],
+                                       env=env, cwd=scratch, stdin=subprocess.DEVNULL, timeout=600)
         subprocess.run([str(python), str(renderer), str(junit),
                         '--platform', args.platform, '--mode', 'live', '--source-revision', args.source_sha,
                         '--wheel-revision', f'{args.pin_tag}@{args.pin_sha}', '--output',
                         str(ROOT / f'site/reports/integration/{args.platform}.xhtml'),
                         '--reports-dir', str(ROOT / 'site/reports'),
-                        '--title', 'Plan-anchor integration report'], check=True, timeout=60)
+                        '--title', 'Plan-anchor integration report'], check=True,
+                       stdin=subprocess.DEVNULL, timeout=60)
         return completed.returncode
+    except subprocess.TimeoutExpired as exc:
+        print(f"integration: {args.platform} child timed out after {exc.timeout} seconds", file=sys.stderr)
+        return 2
     finally:
         args.env_file.unlink(missing_ok=True)
 
