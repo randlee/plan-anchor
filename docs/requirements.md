@@ -246,7 +246,7 @@ Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_att
 
 **REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel recorded in `.github/workflows/tests.yml`.
 Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
-Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml` only checks that the workflow installs PyYAML; the matrix itself is the workflow.
+Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml`; `test_install_sc_decidr_ci.py::DecidrWheelInstallerTests.test_supported_runners_download_and_install_the_same_pinned_wheel` and `test_release_and_wheel_versions_follow_client_template`. The matrix itself is the workflow.
 
 ## Documentation and packaging
 
@@ -256,7 +256,7 @@ Verified: none.
 
 **REQ-054** Examples shall be executable with repository-valid paths, supported commands and supported JSON schemas.
 Source: ANC-013. Status: shipped.
-Verified: partial: `test_jev_judge.py::QuoteTests.test_shipped_example_record_is_valid_lint_clean_and_renders`, `ErrorHandlingTests.test_documented_question_sets_load`, `RubricTests.test_shipped_question_sets_load_and_fixtures_validate`, `ResponseValidationTests.test_shipped_fixture_passes_validation`. README and reference command snippets are not executed.
+Verified: partial: `test_jev_judge.py::QuoteTests.test_shipped_example_record_is_valid_lint_clean_and_renders`, `ErrorHandlingTests.test_documented_question_sets_load`, `RubricTests.test_shipped_question_sets_load_and_fixtures_validate`, `JudgeFixtureTests.test_fixture_answers_by_id_and_star`, `JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid`. README and reference command snippets are not executed.
 
 **REQ-055** Maintainer tests shall not be redistributed with the plugin.
 Source: `tests/sc-plan-anchor/test_package_layout.py`. Status: shipped.

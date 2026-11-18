@@ -9,6 +9,7 @@ import copy
 import sc_agent
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -273,6 +274,22 @@ class TournamentTests(TournamentCase):
         self.assertIn("baseline", out["error"]["message"])
         self.refused("VALIDATION.INPUT", fixture_for(), out="nores", extra=("--choose", "S2"))
 
+    def test_legacy_batch_results_without_sends_are_rescored(self):
+        self.ran(fixture_for())
+        path = self.d / "t" / "results.jsonl"
+        legacy = []
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            result = json.loads(raw)
+            result["schema"] = "plan-anchor/jev-batch-result/1"
+            result.pop("sends", None)
+            legacy.append(json.dumps(result, separators=(",", ":")))
+        path.write_text("\n".join(legacy) + "\n", encoding="utf-8")
+
+        rescored = self.ran(None, out="legacy-rescore", extra=("--results", str(path)))
+        self.assertEqual((len(legacy), rescored["calls"]), (72, 72))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8").splitlines()[0])["schema"],
+                         "plan-anchor/jev-batch-result/1")
+
     def test_an_outright_winner_is_returned_alone(self):
         # only S2 is more confident than the rest: no tie, S2 sealed alone
         data = self.ran(fixture_for(conf={"S2": 0.95}))
@@ -522,6 +539,27 @@ class BatchTests(TournamentCase):
         self.assertTrue(next(x for x in lines if x["candidate_id"] == "alt")["ok"])
         self.assertEqual(json.loads(proc.stderr)["error"]["code"], "DECIDR.OVERLOADED")
         self.assertEqual(self.log("runs"), proc.stdout)
+
+    def test_batch_summary_keeps_auth_cause_after_canceled_result(self):
+        failed = [
+            {"request_id": "run/canceled", "error": {"code": "CANCELED", "message": "canceled",
+                                                        "recoverable": True, "suggested_action": "cancel action"}},
+            {"request_id": "run/auth", "error": {"code": "AUTH.CREDENTIALS", "message": "Rust auth message",
+                                                    "recoverable": False, "suggested_action": "Rust recovery"}},
+        ]
+        outcome = jj.Ok(jj.decidr_client.StreamedResult(failed, attempts=2))
+        args = mock.Mock(format="json")
+        args.func.return_value = outcome
+        parser = mock.Mock()
+        parser.parse_args.return_value = args
+        stderr = io.StringIO()
+        with mock.patch.object(jj, "build_parser", return_value=parser), mock.patch("sys.stderr", stderr):
+            code = jj._main([])
+
+        summary = json.loads(stderr.getvalue())
+        self.assertEqual(code, 2)
+        self.assertEqual(summary, {"success": False, "data": {"unanswered": 2, "request_id": "run/auth"},
+                                  "error": failed[1]["error"]})
 
     def test_live_batch_uses_shared_client_attempt_count_and_keeps_input_order(self):
         request = request_line("s1", "We copy the legacy crates.", ("c1", PLAN_QS["questions"]))

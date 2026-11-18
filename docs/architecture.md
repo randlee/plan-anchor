@@ -139,12 +139,13 @@ remain standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
 The wheel owns provider retries, credential lookup and status classification;
 `jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
-discriminant and a `ToolError {code, message, action, data}`. Exceptions are
+discriminant and the shared `ClientError {code, message, action, data}`. Exceptions are
 for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
 unit-tested; CI runs ubuntu, macOS and Windows on 3.11 and 3.x, plus a 3.11
 installer job. A Python 3.11 dependency-floor job runs both tracker renders
-without PyYAML and with its declared minimum, installing the named sc-decidr
-prerelease wheel in `.github/workflows/tests.yml`. The installer job uses
+without PyYAML and with its declared minimum, installing the sc-decidr wheel
+selected from `SC_DECIDR_VERSION` in the generated client template by
+`scripts/install_sc_decidr_ci.py`. The installer job uses
 Python 3.11; the installer supports 3.11 and newer (ADR-015).
 
 Consequences: Every skill script and the installer return `Result` for
