@@ -83,7 +83,7 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 ## Install the CLIs
 
-**python3** (3.9 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
+**python3** (3.11 or newer; PyYAML supports tracker/settings lookup, and live Jev calls also need the sc-decidr wheel in this interpreter; offline commands do not import that wheel)
 
 - macOS: `brew install python` or the Xcode command line tools' `/usr/bin/python3`
 - Linux: `apt install python3` / `dnf install python3`
@@ -92,6 +92,10 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 **PyYAML** (5.1 or newer; read only by `anchor_tracker.py` for `.sc/plan-anchor/settings.yaml`)
 
 - `python3 -m pip install pyyaml` (into the interpreter the skill runs). Without it `anchor_tracker.py` returns `DEPENDENCY.PYYAML` and exits 2; it never falls back to defaults.
+
+**sc-decidr** (only for live Jev calls; use the version recorded as `SC_DECIDR_VERSION` in the installed `scripts/decidr_client.py`, rendered from the wheel itself. Install that version's wheel for this platform and interpreter from [PyPI](https://pypi.org/project/sc-decidr/) (`python3 -m pip install "sc-decidr==<SC_DECIDR_VERSION>"`).)
+
+- Check with `python3 -c 'import sc_agent'`. Without the wheel, live calls return `DEPENDENCY.SC_DECIDR`; dry runs and fixture-answer commands remain available.
 {% if tracker != "bd" %}
 
 **br (beads_rust)**
@@ -119,11 +123,11 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 **TypeSafe API key**
 
-The live judge looks for the key in this order: `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection.
+The live judge uses sc-decidr's shared credential lookup: repository `.env`, then `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection. The platform entry uses service `TYPESAFE_API_KEY` and the current OS account. Older plan-anchor installs may have stored the key under service `plan-anchor` / account `typesafe-api-key`; move it to the shared default entry or use `.env` / process environment, because plan-anchor no longer reads the legacy location.
 
-- macOS: Keychain generic-password item with service `plan-anchor` and account `typesafe-api-key`.
-- Windows: Credential Manager generic credential with target `plan-anchor:typesafe-api-key`.
-- Linux: Secret Service item returned by `secret-tool lookup service plan-anchor account typesafe-api-key`. Create it without putting the key on a command line with `secret-tool store --label="plan-anchor TypeSafe API key" service plan-anchor account typesafe-api-key` and enter the value on standard input.
+- macOS: Keychain generic-password item with service `TYPESAFE_API_KEY` and the current account.
+- Windows: Credential Manager generic credential with target `TYPESAFE_API_KEY` and the current account.
+- Linux: Secret Service item returned by `secret-tool lookup service TYPESAFE_API_KEY account "$USER"`.
 
 - Create a key at typesafe.ai. Read it silently so it does not appear in the command line, shell history, or terminal output, then export it in the shell that launches Claude Code or Codex:
   ```bash
@@ -157,7 +161,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 
 | Tool | Minimum | Why |
 | --- | --- | --- |
-| python3 | 3.9 | tested floor; standard library only, except `anchor_tracker.py` |
+| python3 | 3.11 | tested floor; standard library only, except `anchor_tracker.py` |
 | PyYAML | 5.1 | `SafeLoader`-based strict reading of `.sc/plan-anchor/settings.yaml`; CI tests 5.1 and the latest release |
 {% if tracker != "bd" %}
 | br | 0.7.x | `init`, `show --json`, `sync --flush-only`; tested with 0.7.4 |
@@ -203,9 +207,9 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 - `QUESTIONS.ROLES`: a question override renamed a question ID. Keep the default IDs.
 - `ANCHOR.NOT_LOCKED`: `--anchor` named a proposed or retired anchor. Lock it, or use `--all`.
 - `JEV.CONTEXT_EXCEEDED`: the item could not be shortened below 2,000 characters and still fit. Shorten the evidence account; at the development gate drop the test section first.
-- `JEV.RESPONSE_INVALID` repeatedly: TypeSafe changed the response shape or a proxy is mangling it. Check for a proxy between you and `api.typesafe.ai`.
+- `DECIDR.RESPONSE_INVALID` repeatedly: sc-decidr rejected the provider response shape. Check for a proxy between you and `api.typesafe.ai`, and confirm the installed wheel matches the generated client version.
 - `VALIDATION.ANCHORS` from `judge`: run `validate` and fix the listed problems; the usual cause is a hand edit. Use `update`, `retire` and `promote`.
-- `JEV.RATE_LIMITED` under parallel gates: cap concurrency at 3 beads; the script already retries three times with backoff.
+- `DECIDR.RATE_LIMITED` under parallel gates: reduce concurrency; the shared client reports its observed attempts.
 - Dates in reports show as "undated": `stated_at` is not an ISO date. Use `YYYY-MM-DD`.
 {% if tracker != "br" %}
 - `bd comment --body-file`: does not exist; use `--file` (or `--stdin`).

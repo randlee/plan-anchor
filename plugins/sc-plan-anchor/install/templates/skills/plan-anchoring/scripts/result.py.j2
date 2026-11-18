@@ -7,7 +7,7 @@ required_variables:
   - tracker
   - version
 ---
-"""Discriminated-union results for plan-anchoring scripts (Python 3.9 floor).
+"""Discriminated-union results for plan-anchoring scripts (Python 3.11 floor).
 
 A function that can fail in an expected way returns ``Result[T, E]``: either
 ``Ok(value)`` or ``Err(error)``. Callers branch on ``isinstance(r, Err)`` (or
@@ -87,25 +87,6 @@ def utf8_stdio() -> None:
                 pass
 
 
-CANCELED_EXIT = 130
-
-
-def canceled_envelope() -> dict:
-    """What every plan-anchor CLI prints on an interrupt (SIGINT / Ctrl-C), with exit 130."""
-    return {
-        "success": False,
-        "canceled": True,
-        "aborted_by": "user",
-        "data": None,
-        "error": {
-            "code": "CANCELED",
-            "message": "interrupted before the command finished",
-            "recoverable": True,
-            "suggested_action": "Rerun the command; nothing is reported as done that did not finish.",
-        },
-    }
-
-
 def run_main(main: Any) -> int:
     """A CLI entry point: UTF-8 streams, then ``main()``; an interrupt anywhere becomes the CANCELED envelope and 130.
 
@@ -119,6 +100,8 @@ def run_main(main: Any) -> int:
         utf8_stdio()
         return main()
     except KeyboardInterrupt:
+        from decidr_client import CANCELED_EXIT, canceled_envelope
+
         try:
             print(json.dumps(canceled_envelope(), indent=2, sort_keys=True, ensure_ascii=False))
             sys.stdout.flush()

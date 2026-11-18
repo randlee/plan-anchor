@@ -7,16 +7,20 @@ the command could not do its job, and no exit 1 anywhere. Every case runs the
 script as a subprocess, offline, with no TypeSafe key in the environment.
 """
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from test_jev_judge import QUOTE, STATEMENT, anchor, plan_answers, record, rubric_answers
+from test_jev_judge import QUOTE, STATEMENT, anchor, jj, plan_answers, record, rubric_answers
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
@@ -29,7 +33,10 @@ ITEM = "The runtime crates are not mentioned anywhere in this sprint; it only ad
 def clean_env():
     keep = ("PATH", "HOME", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "PYTHONPATH")
     # An explicitly empty environment key fails closed before native-store fallback.
-    return {**{k: os.environ[k] for k in keep if k in os.environ}, "TYPESAFE_API_KEY": ""}
+    environment = {k: os.environ[k] for k in keep if k in os.environ}
+    test_support = str(Path(__file__).resolve().parent)
+    environment["PYTHONPATH"] = os.pathsep.join(part for part in (test_support, environment.get("PYTHONPATH", "")) if part)
+    return {**environment, "TYPESAFE_API_KEY": ""}
 
 
 class ConventionCase(unittest.TestCase):
@@ -45,7 +52,7 @@ class ConventionCase(unittest.TestCase):
         return str(path)
 
     def run_script(self, script, *argv):
-        proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(self.d), env=clean_env(),
+        proc = run_test_child([sys.executable, str(script), *argv], cwd=str(self.d), env=clean_env(),
                               capture_output=True, text=True, encoding="utf-8")
         self.assertNotEqual(proc.returncode, 1, f"{script.name} {argv} exited 1: {proc.stdout}{proc.stderr}")
         try:
@@ -70,6 +77,18 @@ class ConventionCase(unittest.TestCase):
         if code is not None:
             self.assertEqual(out["error"]["code"], code)
         return out["error"]
+
+    def failed_judge_through_client_seam(self, *argv):
+        """Exercise the consumer with a typed wheel auth result and no provider or keyring access."""
+        output = io.StringIO()
+        auth = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
+        with mock.patch.dict(os.environ, clean_env(), clear=True), \
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None), \
+                mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                mock.patch("sc_agent.send", return_value=auth), \
+                contextlib.redirect_stdout(output):
+            code = jj.main(list(argv))
+        return code, json.loads(output.getvalue())
 
 
 class JevJudgeNegativeOutcomes(ConventionCase):
@@ -178,11 +197,15 @@ class JevJudgeErrors(ConventionCase):
                             "--out", str(self.d / "t")], None),
         }
         (self.d / "empty").mkdir()
-        listed = re.search(r"\{([a-z,-]+)\}", subprocess.run([sys.executable, str(JJ), "-h"], capture_output=True,
+        listed = re.search(r"\{([a-z,-]+)\}", run_test_child([sys.executable, str(JJ), "-h"], capture_output=True,
                                                             text=True, encoding="utf-8").stdout).group(1).split(",")
         self.assertEqual(sorted(cases), sorted(listed), "every subcommand needs an error-path case")
         for name, (argv, code) in cases.items():
             with self.subTest(name):
+                if name == "judge":
+                    rc, out = self.failed_judge_through_client_seam(*argv)
+                    self.assertEqual((rc, out["success"], out["error"]["code"]), (2, False, code))
+                    continue
                 self.failed(JJ, *argv, code=code)
 
 
@@ -190,15 +213,17 @@ class JevJudgeErrors(ConventionCase):
         """A live call that must not go out: AUTH.CREDENTIALS without a key, POLICY.REMOTE_JUDGE_DISABLED without consent."""
         path = self.put("anchors.json", record(anchor()))
         argv = ["judge", "--anchors", path, "--gate", "plan", "--all", "--item-id", "bd-1", "--item-file", self.put("item.txt", ITEM)]
-        error = self.failed(JJ, *argv, code="AUTH.CREDENTIALS")
-        self.assertEqual(error["message"], "no TypeSafe API key was found")
+        rc, out = self.failed_judge_through_client_seam(*argv)
+        self.assertEqual((rc, out["success"], out["error"]["code"]), (2, False, "AUTH.CREDENTIALS"), out)
+        error = out["error"]
+        self.assertEqual(error["message"], "missing key")
         try:
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("the consent check reads settings.yaml with PyYAML")
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         # a dummy key only gets past the credential check; consent is absent, so nothing is sent
-        proc = subprocess.run([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
+        proc = run_test_child([sys.executable, str(JJ), *argv], cwd=str(self.d), env=dict(clean_env(), TYPESAFE_API_KEY="sk-test-never-sent"),
                               capture_output=True, text=True, encoding="utf-8")
         out = json.loads(proc.stdout)
         self.assertEqual((proc.returncode, out["success"], out["error"]["code"]), (2, False, "POLICY.REMOTE_JUDGE_DISABLED"), out)
@@ -223,7 +248,7 @@ class OtherScripts(ConventionCase):
 
     def test_settings(self):
         script = SCRIPTS / "plan_anchor_settings.py"
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
         try:
             import yaml  # noqa: F401
         except ImportError:  # the settings script needs PyYAML; its absence is a could-not-run error

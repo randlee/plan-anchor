@@ -3,11 +3,11 @@
 Every case runs a real process. ``judge``, ``check-fixtures``, ``dedupe --jev``,
 ``rubric`` and ``add --rubric`` exit 2 with the typed envelope when any cell, pair
 or candidate has no answer, and keep the partial work in ``data``. Live failures
-use a refused connection (``urlopen`` patched to raise it; ``JEV_URL`` still points
-at the closed local port 127.0.0.1:9) with a dummy key in the child only, and
-consent recorded in a scratch repository; fixture failures use answers files. Jev
-is never called. Refusals and no-ops exit 0; run files are redacted; every CLI
-prints a CANCELED envelope and exits 130 on interrupt.
+use a controlled typed ``sc-decidr`` network error with a dummy key in the child
+only and consent recorded in a scratch repository; fixture failures use answers
+files. No wheel, provider, or credential store is accessed. Refusals and no-ops
+exit 0; run files are redacted; every CLI prints a CANCELED envelope and exits
+130 on interrupt.
 """
 
 import json
@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -26,20 +27,19 @@ JJ = SCRIPTS / "jev_judge.py"
 ERROR_KEYS = {"code", "message", "recoverable", "suggested_action"}
 ITEM = "Sprint 2 copies the legacy runtime crates into crates/runtime and deletes the legacy-specific modules.\n"
 DUMMY_KEY = "sk-test-closed-port-0000"  # never a real key: nothing is ever sent with it
-# jev_judge.main with every Jev call refused and no back-off sleep; the retries themselves still run. urlopen
-# raises the refusal itself, so the result never depends on what listens on port 9 or how a firewall answers;
-# JEV_URL still names a closed local port, so even an unpatched call could not leave the host.
+# jev_judge.main with a controlled typed network failure from the wheel seam.
 # argv[1] is the scripts directory, the rest is the command line.
 REFUSED_RUNNER = (
-    "import errno, sys, urllib.error, urllib.request\n"
+    "import json, sys\n"
+    "sys.path.insert(0, sys.argv[2])\n"
+    "import sc_decidr_test_double\n"
+    "sys.modules['sc_agent'] = sc_decidr_test_double.as_module()\n"
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
     "def refused(*args, **kwargs):\n"
-    "    raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused'))\n"
-    "urllib.request.urlopen = refused\n"
-    "jev_judge.JEV_URL = 'http://127.0.0.1:9/v1/systemone'\n"
-    "jev_judge._sleep = lambda seconds: None\n"
-    "raise SystemExit(jev_judge.main(sys.argv[2:]))\n"
+    "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}})\n"
+    "import sc_agent; sc_agent.send = refused\n"
+    "raise SystemExit(jev_judge.main(sys.argv[3:]))\n"
 )
 # Runs a CLI as __main__ and interrupts it exactly where it reads one input file: the first Path.read_text of
 # argv[2] sends SIGINT to the process itself. kill() to the calling single-threaded process delivers the
@@ -71,6 +71,8 @@ needs_yaml = unittest.skipUnless(HAVE_YAML, "live-path cases read allow_remote_j
 
 def child_env(**extra):
     environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+    test_support = str(Path(__file__).resolve().parent)
+    environment["PYTHONPATH"] = os.pathsep.join(part for part in (test_support, environment.get("PYTHONPATH", "")) if part)
     environment.update(extra)
     return environment
 
@@ -80,7 +82,7 @@ class ProcessCase(unittest.TestCase):
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         self.d = Path(td.name).resolve()
-        subprocess.run(["git", "init", "-q", str(self.d)], check=True)
+        run_test_child(["git", "init", "-q", str(self.d)], check=True)
 
     def put(self, name, value):
         path = self.d / name
@@ -90,19 +92,19 @@ class ProcessCase(unittest.TestCase):
 
     def consent(self):
         """allow_remote_judge: true in this scratch repository's settings file (never the real one)."""
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "plan_anchor_settings.py"), "set", "allow_remote_judge", "true"],
+        proc = run_test_child([sys.executable, str(SCRIPTS / "plan_anchor_settings.py"), "set", "allow_remote_judge", "true"],
                               cwd=str(self.d), env=child_env(), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def run_jj(self, *argv, live=False, env=None):
         if live:
-            cmd = [sys.executable, "-c", REFUSED_RUNNER, str(SCRIPTS), *argv]
+            cmd = [sys.executable, "-c", REFUSED_RUNNER, str(SCRIPTS), str(Path(__file__).parent), *argv]
             environment = child_env(TYPESAFE_API_KEY=DUMMY_KEY, **(env or {}))
         else:
             cmd = [sys.executable, str(JJ), *argv]
             environment = child_env(**(env or {}))
-        proc = subprocess.run(cmd, cwd=str(self.d), env=environment, capture_output=True, text=True,
-                              encoding="utf-8", timeout=300)
+        proc = run_test_child(cmd, cwd=str(self.d), env=environment, capture_output=True, text=True,
+                              encoding="utf-8", timeout=60)
         self.assertNotEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         try:
             out = json.loads(proc.stdout)
@@ -138,12 +140,12 @@ class JudgeAndCheckFixtures(ProcessCase):
     @needs_yaml
     def test_judge_with_jev_unreachable_exits_2_and_keeps_the_partial_run(self):
         self.consent()
-        out = self.failed(*self.judge_argv("--no-confirm"), code="JEV.NETWORK", live=True)
+        out = self.failed(*self.judge_argv("--no-confirm"), code="DECIDR.NETWORK", live=True)
         self.assertTrue(out["error"]["recoverable"])
         self.assertEqual(sorted(f["id"] for f in out["data"]["failures"]), ["ANC-001", "ANC-002"])
         on_disk = json.loads(Path(out["data"]["run_path"]).read_text(encoding="utf-8"))
         self.assertEqual({r["verdict"] for r in on_disk["results"]}, {"error"})
-        self.assertEqual({r["attempts"] for r in on_disk["results"]}, {3})  # retried, then failed
+        self.assertEqual({r["attempts"] for r in on_disk["results"]}, {3})  # wheel-reported attempts; consumer called once
 
     def test_judge_with_a_missing_fixture_entry_exits_2_and_keeps_the_answered_cell(self):
         answers = self.put("a.json", {"ANC-001": plan_answers()})
@@ -155,7 +157,7 @@ class JudgeAndCheckFixtures(ProcessCase):
     def test_judge_with_a_malformed_fixture_answer_exits_2(self):
         bad = plan_answers()
         bad["relevant"]["probabilities"]["yes"] = 0.1
-        self.failed(*self.judge_argv("--answers-file", self.put("a.json", {"*": bad})), code="JEV.RESPONSE_INVALID")
+        self.failed(*self.judge_argv("--answers-file", self.put("a.json", {"*": bad})), code="DECIDR.RESPONSE_INVALID")
 
     def test_an_answers_file_that_is_not_an_object_stays_exit_2(self):
         rc, out = self.run_jj(*self.judge_argv("--answers-file", self.put("a.json", [1])))
@@ -175,7 +177,7 @@ class JudgeAndCheckFixtures(ProcessCase):
     def test_check_fixtures_with_jev_unreachable_exits_2(self):
         self.consent()
         self.failed("check-fixtures", "--anchors", self.fixture_anchors(), "--gate", "plan", "--all", "--no-confirm",
-                    "--run-dir", str(self.d / "runs"), code="JEV.NETWORK", live=True)
+                    "--run-dir", str(self.d / "runs"), code="DECIDR.NETWORK", live=True)
 
     def test_check_fixtures_with_nothing_judged_is_not_a_pass(self):
         # a structural anchor at the plan gate is deterministic_only: no fixture is sent to Jev, so nothing was tested
@@ -192,7 +194,7 @@ class DedupeAndRubric(ProcessCase):
     @needs_yaml
     def test_dedupe_with_jev_unreachable_exits_2(self):
         self.consent()
-        out = self.failed("dedupe", "--anchors", self.pair(), "--threshold", "0.2", "--jev", code="JEV.NETWORK", live=True)
+        out = self.failed("dedupe", "--anchors", self.pair(), "--threshold", "0.2", "--jev", code="DECIDR.NETWORK", live=True)
         self.assertEqual([f["id"] for f in out["data"]["failures"]], ["ANC-001|ANC-002"])
 
     def test_dedupe_with_a_missing_fixture_pair_exits_2(self):
@@ -202,7 +204,7 @@ class DedupeAndRubric(ProcessCase):
     @needs_yaml
     def test_rubric_with_jev_unreachable_exits_2(self):
         self.consent()
-        out = self.failed("rubric", "--statement", STATEMENT, "--quote", QUOTE, code="JEV.NETWORK", live=True)
+        out = self.failed("rubric", "--statement", STATEMENT, "--quote", QUOTE, code="DECIDR.NETWORK", live=True)
         self.assertEqual(out["data"]["anchors"][0]["verdict"], "error")
 
     def test_rubric_with_a_missing_fixture_entry_exits_2(self):
@@ -225,7 +227,7 @@ class DedupeAndRubric(ProcessCase):
         for extra in ([], ["--allow-untestable"]):
             with self.subTest(extra=extra):
                 self.failed("add", "--anchors", str(path), "--statement", STATEMENT, "--quote", QUOTE, "--rubric", *extra,
-                            code="JEV.NETWORK", live=True)
+                            code="DECIDR.NETWORK", live=True)
                 self.assertFalse(path.exists())
 
 
@@ -301,7 +303,7 @@ class Interrupts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             d = Path(td).resolve()
             if git:
-                subprocess.run(["git", "init", "-q", str(d)], check=True)
+                run_test_child(["git", "init", "-q", str(d)], check=True)
             for name, value in (files or {}).items():
                 (d / name).write_text(json.dumps(value), encoding="utf-8")
             target = d / input_rel
@@ -309,9 +311,9 @@ class Interrupts(unittest.TestCase):
             target.write_text("{}\n", encoding="utf-8")
             script, *rest = argv
             rest = [str(a).replace("{INPUT}", str(target)) for a in rest]
-            proc = subprocess.run([sys.executable, "-c", INTERRUPT_RUNNER, str(script), str(target), *rest], cwd=str(d),
+            proc = run_test_child([sys.executable, "-c", INTERRUPT_RUNNER, str(script), str(target), *rest], cwd=str(d),
                                   env=child_env(**(env or {})), preexec_fn=_default_sigint, capture_output=True,
-                                  text=True, encoding="utf-8", timeout=120)  # a hang guard only
+                                  text=True, encoding="utf-8", timeout=60)  # a hang guard only
         out, err = proc.stdout, proc.stderr
         self.assertEqual(proc.returncode, 130, out + err)
         envelope = json.loads(out)

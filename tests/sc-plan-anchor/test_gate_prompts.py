@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -103,7 +104,7 @@ class FreeFormSprintDryRunTests(unittest.TestCase):
             item.write_text(FREE_FORM, encoding="utf-8")
             for gate in ("plan", "dev"):
                 with self.subTest(gate=gate):
-                    proc = subprocess.run(
+                    proc = run_test_child(
                         [sys.executable, str(SCRIPT), "judge", "--anchors", str(EXAMPLE_ANCHORS), "--gate", gate,
                          "--all", "--item-id", "bi-1", "--item-title", "Anchor data model",
                          "--item-file", str(item), "--run-dir", str(Path(tmp) / f"runs-{gate}"), "--dry-run"],

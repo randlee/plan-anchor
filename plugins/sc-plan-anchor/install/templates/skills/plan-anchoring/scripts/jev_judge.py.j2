@@ -24,13 +24,14 @@ required for ANC anchors and defaults to the statement for REQ/ADR anchors
 (register text). A record whose anchor lacks `quote` is read as quote =
 statement; `validate` reports it.
 
-Standard library only. Python 3.9+. One exception: a live Jev call reads the
-committed ``allow_remote_judge`` answer through ``plan_anchor_settings.py``
-(PyYAML when the settings file exists), imported lazily inside that check, so
---dry-run, --answers-file and every offline subcommand stay stdlib-only.
+Python 3.11+. Offline paths use the standard library (plus lazy PyYAML settings
+lookup where needed). A live Jev call checks the committed
+``allow_remote_judge`` answer, then uses the optional sc-decidr wheel for
+credentials and provider transport; dry runs and fixture answers do not import
+the wheel.
 
 Expected failures travel as values: a function that can fail returns
-``Ok(value)`` or ``Err(JudgeError)`` (see ``result.py``) and its caller
+``Ok(value)`` or ``Err(ClientError)`` (see ``result.py``) and its caller
 propagates the ``Err`` explicitly. ``main`` is the only place an error becomes
 JSON on stdout and an exit code; anything unexpected that still raises is
 reported there as SCRIPT.INTERNAL.
@@ -114,34 +115,23 @@ Plan-gate size handling
 from __future__ import annotations
 
 import argparse
-import asyncio
-import collections
-import concurrent.futures
 import datetime as _dt
 import hashlib
-import http.client
 import json
-import math
 import os
 import pathlib
 import re
 import subprocess
 import sys
-import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any, NamedTuple, Optional
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from result import Err, Ok, Result, utf8_stdio  # noqa: E402
+import decidr_client  # noqa: E402
+from decidr_client import ClientError  # noqa: E402
 
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"  # tests redirect by patching this constant in-process
-TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY"
-CREDENTIAL_SERVICE = "plan-anchor"
-CREDENTIAL_ACCOUNT = "typesafe-api-key"
-WINDOWS_CREDENTIAL_TARGET = f"{CREDENTIAL_SERVICE}:{CREDENTIAL_ACCOUNT}"
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_ITEM_CHARS = 24000
@@ -151,11 +141,6 @@ DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a plant
 DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
 DEFAULT_MIN_ITEM_CHARS = 2000      # below this the item is not shortened further on a context overflow
-MAX_RESPONSE_BYTES = 1048576
-MAX_ATTEMPTS = 3                   # per anchor, for transport-level failures (429, 529, 5xx, network, bad response)
-RETRY_DELAYS = (1.0, 2.0)          # seconds before the second and third attempt; Retry-After overrides the first
-MAX_RETRY_AFTER = 30.0
-PROBABILITY_ROUNDING = 0.01        # Jev rounds each probability; the sum may be off by this per option
 TRUNCATION_MARKER = "\n[... truncated by jev_judge; keep the state small ...]"
 HERE = pathlib.Path(__file__).resolve().parent
 QUESTIONS_DIR = HERE.parent / "assets" / "questions"
@@ -183,7 +168,6 @@ EXCLUSION_KEYS = ("item", "reason")
 SEVERITY = {v: i for i, v in enumerate(VERDICTS)}
 REQUIRED_ROLES = ("relevance", "compliance", "conflict")
 ABORT_CODES = ("AUTH.CREDENTIALS", "POLICY.REMOTE_JUDGE_DISABLED")
-TRANSIENT_CODES = ("JEV.RATE_LIMITED", "JEV.OVERLOADED", "JEV.NETWORK", "JEV.RESPONSE_INVALID")
 FIXTURE_EXPECTED = {"pass": ("satisfied",), "fail": ("not_addressed", "contradicted")}
 ITEM_SECTIONS = (("description", "Description"), ("design", "Design"), ("acceptance_criteria", "Acceptance criteria"), ("notes", "Notes"))
 
@@ -209,8 +193,6 @@ REQUIREMENT_FORM_WARNINGS = (
     "not phrased as a testable requirement",
 )
 
-_sleep = time.sleep  # replaced in tests
-
 SAFE_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s\"']+")
 
@@ -218,57 +200,24 @@ BEARER_RE = re.compile(r"(?i)(bearer\s+)[^\s\"']+")
 # --------------------------------------------------------------------------- #
 # plumbing
 # --------------------------------------------------------------------------- #
-class JudgeError:
-    """An expected failure, carried in Err. Never raised: main() turns it into the error envelope and exit 2."""
-
-    def __init__(self, code: str, message: str, recoverable: bool = False, action: str = "",
-                 status=None, retry_after=None):
-        self.code = code
-        self.message = message
-        self.recoverable = recoverable
-        self.action = action
-        self.status = status            # HTTP status when the error came from Jev
-        self.retry_after = retry_after  # parsed Retry-After header, seconds, or None
-        self.meta = {}                  # attempt / shortening bookkeeping, filled by judge_with_policy
-        self.data = None                # optional facts that explain the error (PLAN.TOO_LARGE carries the bead's shape)
-
-    def __str__(self) -> str:
-        return self.message
-
-    def __repr__(self) -> str:
-        return f"JudgeError({self.code!r}, {self.message!r})"
-
-    def to_json(self) -> dict:
-        return redact_sensitive({
-            "success": False,
-            "data": self.data,
-            "error": {
-                "code": self.code,
-                "message": str(self),
-                "recoverable": self.recoverable,
-                "suggested_action": self.action,
-            },
-        })
-
-
-def fail(code: str, message: str, **fields) -> Err[JudgeError]:
+def fail(code: str, message: str, *, action="", **fields) -> Err[ClientError]:
     """An expected failure as a value: ``return fail(...)`` where the old code raised."""
-    return Err(JudgeError(code, message, **fields))
+    return Err(ClientError(code, message, action=action, **fields))
 
 
-def jev_failure(what: str, failures: list, total: int, data: dict) -> Err[JudgeError]:
+def jev_failure(what: str, failures: list, total: int, data: dict) -> Err[ClientError]:
     """Some Jev calls produced no answer: the command could not do its job (exit 2), never a negative result.
 
-    ``failures`` is ``[(label, JudgeError)]`` in report order; the envelope takes the first failure's code and
+    ``failures`` is ``[(label, ClientError)]`` in report order; the envelope takes the first failure's code and
     action, and ``data`` (the partial work, e.g. the run path) gains ``failures`` so nothing judged is lost.
     """
     first = failures[0][1]
     shown = "; ".join(f"{label}: {e.code} ({e.message})" for label, e in failures[:5])
     if len(failures) > 5:
         shown += f"; +{len(failures) - 5} more"
-    out = JudgeError(first.code, f"{len(failures)} of {total} {what} got no answer from Jev: {shown}",
-                     recoverable=all(e.recoverable for _, e in failures),
-                     action=first.action or "Fix the cause named in the message and rerun the command.")
+    out = ClientError(first.code, f"{len(failures)} of {total} {what} got no answer from Jev: {shown}",
+                     retryable=all(e.retryable for _, e in failures),
+                     action=first.action)
     out.data = dict(data, failures=[{"id": label, "code": e.code, "message": e.message} for label, e in failures])
     return Err(out)
 
@@ -291,7 +240,7 @@ def redact_sensitive(value):
 
 
 def emit(obj, fmt: str = "json") -> None:
-    obj = redact_sensitive(obj)
+    obj = redact_sensitive(decidr_client._json_answers(obj))
     if fmt == "json":
         print(json.dumps(obj, indent=2, ensure_ascii=False))
     else:
@@ -312,7 +261,7 @@ def history_event(event: str, **fields) -> dict:
     return ev
 
 
-def load_json(path: str, what: str) -> Result[Any, JudgeError]:
+def load_json(path: str, what: str) -> Result[Any, ClientError]:
     if path == "-":
         raw = sys.stdin.read()
         try:
@@ -331,7 +280,7 @@ def load_json(path: str, what: str) -> Result[Any, JudgeError]:
         return fail("INPUT.MALFORMED", f"{what} could not be read: {exc}", action=f"Check {path} is a readable UTF-8 file.")
 
 
-def load_record(path: str) -> Result[dict, JudgeError]:
+def load_record(path: str) -> Result[dict, ClientError]:
     loaded = load_json(path, "anchors.json")
     if isinstance(loaded, Err):
         return loaded
@@ -341,7 +290,7 @@ def load_record(path: str) -> Result[dict, JudgeError]:
     return Ok(rec)
 
 
-def load_run(path: str, what: str) -> Result[dict, JudgeError]:
+def load_run(path: str, what: str) -> Result[dict, ClientError]:
     loaded = load_json(path, what)
     if isinstance(loaded, Err):
         return loaded
@@ -362,7 +311,7 @@ def write_text_atomic(path: str, text: str) -> None:
 
 def save_json(path: str, obj: dict) -> None:
     """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout (REQ-017): no key or bearer token reaches a file."""
-    write_text_atomic(path, json.dumps(redact_sensitive(obj), indent=2, ensure_ascii=False) + "\n")
+    write_text_atomic(path, json.dumps(redact_sensitive(decidr_client._json_answers(obj)), indent=2, ensure_ascii=False) + "\n")
 
 
 def short_date(iso: str) -> str:
@@ -382,7 +331,7 @@ def _inside(path: pathlib.Path, root: pathlib.Path) -> bool:
 
 
 def canonical_workspace_path(raw: str, root: pathlib.Path, what: str, *, must_exist: bool,
-                             regular_file: bool = False) -> Result[pathlib.Path, JudgeError]:
+                             regular_file: bool = False) -> Result[pathlib.Path, ClientError]:
     if not raw or not raw.strip():
         return fail("VALIDATION.PATH", f"{what} is empty", action=f"Pass a {what} inside the repository.")
     candidate = pathlib.Path(raw).expanduser()
@@ -402,7 +351,7 @@ def canonical_workspace_path(raw: str, root: pathlib.Path, what: str, *, must_ex
     return Ok(resolved)
 
 
-def cmd_agent_preflight(args) -> Result[dict, JudgeError]:
+def cmd_agent_preflight(args) -> Result[dict, ClientError]:
     """Fail closed before an agent reads local evidence or sends it to Jev."""
     try:
         root = pathlib.Path(args.workspace_root).expanduser().resolve(strict=True)
@@ -484,7 +433,7 @@ def empty_record(plan: str, intent_ref: str) -> dict:
     }
 
 
-def anchor_list(rec: dict) -> Result[list, JudgeError]:
+def anchor_list(rec: dict) -> Result[list, ClientError]:
     anchors = rec.get("anchors")
     if anchors is None:
         anchors = rec["anchors"] = []
@@ -493,7 +442,7 @@ def anchor_list(rec: dict) -> Result[list, JudgeError]:
     return Ok(anchors)
 
 
-def find_anchor(rec: dict, anchor_id: str) -> Result[dict, JudgeError]:
+def find_anchor(rec: dict, anchor_id: str) -> Result[dict, ClientError]:
     listed = anchor_list(rec)
     if isinstance(listed, Err):
         return listed
@@ -503,7 +452,7 @@ def find_anchor(rec: dict, anchor_id: str) -> Result[dict, JudgeError]:
     return fail("ANCHOR.UNKNOWN", f"No anchor with id {anchor_id}", action="Check anchors.json for the exact ID.")
 
 
-def next_anc_id(rec: dict) -> Result[str, JudgeError]:
+def next_anc_id(rec: dict) -> Result[str, ClientError]:
     listed = anchor_list(rec)
     if isinstance(listed, Err):
         return listed
@@ -515,10 +464,10 @@ def next_anc_id(rec: dict) -> Result[str, JudgeError]:
     return Ok(f"ANC-{(max(nums) + 1 if nums else 1):03d}")
 
 
-def require_valid(rec: dict) -> Result[None, JudgeError]:
+def require_valid(rec: dict) -> Result[None, ClientError]:
     problems = validate_record(rec)
     if problems:
-        return fail("VALIDATION.ANCHORS", "anchors.json has problems: " + "; ".join(problems[:5]), recoverable=True,
+        return fail("VALIDATION.ANCHORS", "anchors.json has problems: " + "; ".join(problems[:5]), retryable=True,
                     action="Run `jev_judge.py validate` and fix the record first.")
     return Ok(None)
 
@@ -617,19 +566,19 @@ def similar_anchors(anchors: list, statement: str, quote: str, floor: float = SI
     return found
 
 
-def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -> Result[list, JudgeError]:
+def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -> Result[list, ClientError]:
     """Run the lint; the verbatim rule is always a refusal for ANC, every other warning only under --strict.
 
     Both are refusals (``is_refusal``): the caller reports them in data.refused with exit 0.
     """
     warnings = lint_statement(statement, quote, source_type)
     if LINT_VERBATIM in warnings:
-        refused = JudgeError("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, recoverable=True,
+        refused = ClientError("VALIDATION.INPUT", LINT_VERBATIM_PROBLEM, retryable=True,
                              action="Write the statement as a testable requirement in the orchestrator's words; keep the user's words in --quote.")
         refused.refusal = True
         return Err(refused)
     if strict and warnings:
-        return fail("ANCHOR.LINT", "statement has testability warnings: " + "; ".join(warnings), recoverable=True,
+        return fail("ANCHOR.LINT", "statement has testability warnings: " + "; ".join(warnings), retryable=True,
                     action="Reword the statement (see references/anchor-capture.md), or drop --strict to record it anyway.")
     return Ok(warnings)
 
@@ -637,23 +586,23 @@ def lint_or_refuse(statement: str, quote: str, source_type: str, strict: bool) -
 REFUSAL_CODES = ("ANCHOR.LINT", "ANCHOR.DUPLICATE_CANDIDATE", "ANCHOR.NOT_TESTABLE", "ANCHOR.DUPLICATE")
 
 
-def is_refusal(error: JudgeError) -> bool:
+def is_refusal(error: ClientError) -> bool:
     """A quality gate's no (lint, duplicate, verbatim quote, rubric): a negative answer, not a tool failure."""
     return error.code in REFUSAL_CODES or getattr(error, "refusal", False)
 
 
-def refusal(error: JudgeError, verb: str, **data) -> Ok:
+def refusal(error: ClientError, verb: str, **data) -> Ok:
     """A quality gate said no (`add`/`update`): a completed negative answer, so success with data.<verb> false and exit 0.
 
     data.refused keeps the code, message, recoverable flag and suggested action the refusal used to carry as an error.
     """
-    out = {verb: False, "refused": {"code": error.code, "message": error.message, "recoverable": error.recoverable,
+    out = {verb: False, "refused": {"code": error.code, "message": error.message, "recoverable": error.retryable,
                                     "suggested_action": error.action}}
     out.update(data)
     return Ok({"success": True, "data": out, "error": None})
 
 
-def cmd_add(args) -> Result[dict, JudgeError]:
+def cmd_add(args) -> Result[dict, ClientError]:
     p = pathlib.Path(args.anchors)
     if p.exists():
         loaded = load_record(args.anchors)
@@ -687,7 +636,7 @@ def cmd_add(args) -> Result[dict, JudgeError]:
         anchor_id = args.source_ref
         source_ref = args.source_ref
         if any(isinstance(a, dict) and a.get("id") == anchor_id for a in anchors):
-            refused = JudgeError("ANCHOR.DUPLICATE", f"{anchor_id} already recorded", recoverable=True,
+            refused = ClientError("ANCHOR.DUPLICATE", f"{anchor_id} already recorded", retryable=True,
                                  action=f"Update {anchor_id} instead (`update --id {anchor_id}`), or retire it first.")
             return refusal(refused, "added", path=args.anchors)
     quote = (args.quote or "").strip()
@@ -707,7 +656,7 @@ def cmd_add(args) -> Result[dict, JudgeError]:
     candidates = [s for s in similar if s["jaccard"] >= DUPLICATE_JACCARD]
     if candidates and not args.allow_similar:
         names = ", ".join(f"{s['id']} (jaccard {s['jaccard']}, {s['field']})" for s in candidates)
-        refused = JudgeError("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", recoverable=True,
+        refused = ClientError("ANCHOR.DUPLICATE_CANDIDATE", f"the new anchor looks like an existing one: {names}", retryable=True,
                              action=f"Update {candidates[0]['id']} instead (or retire it with --replaced-by), or pass --allow-similar if it is really a different constraint.")
         return refusal(refused, "added", path=args.anchors, lint={"warnings": warnings}, similar=similar)
     rubric = None
@@ -747,7 +696,7 @@ def cmd_add(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": data, "error": None})
 
 
-def _record_and_anchor(path: str, anchor_id: str) -> Result[tuple, JudgeError]:
+def _record_and_anchor(path: str, anchor_id: str) -> Result[tuple, ClientError]:
     """Load anchors.json and find one anchor in it: (record, anchor)."""
     loaded = load_record(path)
     if isinstance(loaded, Err):
@@ -759,7 +708,7 @@ def _record_and_anchor(path: str, anchor_id: str) -> Result[tuple, JudgeError]:
     return Ok((rec, found.value))
 
 
-def cmd_update(args) -> Result[dict, JudgeError]:
+def cmd_update(args) -> Result[dict, ClientError]:
     if getattr(args, "quote", None) is not None:
         return fail("VALIDATION.INPUT", "quote is verbatim provenance and immutable",
                     action="If the user said something different, `add` a new anchor with the new quote and `retire --replaced-by` this one.")
@@ -821,7 +770,7 @@ def cmd_update(args) -> Result[dict, JudgeError]:
                                          "lint": {"warnings": warnings}}, "error": None})
 
 
-def cmd_retire(args) -> Result[dict, JudgeError]:
+def cmd_retire(args) -> Result[dict, ClientError]:
     loaded = _record_and_anchor(args.anchors, args.id)
     if isinstance(loaded, Err):
         return loaded
@@ -841,7 +790,7 @@ def cmd_retire(args) -> Result[dict, JudgeError]:
                                          "replaced_by": args.replaced_by or None, "version": a["version"]}, "error": None})
 
 
-def apply_exclusion(a: dict, item: str, reason: str, remove: bool) -> Result[dict, JudgeError]:
+def apply_exclusion(a: dict, item: str, reason: str, remove: bool) -> Result[dict, ClientError]:
     """Add, replace or remove one exclusion on an anchor in memory. Ok(data); data.changed says whether the anchor changed."""
     exclude = a.get("exclude")
     if exclude is not None and not isinstance(exclude, list):
@@ -864,7 +813,7 @@ def apply_exclusion(a: dict, item: str, reason: str, remove: bool) -> Result[dic
                "exclude": a.get("exclude", []), "version": a.get("version", 1)})
 
 
-def read_exclusion_lines(path: str) -> Result[list, JudgeError]:
+def read_exclusion_lines(path: str) -> Result[list, ClientError]:
     """Parse an `exclude --from` JSONL file: one {id, item, reason} or {id, item, remove: true} per non-blank line."""
     p = pathlib.Path(path)
     if not path.strip() or not p.is_file():
@@ -908,7 +857,7 @@ def read_exclusion_lines(path: str) -> Result[list, JudgeError]:
     return Ok(entries)
 
 
-def cmd_exclude(args) -> Result[dict, JudgeError]:
+def cmd_exclude(args) -> Result[dict, ClientError]:
     """Add, replace or remove exclusions. Not a requirement change: no version bump, earlier runs stay valid, any status.
 
     --from applies every line of a JSONL file atomically: any bad line or unknown anchor saves nothing.
@@ -1068,7 +1017,7 @@ def record_warnings(rec: dict, anchors_path: str) -> list:
     return warnings
 
 
-def cmd_validate(args) -> Result[dict, JudgeError]:
+def cmd_validate(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -1135,7 +1084,7 @@ def render_md(rec: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cmd_render(args) -> Result[dict, JudgeError]:
+def cmd_render(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -1149,7 +1098,7 @@ def cmd_render(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": {"path": out, "anchors": len(rec["anchors"])}, "error": None})
 
 
-def cmd_set_beads(args) -> Result[dict, JudgeError]:
+def cmd_set_beads(args) -> Result[dict, ClientError]:
     loaded = _record_and_anchor(args.anchors, args.id)
     if isinstance(loaded, Err):
         return loaded
@@ -1165,7 +1114,7 @@ def cmd_set_beads(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": {"id": a["id"], "beads": beads}, "error": None})
 
 
-def cmd_promote(args) -> Result[dict, JudgeError]:
+def cmd_promote(args) -> Result[dict, ClientError]:
     loaded = _record_and_anchor(args.anchors, args.id)
     if isinstance(loaded, Err):
         return loaded
@@ -1201,7 +1150,7 @@ def demote_headings(body: str) -> str:
     return "\n".join(out)
 
 
-def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeError]:
+def compose_item_text(show, children=None, sections=None) -> Result[dict, ClientError]:
     """Markdown item from {{ tracker }} JSON. `sections` (keys from ITEM_SECTIONS) limits the body; None means every non-empty section."""
     if sections is not None:
         bad = [s for s in sections if s not in SECTION_KEYS]
@@ -1237,7 +1186,7 @@ def compose_item_text(show, children=None, sections=None) -> Result[dict, JudgeE
     return Ok({"item_id": item_id, "title": title, "text": text, "sections": sections_used, "chars": len(text)})
 
 
-def cmd_compose_item(args) -> Result[dict, JudgeError]:
+def cmd_compose_item(args) -> Result[dict, ClientError]:
     loaded = load_json(args.show_json, "{{ tracker }} show output")
     if isinstance(loaded, Err):
         return loaded
@@ -1451,11 +1400,11 @@ def shape_text(text: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> dict:
     }
 
 
-def plan_too_large(item: dict, detail: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> JudgeError:
+def plan_too_large(item: dict, detail: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> ClientError:
     """The plan-gate refusal. Oversize is a symptom: the error names where the characters are and carries the bead's shape."""
     size = size_breakdown(item["text"])
     where = ", ".join(f"{k} {v}" for k, v in sorted(size["sections"].items(), key=lambda kv: -kv[1]))
-    exc = JudgeError("PLAN.TOO_LARGE",
+    exc = ClientError("PLAN.TOO_LARGE",
                      f"plan bead {item['id']} is {len(item['text'])} characters after long code was reduced to signatures "
                      f"({size['prose_chars']} prose, {size['code_chars']} code; by section: {where}); {detail}. "
                      "A reasonable plan bead fits in one Jev request; this one is asking too much",
@@ -1469,11 +1418,10 @@ def plan_too_large(item: dict, detail: str, max_code_lines: int = DEFAULT_MAX_CO
     if "code_reduced" in item:
         shape["code_reduced"] = item["code_reduced"]
     exc.data = {"item_id": item["id"], "size": size, "shape": shape}
-    exc.meta = {"size": size}
     return exc
 
 
-def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, JudgeError]:
+def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, ClientError]:
     """Plan gate: send the bead whole when it fits; otherwise reduce code as little as possible.
 
     `misfit(text)` returns None when the text fits one Jev request, else why not. Fenced blocks longer than
@@ -1496,7 +1444,7 @@ def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, Judge
     return Ok(item)
 
 
-def beads_from_json(obj, what: str) -> Result[list, JudgeError]:
+def beads_from_json(obj, what: str) -> Result[list, ClientError]:
     """{{ tracker }} JSON in any of its shapes: one bead object, `{{ tracker }} show --json` (one-element array) or `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children --json{% endif %}` (array)."""
     if isinstance(obj, dict):
         return Ok([obj])
@@ -1505,7 +1453,7 @@ def beads_from_json(obj, what: str) -> Result[list, JudgeError]:
     return fail("INPUT.MALFORMED", f"{what} must be a bead object or an array of bead objects", action="Pass unmodified {% if tracker == "br" %}`br show --json`{% elif tracker == "bd" %}`bd show --json` / `bd children --json`{% endif %} output.")
 
 
-def load_beads(path: str, what: str) -> Result[list, JudgeError]:
+def load_beads(path: str, what: str) -> Result[list, ClientError]:
     """Read one {{ tracker }} JSON file and return its beads."""
     loaded = load_json(path, what)
     if isinstance(loaded, Err):
@@ -1525,7 +1473,7 @@ def is_sprint_bead(show: dict, item_id: str, title: str) -> bool:
             or re.search(r"\bsprint\b", title, re.IGNORECASE) is not None)
 
 
-def bead_shape(show: dict, max_code_lines: int) -> Result[dict, JudgeError]:
+def bead_shape(show: dict, max_code_lines: int) -> Result[dict, ClientError]:
     built = compose_item_text(show)
     if isinstance(built, Err):
         return built
@@ -1539,7 +1487,7 @@ def bead_shape(show: dict, max_code_lines: int) -> Result[dict, JudgeError]:
                "design_ratio": round(sections.get("design", 0) / shape["chars"], 2) if shape["chars"] else 0.0, **shape})
 
 
-def shape_beads(beads: list, max_code_lines: int, rec=None) -> Result[dict, JudgeError]:
+def shape_beads(beads: list, max_code_lines: int, rec=None) -> Result[dict, ClientError]:
     rows = []
     for b in beads:
         row = bead_shape(b, max_code_lines)
@@ -1599,7 +1547,7 @@ def shape_md(data: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def cmd_shape(args) -> Result[Any, JudgeError]:
+def cmd_shape(args) -> Result[Any, ClientError]:
     if args.max_code_lines < 1:
         return fail("VALIDATION.INPUT", f"--max-code-lines must be a positive integer, got {args.max_code_lines}")
     sources = []
@@ -1637,7 +1585,7 @@ def cmd_shape(args) -> Result[Any, JudgeError]:
 # --------------------------------------------------------------------------- #
 # judging
 # --------------------------------------------------------------------------- #
-def check_roles(qs: dict, where: str) -> Result[None, JudgeError]:
+def check_roles(qs: dict, where: str) -> Result[None, ClientError]:
     """Every required role, and the optional evidence role if present, must name a question in the set."""
     questions = qs.get("questions")
     if not isinstance(questions, dict) or not questions:
@@ -1658,7 +1606,7 @@ def check_roles(qs: dict, where: str) -> Result[None, JudgeError]:
     return Ok(None)
 
 
-def load_question_set(gate: str, override_path: str = "") -> Result[dict, JudgeError]:
+def load_question_set(gate: str, override_path: str = "") -> Result[dict, ClientError]:
     path = override_path or str(QUESTIONS_DIR / f"{gate}.json")
     loaded = load_json(path, f"question set for gate '{gate}'")
     if isinstance(loaded, Err):
@@ -1672,7 +1620,7 @@ def load_question_set(gate: str, override_path: str = "") -> Result[dict, JudgeE
     return Ok(qs)
 
 
-def load_extra_questions(paths: list, base: dict) -> Result[tuple, JudgeError]:
+def load_extra_questions(paths: list, base: dict) -> Result[tuple, ClientError]:
     """Add consumer questions from JSONL files to the base set. Ok((merged_set, sources)).
 
     Each non-blank line is one question object with an `id` plus the shape of a question in the base set.
@@ -1730,7 +1678,7 @@ def triage_questions_path(args, gate: str) -> str:
     return str(shipped) if shipped.is_file() else ""
 
 
-def check_extra_not_gating(qs: dict, extra_ids: set, where: str) -> Result[None, JudgeError]:
+def check_extra_not_gating(qs: dict, extra_ids: set, where: str) -> Result[None, ClientError]:
     """An extra question never gates: refuse a role that maps to one (for example through an override)."""
     for role, qid in (qs.get("roles") or {}).items():
         if qid in extra_ids:
@@ -1739,7 +1687,7 @@ def check_extra_not_gating(qs: dict, extra_ids: set, where: str) -> Result[None,
     return Ok(None)
 
 
-def merge_overrides(base: dict, override: dict) -> Result[dict, JudgeError]:
+def merge_overrides(base: dict, override: dict) -> Result[dict, ClientError]:
     """Per-anchor overrides replace question text by id; roles stay as in base unless overridden."""
     merged = json.loads(json.dumps(base))
     if not isinstance(override, dict):
@@ -1757,11 +1705,6 @@ def merge_overrides(base: dict, override: dict) -> Result[dict, JudgeError]:
     return Ok(merged)
 
 
-def questions_digest(questions: dict) -> str:
-    canonical = json.dumps(questions, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
 def build_state(anchor: dict, item: dict) -> dict:
     return {
         "anchor": {
@@ -1777,72 +1720,18 @@ def build_state(anchor: dict, item: dict) -> dict:
     }
 
 
-def encode_body(body: dict) -> bytes:
-    return json.dumps(body, allow_nan=False).encode("utf-8")
-
-
-def parse_retry_after(value):
-    if value is None:
-        return None
-    try:
-        delay = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(delay) or delay < 0:
-        return None
-    return min(delay, MAX_RETRY_AFTER)
-
-
-def http_error(status: int, text: str, retry_after=None) -> JudgeError:
-    """Map an HTTP failure to a JudgeError. Bodies are withheld except the first 300 chars of a 422."""
-    low = text.lower()
-    if 400 <= status < 500 and ("max_tokens" in low or ("token" in low and "exceed" in low)):
-        return JudgeError("JEV.CONTEXT_EXCEEDED", f"Jev HTTP {status}: request exceeds the model's context window", recoverable=True,
-                          action="Shorten the evidence for this item.", status=status)
-    if status == 401:
-        return JudgeError("AUTH.CREDENTIALS", "Jev HTTP 401; response body withheld", action="Check TYPESAFE_API_KEY.", status=status)
-    if status == 422:
-        return JudgeError("JEV.VALIDATION", f"Jev HTTP 422: {text[:300]}", action="Fix the named field; usually a malformed question override.", status=status)
-    code = {429: "JEV.RATE_LIMITED", 529: "JEV.OVERLOADED"}.get(status, "JEV.HTTP")
-    transient = status in (429, 529) or status >= 500
-    return JudgeError(code, f"Jev HTTP {status}; response body withheld", recoverable=transient,
-                      action="Retry with backoff" if transient else "Check the request body.",
-                      status=status, retry_after=retry_after)
-
-
-def call_jev(body: dict, api_key: str, timeout: float) -> Result[dict, JudgeError]:
-    """One POST to Jev. Returns Err(JudgeError) on failure; never retries or shortens (judge_with_policy does both)."""
-    data = encode_body(body)
-    req = urllib.request.Request(
-        JEV_URL, data=data, method="POST",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "plan-anchoring/jev_judge"},
+def call_jev(body: dict, timeout: float) -> Result[dict, ClientError]:
+    """Author the domain request; the generated client owns the wheel boundary."""
+    record = decidr_client.call_result(
+        body, model=body["model"], project="plan-anchor", agent_role="judge",
+        abort_on=frozenset({"auth"}), keyring_service=None,
+        keyring_account=None, timeout_secs=timeout,
+        consent_what="The anchor statement and the item text",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(MAX_RESPONSE_BYTES + 1)
-    except urllib.error.HTTPError as exc:
-        text = exc.read(4096).decode("utf-8", "replace")
-        retry_after = parse_retry_after(exc.headers.get("Retry-After") if exc.headers is not None else None)
-        return Err(http_error(exc.code, text, retry_after))
-    except urllib.error.URLError as exc:
-        return fail("JEV.NETWORK", f"Could not reach Jev: {exc.reason}", recoverable=True, action="Check network access and retry.")
-    except (OSError, http.client.HTTPException) as exc:
-        return fail("JEV.NETWORK", f"Jev connection failed: {type(exc).__name__}: {exc}", recoverable=True, action="Check network access and retry.")
-    if len(raw) > MAX_RESPONSE_BYTES:
-        return fail("JEV.RESPONSE_INVALID", "Jev response exceeded the size limit", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeError):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not JSON", recoverable=True, action="Retry once; if it repeats, check for a proxy rewriting the response.")
-    if not isinstance(parsed, dict):
-        return fail("JEV.RESPONSE_INVALID", "Jev response was not a JSON object", recoverable=True, action="Check for a proxy rewriting the response.")
-    return Ok(parsed)
-
-
-def is_transient(exc: JudgeError) -> bool:
-    if exc.code in TRANSIENT_CODES:
-        return True
-    return exc.code == "JEV.HTTP" and exc.status is not None and exc.status >= 500
+    if not record["ok"]:
+        return Err(record["error"])
+    return Ok({"model": record.get("model_answered"), "answers": record["value"],
+               "usage": record.get("usage"), "attempts": record.get("attempts")})
 
 
 def item_core(text: str) -> str:
@@ -1860,153 +1749,95 @@ def halve_item(item: dict, min_item_chars: int, meta: dict) -> bool:
     return True
 
 
-def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: dict) -> Result[None, JudgeError]:
+def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: dict) -> Result[None, ClientError]:
     """Pre-flight cap: shorten the item until the serialised request (state + questions) is under max_request_bytes.
 
     A state without an item (dedupe, rubric) has nothing to shorten: over the cap it is refused outright.
     """
     item = body["state"].get("item")
-    size = len(encode_body(body))
+    size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
     while size > max_request_bytes:
         if item is None:
-            exc = JudgeError("JEV.CONTEXT_EXCEEDED", f"request is {size} bytes, over --max-request-bytes {max_request_bytes}, and has no item to shorten",
+            exc = ClientError("JEV.CONTEXT_EXCEEDED", f"request is {size} bytes, over --max-request-bytes {max_request_bytes}, and has no item to shorten",
                              action="Shorten the anchor statement, quote or scope, or raise --max-request-bytes.")
-            exc.meta = meta
+            exc.data = dict(exc.data or {}, **meta)
+            exc.attempts = meta.get("attempts", 0)
             return Err(exc)
         if not halve_item(item, min_item_chars, meta):
-            exc = JudgeError("JEV.CONTEXT_EXCEEDED",
+            exc = ClientError("JEV.CONTEXT_EXCEEDED",
                              f"request is {size} bytes with the item at {len(item['text'])} chars, over --max-request-bytes {max_request_bytes}; "
                              f"the item is already at --min-item-chars {min_item_chars}",
                              action="Shorten the evidence for this item (names, counts and summaries only), shorten the question overrides, or raise --max-request-bytes.")
-            exc.meta = meta
+            exc.data = dict(exc.data or {}, **meta)
+            exc.attempts = meta.get("attempts", 0)
             return Err(exc)
-        size = len(encode_body(body))
+        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
     meta["request_bytes"] = size
     return Ok(None)
 
 
-def judge_with_policy(body: dict, api_key: str, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
-                      shorten: bool = True, optional=frozenset()) -> Result[tuple, JudgeError]:
-    """call_jev with the attempt policy and context handling. Returns Ok((validated response, meta)) or Err(JudgeError carrying .meta).
-
-    - Transport-level failures (429, 529, 5xx, network, invalid response): up to MAX_ATTEMPTS attempts; the first
-      retry waits Retry-After when given, else RETRY_DELAYS[0]; the next waits RETRY_DELAYS[1].
-    - Context overflow (4xx mentioning max_tokens / token ... exceed): halve the item and retry until it fits or
-      the item is at min_item_chars, then give up with JEV.CONTEXT_EXCEEDED. With shorten=False (the plan gate)
-      the item is never cut: the overflow is returned at once as PLAN.TOO_LARGE.
-    - Everything else (401, 422) is returned at once.
-    """
+def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
+                      shorten: bool = True, optional=frozenset()) -> Result[tuple, ClientError]:
+    """Call the shared transport and retain plan-anchor's local request sizing and context halving."""
     item = body["state"].get("item")
     meta = {"attempts": 0, "item_chars_sent": len(item["text"]) if item else 0, "item_shortened": False}
     fitted = fit_request(body, max_request_bytes, min_item_chars, meta)
     if isinstance(fitted, Err):
         return fitted
-    transient_failures = 0
     while True:
-        meta["attempts"] += 1
         meta["item_chars_sent"] = len(item["text"]) if item else 0
-        answered = call_jev(body, api_key, timeout)
+        answered = call_jev(body, timeout)
         if isinstance(answered, Ok):
-            answered = validate_response(answered.value, questions, optional)
-            if isinstance(answered, Ok):
-                return Ok((answered.value, meta))
+            sends = answered.value.get("attempts")
+            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+            return Ok((answered.value, meta))
+        else:
+            sends = answered.error.attempts
+            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+            if answered.error.retry_after_ms is not None:
+                meta["retry_after_ms"] = answered.error.retry_after_ms
         exc = answered.error
-        exc.meta = meta
-        if exc.code == "JEV.CONTEXT_EXCEEDED" and item is not None and not shorten:
+        exc.attempts = meta.get("attempts", 0)
+        if exc.code in ABORT_CODES:
+            return answered
+        exc.data = dict(exc.data or {}, **meta)
+        if exc.code == "DECIDR.CONTEXT_EXCEEDED" and item is not None and not shorten:
             final = plan_too_large(item, f"Jev rejected it for context size ({exc.message})")
-            final.meta = dict(meta, **final.meta)
+            final.data = dict(meta, **final.data)
+            final.attempts = meta["attempts"]
             return Err(final)
-        if exc.code == "JEV.CONTEXT_EXCEEDED":
+        if exc.code == "DECIDR.CONTEXT_EXCEEDED":
             if item is not None and halve_item(item, min_item_chars, meta):
-                meta["request_bytes"] = len(encode_body(body))
+                meta["request_bytes"] = len(json.dumps(body, allow_nan=False).encode("utf-8"))
                 continue
-            final = JudgeError("JEV.CONTEXT_EXCEEDED",
+            final = ClientError("JEV.CONTEXT_EXCEEDED",
                                f"Jev rejected the request for context size with the item at {len(item['text']) if item else 0} chars "
                                f"(floor --min-item-chars {min_item_chars}): {exc.message}",
                                action="Shorten the evidence for this item: sprint report and PR body summaries, file names and counts only; or lower --min-item-chars.",
                                status=exc.status)
-            final.meta = meta
+            final.data = dict(exc.data or {}, **meta)
+            final.attempts = meta["attempts"]
             return Err(final)
-        if is_transient(exc) and transient_failures < MAX_ATTEMPTS - 1:
-            delay = RETRY_DELAYS[min(transient_failures, len(RETRY_DELAYS) - 1)]
-            if transient_failures == 0 and exc.retry_after is not None:
-                delay = exc.retry_after
-            transient_failures += 1
-            _sleep(delay)
-            continue
         return answered
 
 
-def is_probability(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
-
-
-def noul_probability(ans: dict):
-    for key in ("noul", "probability", "p"):
-        if key in ans:
-            return ans[key]
-    return None
-
-
-def answer_problem(ans, question) -> str:
-    """Why an answer cannot be gated, or None when it can (modelled on process-porn's validator, minus the model check)."""
-    if not isinstance(ans, dict):
-        return "answer is not an object"
-    kind = ans.get("type", "choice")
-    if kind == "noul":
-        if not is_probability(noul_probability(ans)):
-            return "noul probability is missing or not in [0, 1]"
-        return None
-    if kind != "choice":
-        return f"answer type {kind!r} is not choice or noul"
-    criteria = question.get("criteria") if isinstance(question, dict) else None
-    options = set(criteria) if isinstance(criteria, dict) else set()
-    if "choice" not in ans:
-        return "choice answer has no 'choice'"
-    if options and ans["choice"] not in options:
-        return f"choice {ans['choice']!r} is not one of {sorted(options)}"
-    if not is_probability(ans.get("confidence")):
-        return "confidence is missing or not in [0, 1]"
-    probs = ans.get("probabilities")
-    if not isinstance(probs, dict):
-        return "probabilities missing"
-    if options and set(probs) != options:
-        return "probability keys differ from the options"
-    if not all(is_probability(p) for p in probs.values()):
-        return "a probability is out of range"
-    total = sum(probs.values())
-    if abs(total - 1) > PROBABILITY_ROUNDING * max(len(probs), 1):
-        return f"probabilities sum to {total:.4f}"
-    return None
-
-
-def validate_response(resp: dict, questions: dict, optional=frozenset()) -> Result[dict, JudgeError]:
-    """Every question must be answered except the ``optional`` (extra, never-gating) ones; no unknown ids."""
-    if not isinstance(resp, dict) or not isinstance(resp.get("answers"), dict):
-        return fail("JEV.RESPONSE_INVALID", "Jev response has no 'answers' object", recoverable=True,
-                    action="Retry; if it repeats, check the --model name.")
-    answers = resp["answers"]
-    required = set(questions) - set(optional)
-    if not required <= set(answers) or not set(answers) <= set(questions):
-        missing, extra = sorted(required - set(answers)), sorted(set(answers) - set(questions))
-        return fail("JEV.RESPONSE_INVALID", f"Jev answer ids differ from the questions (missing {missing}, unexpected {extra})", recoverable=True,
-                    action="Retry; if it repeats, check the question ids in the overrides.")
-    for qid, q in questions.items():
-        if qid not in answers:
-            continue  # an optional question left unanswered
-        problem = answer_problem(answers[qid], q)
-        if problem:
-            return fail("JEV.RESPONSE_INVALID", f"invalid answer for {qid}: {problem}", recoverable=True,
-                        action="Retry; if it repeats, the question set or the model changed shape.")
-    return Ok(resp)
-
-
 def answer_choice(ans: dict) -> tuple:
-    """Return (choice, confidence) for a choice answer; tolerate noul answers."""
-    if ans.get("type") == "noul" or "noul" in ans:
-        p = float(noul_probability(ans) or 0.0)
+    """Return (choice, confidence) from the wheel's typed answer."""
+    if hasattr(ans, "noul"):
+        p = float(ans.noul)
         return ("yes" if p >= 0.5 else "no", abs(p - 0.5) * 2)
-    return (ans.get("choice", "unclear"), float(ans.get("confidence", 0.0)))
+    return (ans.choice, float(ans.confidence))
+
+
+def fixture_response(answers: dict, questions: dict) -> Result[dict, ClientError]:
+    """Parse controlled fixture answers through sc-decidr's typed response parser."""
+    job = decidr_client.BatchJob("fixture", None, "fixture", 1, "fixture", {}, questions, {}, "fixture")
+    try:
+        return Ok({**decidr_client._fixture_attempt(job, {"*": answers}, 1), "usage": {}})
+    except ClientError as exc:
+        return Err(exc)
 
 
 def role_answers(answers: dict, roles: dict) -> dict:
@@ -2115,7 +1946,7 @@ def explain(verdict: str, min_conf: float, gate: str) -> str:
     }[verdict]
 
 
-def read_item(args) -> Result[dict, JudgeError]:
+def read_item(args) -> Result[dict, ClientError]:
     if args.item_file:
         try:
             text = pathlib.Path(args.item_file).read_text(encoding="utf-8")
@@ -2139,81 +1970,7 @@ def read_item(args) -> Result[dict, JudgeError]:
     return Ok(item)
 
 
-def _command_credential(argv: list[str]) -> str:
-    """Read a credential from a platform command without exposing its output on failure."""
-    try:
-        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True, encoding="utf-8", timeout=5, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def _windows_credential() -> str:
-    """Read the documented generic credential target from Windows Credential Manager."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class Credential(ctypes.Structure):
-            _fields_ = [
-                ("Flags", wintypes.DWORD), ("Type", wintypes.DWORD), ("TargetName", wintypes.LPWSTR),
-                ("Comment", wintypes.LPWSTR), ("LastWritten", wintypes.FILETIME),
-                ("CredentialBlobSize", wintypes.DWORD), ("CredentialBlob", ctypes.c_void_p),
-                ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
-                ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR),
-            ]
-
-        credential = ctypes.POINTER(Credential)()
-        advapi = ctypes.windll.advapi32
-        advapi.CredReadW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                                     ctypes.POINTER(ctypes.POINTER(Credential)))
-        advapi.CredReadW.restype = wintypes.BOOL
-        advapi.CredFree.argtypes = (ctypes.c_void_p,)
-        if not advapi.CredReadW(WINDOWS_CREDENTIAL_TARGET, 1, 0, ctypes.byref(credential)):
-            return ""
-        try:
-            size = int(credential.contents.CredentialBlobSize)
-            if not size or not credential.contents.CredentialBlob:
-                return ""
-            return ctypes.string_at(credential.contents.CredentialBlob, size).decode("utf-16-le").strip()
-        finally:
-            advapi.CredFree(credential)
-    except (AttributeError, OSError, UnicodeDecodeError):
-        return ""
-
-
-def credential_store_api_key() -> str:
-    """Read the documented OS credential only when the environment has no key."""
-    if sys.platform == "darwin":
-        return _command_credential(["security", "find-generic-password", "-s", CREDENTIAL_SERVICE,
-                                    "-a", CREDENTIAL_ACCOUNT, "-w"])
-    if sys.platform == "win32":
-        return _windows_credential()
-    if sys.platform.startswith("linux"):
-        return _command_credential(["secret-tool", "lookup", "service", CREDENTIAL_SERVICE,
-                                    "account", CREDENTIAL_ACCOUNT])
-    return ""
-
-
-def resolved_api_key() -> str:
-    """Resolve the TypeSafe key from the environment first, then the platform credential store."""
-    environment_key = os.environ.get(TYPESAFE_KEY_ENV)
-    if environment_key is not None:
-        return environment_key.strip()
-    return credential_store_api_key()
-
-
-def check_api_key(api_key: str) -> Result[None, JudgeError]:
-    if not api_key:
-        return fail("AUTH.CREDENTIALS", "no TypeSafe API key was found", action="Export TYPESAFE_API_KEY or add the documented platform credential, or use --dry-run / --answers-file.")
-    if not api_key.isascii() or any(ord(c) <= 32 or ord(c) == 127 for c in api_key):
-        return fail("AUTH.CREDENTIALS", "the TypeSafe API key has invalid formatting (whitespace, control or non-ASCII characters)",
-                    action="Replace TYPESAFE_API_KEY or the platform credential with the key exactly as issued.")
-    return Ok(None)
-
-
-def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) -> Result[dict, JudgeError]:
+def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) -> Result[dict, ClientError]:
     """Shared pre-flight for judge and check-fixtures: options, question set, overrides, fixture answers, key and consent.
 
     remote=False (every selected anchor is excluded from the item) skips the key and consent check: nothing is sent.
@@ -2252,7 +2009,7 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
     # The triage questions are asked in a second request, and only for a cell that failed, so the gate request (and so every
     # verdict) is exactly what it is without them. Questions from --extra-questions stay in the gate request.
     ctx["deferred_ids"] = set(ctx["extra_questions"][-1]["ids"]) if triage_default else set()
-    loaded = load_answers_fixture(getattr(args, "answers_file", ""), "anchor id")
+    loaded = answers_file(getattr(args, "answers_file", ""), "anchor id")
     if isinstance(loaded, Err):
         return loaded
     ctx["answers_fixture"] = loaded.value
@@ -2267,12 +2024,10 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
         return fail("INPUT.MALFORMED", "overrides file must be an object keyed by anchor id")
     ctx["live"] = not ctx["dry_run"] and ctx["answers_fixture"] is None
     if ctx["live"] and remote:
-        cleared = remote_preflight(args, "The anchor statement and the item text")
-        if isinstance(cleared, Err):
-            return cleared
-        ctx["api_key"] = cleared.value
-    else:
-        ctx["api_key"] = os.environ.get(TYPESAFE_KEY_ENV, "").strip()
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."), "The anchor statement and the item text")
+        except ClientError as error:
+            return Err(error)
     return Ok(ctx)
 
 
@@ -2281,76 +2036,17 @@ def confirm_enabled(args) -> bool:
     return not getattr(args, "no_confirm", False)
 
 
-REMOTE_JUDGE_SETTING = ".sc/plan-anchor/settings.yaml"
-REPO_ROOT_HELP = ("any path inside the repository; the nearest .sc/plan-anchor/settings.yaml at or above it holds "
-                  "allow_remote_judge (read for live Jev calls only; default .)")
-REMOTE_JUDGE_SET = "python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false"
+def answers_file(path: str, keyed_by: str) -> Result[Any, ClientError]:
+    """Use the shared fixture loader and preserve this consumer's Result return convention."""
+    try:
+        return Ok(decidr_client.load_answers_fixture(path, keyed_by, load_json))
+    except decidr_client.BatchInputError as exc:
+        return Err(exc.error)
+    except ClientError as exc:
+        return Err(exc)
 
 
-def remote_judge_consent(args, what: str) -> Result[None, JudgeError]:
-    """The repository's committed answer to whether plan text may go to TypeSafe: ``allow_remote_judge`` in
-    .sc/plan-anchor/settings.yaml. Only ``true`` passes; ``false`` and an absent answer refuse.
-
-    The settings module (and PyYAML behind it) is imported only here, so only a live call needs it.
-    """
-    import plan_anchor_settings as settings  # lazy: dry runs and fixture answers stay stdlib-only
-
-    start = pathlib.Path(getattr(args, "repository_root", "") or ".")
-    root = settings.find_repo_root(start)  # consent is a repository's answer: outside one there is none
-    if not root.ok:
-        return Err(_from_tool_error(root.error))
-    # The nearest settings file at or above the given path wins (REQ-070), not the one at the git top level:
-    # an install in a folder inside the repository writes its settings there.
-    answer = settings.remote_judge_consent(start.resolve())
-    if answer.ok and answer.value is True:
-        return Ok(None)
-    disabled = f"Sending plan text to TypeSafe is disabled. {what} would leave this machine."
-    if answer.ok:  # False: the user said no
-        return fail("POLICY.REMOTE_JUDGE_DISABLED",
-                    f"{disabled} {REMOTE_JUDGE_SETTING} sets allow_remote_judge: false.",
-                    action="The user declined remote judging; only the user changes it (`python3 scripts/plan_anchor_settings.py "
-                           "set allow_remote_judge true`, then commit). Use --dry-run to inspect the request instead.")
-    if answer.error.code == "SETTINGS.REMOTE_JUDGE_UNSET":
-        return fail("POLICY.REMOTE_JUDGE_DISABLED",
-                    f"{disabled} {REMOTE_JUDGE_SETTING} does not set allow_remote_judge.",
-                    action="Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer "
-                           f"with `{REMOTE_JUDGE_SET}`, and commit {REMOTE_JUDGE_SETTING}. Never infer consent from "
-                           "existing run files or past runs. Use --dry-run to inspect the request instead.")
-    return Err(_from_tool_error(answer.error))  # DEPENDENCY.PYYAML, SETTINGS.*: never a silent default
-
-
-def _from_tool_error(error) -> JudgeError:
-    out = JudgeError(error.code, error.message, action=error.action or "")
-    out.data = dict(error.data) if error.data is not None else None
-    return out
-
-
-def remote_preflight(args, what: str) -> Result[str, JudgeError]:
-    """Key and consent checks shared by every live Jev call; returns the API key. Nothing leaves the machine before this passes."""
-    api_key = resolved_api_key()
-    checked = check_api_key(api_key)
-    if isinstance(checked, Err):
-        return checked
-    consent = remote_judge_consent(args, what)
-    if isinstance(consent, Err):
-        return consent
-    return Ok(api_key)
-
-
-def load_answers_fixture(path: str, keyed_by: str) -> Result[Any, JudgeError]:
-    """A fixture of Jev answers keyed by id (or '*'); Ok(None) when no path is given."""
-    if not path:
-        return Ok(None)
-    loaded = load_json(path, "answers fixture")
-    if isinstance(loaded, Err):
-        return loaded
-    fixture = loaded.value
-    if not isinstance(fixture, dict):
-        return fail("INPUT.MALFORMED", f"answers fixture must be an object keyed by {keyed_by} (or '*')")
-    return Ok(fixture)
-
-
-def load_simple_question_set(name: str, required: tuple) -> Result[dict, JudgeError]:
+def load_simple_question_set(name: str, required: tuple) -> Result[dict, ClientError]:
     """A question set without roles (dedupe, testability): every named question must be present."""
     path = str(QUESTIONS_DIR / f"{name}.json")
     loaded = load_json(path, f"question set '{name}'")
@@ -2364,10 +2060,10 @@ def load_simple_question_set(name: str, required: tuple) -> Result[dict, JudgeEr
     return Ok(qs)
 
 
-def ask_jev_once(args, api_key: str, body: dict, questions: dict, fixture, fixture_keys: tuple) -> Result[tuple, JudgeError]:
+def ask_jev_once(args, body: dict, questions: dict, fixture, fixture_keys: tuple) -> Result[tuple, ClientError]:
     """One request for the item-less subcommands (dedupe, rubric): fixture answers when given, else the live policy.
 
-    Returns Ok((validated response, meta)), or Err(JudgeError) (FIXTURE.MISSING when the fixture lacks every key).
+    Returns Ok((validated response, meta)), or Err(ClientError) (FIXTURE.MISSING when the fixture lacks every key).
     """
     if fixture is not None:
         fx = None
@@ -2378,14 +2074,14 @@ def ask_jev_once(args, api_key: str, body: dict, questions: dict, fixture, fixtu
         if fx is None:
             return fail("FIXTURE.MISSING", f"answers fixture has no entry for {fixture_keys[0]} (or '*')",
                         action=f"Add an entry for {fixture_keys[0]} (or '*') to the answers file.")
-        checked = validate_response({"model": "fixture", "answers": fx}, questions)
-        if isinstance(checked, Err):
-            return checked
-        return Ok((checked.value, {"attempts": 1}))
-    return judge_with_policy(body, api_key, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
+        parsed = fixture_response(fx, questions)
+        if isinstance(parsed, Err):
+            return parsed
+        return Ok((parsed.value, {"attempts": 1}))
+    return judge_with_policy(body, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
 
 
-def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
+def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, ClientError]:
     """Resolve every anchor's question set before any call, so a bad override aborts before anything leaves the machine."""
     prepared = []
     for a in anchors:
@@ -2412,7 +2108,7 @@ def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, JudgeError]:
     return Ok(prepared)
 
 
-def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_key) -> Result[tuple, JudgeError]:
+def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_key) -> Result[tuple, ClientError]:
     """The first answer for one anchor: the fixture entry when a fixture is given, else the live policy. Ok((response, meta))."""
     if ctx["answers_fixture"] is not None:
         fx = ctx["answers_fixture"].get(fixture_key(a)) or ctx["answers_fixture"].get("*")
@@ -2422,12 +2118,15 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
         meta["attempts"] = 1
         sent = body["questions"]
         left_out = set(qs["questions"]) - set(sent)  # extra questions dropped from this request for size
-        checked = validate_response({"model": "fixture", "answers": {k: v for k, v in fx.items() if k not in left_out}}, sent,
-                                    qs.get("optional") or ())
-        if isinstance(checked, Err):
-            return checked
-        return Ok((checked.value, meta))
-    return judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+        fixture_answers = {k: v for k, v in fx.items() if k not in left_out}
+        required = set((qs.get("roles") or {}).values())
+        fixture_questions = {k: v for k, v in qs["questions"].items()
+                             if k not in left_out and (k in required or k in fixture_answers)}
+        parsed = fixture_response(fixture_answers, fixture_questions)
+        if isinstance(parsed, Err):
+            return parsed
+        return Ok((parsed.value, meta))
+    return judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
                              shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
 
 
@@ -2454,7 +2153,7 @@ def excluded_entry(a: dict, exclusion: dict, gate: str) -> dict:
     return entry
 
 
-def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_key, entry: dict) -> Result[int, JudgeError]:
+def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_key, entry: dict) -> Result[int, ClientError]:
     """Ask the triage questions of one failed cell in their own request and record the answers on the cell; never touches the
     verdict. Ok(attempts made); Err only for an ABORT_CODES error. A request over the size cap, or a call that gets no answer, is
     recorded on the cell (extra_questions_dropped, triage_error) and costs nothing else."""
@@ -2465,23 +2164,23 @@ def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_
         entry["triage_questions"] = [k for k in asked if k in entry["answers"]]
         return Ok(0)
     body = {"model": ctx["model"], "state": build_state(a, item), "questions": asked}
-    if len(encode_body(body)) > ctx["max_request_bytes"]:
+    if len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
         entry["extra_questions_dropped"] = sorted(set(entry.get("extra_questions_dropped") or ()) | deferred)
         return Ok(0)
-    got = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
+    got = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
                             shorten=False, optional=frozenset(asked))
     if isinstance(got, Err):
         if got.error.code in ABORT_CODES:
             return got
         entry["triage_error"] = got.error.to_json()["error"]
-        return Ok((got.error.meta or {}).get("attempts", 0))
+        return Ok(got.error.attempts)
     resp, meta = got.value
     entry["answers"].update(resp["answers"])
     entry["triage_questions"] = [k for k in asked if k in entry["answers"]]  # which answers are triage, in question order, for the report
     return Ok(meta.get("attempts", 0))
 
 
-def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[tuple, JudgeError]:
+def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[tuple, ClientError]:
     """One Jev request per anchor. Returns Ok((results, requests_out, model_answered)); Err only for an ABORT_CODES error.
 
     A cell whose Jev call produced no answer gets verdict ``error`` (a failed near-threshold confirmation keeps
@@ -2493,7 +2192,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         body = {"model": ctx["model"], "state": build_state(a, item),
                 "questions": {k: v for k, v in qs["questions"].items() if k not in deferred}}
         dropped = []
-        if (set(qs.get("optional") or ()) - deferred) and len(encode_body(body)) > ctx["max_request_bytes"]:
+        if (set(qs.get("optional") or ()) - deferred) and len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
             # extra questions never cost a verdict: over the size cap they are left out of this request, not the item
             dropped = sorted(set(qs["optional"]) - deferred)
             body["questions"] = {k: v for k, v in body["questions"].items() if k not in dropped}
@@ -2501,10 +2200,10 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
             # the gate questions' digest: extra questions never change it (they get their own)
-            "questions_sha256": questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
+            "questions_sha256": decidr_client.questions_digest({k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}),
         })
         if qs.get("optional"):
-            entry["extra_questions_sha256"] = questions_digest({k: qs["questions"][k] for k in qs["optional"]})
+            entry["extra_questions_sha256"] = decidr_client.questions_digest({k: qs["questions"][k] for k in qs["optional"]})
         if overridden:
             entry["questions"] = qs["questions"]
         if dropped:
@@ -2537,11 +2236,13 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             if ctx["answers_fixture"] is None and ctx.get("confirm", False) and near_threshold(resp["answers"], qs["roles"], ctx["threshold"], entry["kind"]):
                 # Near the threshold a single answer is noise (8/50 identical re-runs flipped): ask once more, require agreement.
                 entry["near_threshold"] = True
-                second = judge_with_policy(body, ctx["api_key"], ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
+                second = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
                                            shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
-                    meta["attempts"] += meta2.get("attempts", 0)
+                    sends = meta2.get("attempts")
+                    meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     verdict2, min_conf2 = decide(resp2["answers"], qs["roles"], ctx["threshold"], entry["kind"])
                     if verdict2 == verdict:
                         entry["confirmed"] = True
@@ -2552,7 +2253,9 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                     exc2 = second.error
                     if exc2.code in ABORT_CODES:
                         return second
-                    meta["attempts"] += (exc2.meta or {}).get("attempts", 0)
+                    sends = exc2.attempts
+                    meta["attempts"] = (None if meta["attempts"] is None or sends is None else
+                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     entry["confirm_error"] = exc2.to_json()["error"]
             entry.update({"verdict": verdict, "answers": resp["answers"], "min_confidence": round(min_conf, 3),
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
@@ -2567,7 +2270,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             exc = first.error
             if exc.code in ABORT_CODES:
                 return first
-            meta = exc.meta or meta
+            meta = {**meta, **{k: v for k, v in (exc.data or {}).items() if k in {"attempts", "item_chars_sent", "item_shortened", "request_bytes", "retry_after_ms", "size"}}}
             error = exc.to_json()["error"]
             if exc.data:
                 error["data"] = exc.data
@@ -2580,14 +2283,14 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
 
 
 def cell_failures(results: list, label=lambda r: r["anchor_id"]) -> list:
-    """[(label, JudgeError)] for every judged cell whose Jev call produced no answer (first or confirming call)."""
+    """[(label, ClientError)] for every judged cell whose Jev call produced no answer (first or confirming call)."""
     out = []
     for r in results:
         for key, suffix in (("error", ""), ("confirm_error", " (confirmation)")):
             e = r.get(key)
             if not e or (key == "error" and r.get("verdict") != "error"):
                 continue  # a dry run's "does not fit" note is not a call
-            out.append((label(r) + suffix, JudgeError(e["code"], e["message"], recoverable=bool(e.get("recoverable")),
+            out.append((label(r) + suffix, ClientError(e["code"], e["message"], retryable=bool(e.get("recoverable")),
                                                       action=e.get("suggested_action") or "")))
     return out
 
@@ -2628,7 +2331,7 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
     }
     if ctx["dry_run"]:
         run["requests"] = requests_out
-        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out),
+        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out),
                          "max_request_bytes": ctx["max_request_bytes"]}
     return run
 
@@ -2651,7 +2354,7 @@ def default_run_dir(args) -> pathlib.Path:
     return pathlib.Path(args.run_dir or str(pathlib.Path(args.anchors).parent / "anchor-runs"))
 
 
-def _valid_record(path: str) -> Result[dict, JudgeError]:
+def _valid_record(path: str) -> Result[dict, ClientError]:
     """Load anchors.json and refuse it when validate would report problems."""
     loaded = load_record(path)
     if isinstance(loaded, Err):
@@ -2662,7 +2365,7 @@ def _valid_record(path: str) -> Result[dict, JudgeError]:
     return loaded
 
 
-def cmd_judge(args) -> Result[dict, JudgeError]:
+def cmd_judge(args) -> Result[dict, ClientError]:
     loaded = _valid_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -2708,7 +2411,7 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
             trial = dict(item, text=text)
             for a, qs, _ in prepared:
                 gate_questions = {k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}
-                size = len(encode_body({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}))
+                size = len(json.dumps({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}, allow_nan=False).encode("utf-8"))
                 if size > ctx["max_request_bytes"]:
                     return f"with {a['id']} and its questions the request is {size} bytes, over --max-request-bytes {ctx['max_request_bytes']}"
             return None
@@ -2722,7 +2425,7 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
     results = results + [excluded_entry(a, exclusions[a["id"]], ctx["gate"]) for a in anchors if exclusions[a["id"]] is not None]
     results.sort(key=lambda r: (SEVERITY.get(r["verdict"] or "error", 99), r["anchor_id"]))
     run = assemble_run(ctx, rec, args.anchors, item, results, requests_out, model_answered)
-    path = write_run(run, args.out, default_run_dir(args))
+    write_run(run, args.out, default_run_dir(args))
     # a dry run asks Jev nothing, so an unsendable request is reported in its cell, not as a Jev failure
     failures = [] if ctx["dry_run"] else cell_failures(results)
     if failures:  # the partial run is kept on disk; the command still could not do its job
@@ -2731,7 +2434,7 @@ def cmd_judge(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": run, "error": None})
 
 
-def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
+def cmd_check_fixtures(args) -> Result[dict, ClientError]:
     loaded = _valid_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -2800,7 +2503,7 @@ def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
         return jev_failure("fixture checks", failures, len(checks), data)
     if ctx["dry_run"]:
         data["requests"] = [b for r in runs for b in r.get("requests", [])]
-        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(encode_body(b)) for b in data["requests"]),
+        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in data["requests"]),
                           "max_request_bytes": ctx["max_request_bytes"]}
     return Ok({"success": True, "data": data, "error": None})
 
@@ -2808,7 +2511,7 @@ def cmd_check_fixtures(args) -> Result[dict, JudgeError]:
 # --------------------------------------------------------------------------- #
 # anchor quality: lint, dedupe, rubric (no run files; nothing leaves the machine without allow_remote_judge: true)
 # --------------------------------------------------------------------------- #
-def live_anchors(rec: dict) -> Result[list, JudgeError]:
+def live_anchors(rec: dict) -> Result[list, ClientError]:
     """Every non-retired anchor of the record."""
     listed = anchor_list(rec)
     if isinstance(listed, Err):
@@ -2816,7 +2519,7 @@ def live_anchors(rec: dict) -> Result[list, JudgeError]:
     return Ok([a for a in listed.value if isinstance(a, dict) and a.get("status") != "retired"])
 
 
-def select_anchors(rec: dict, anchor_id: str, all_: bool, what: str) -> Result[list, JudgeError]:
+def select_anchors(rec: dict, anchor_id: str, all_: bool, what: str) -> Result[list, ClientError]:
     """--id picks one anchor (any status); --all, or neither flag, picks every non-retired anchor."""
     if anchor_id and all_:
         return fail("VALIDATION.INPUT", f"pass --id or --all to {what}, not both")
@@ -2828,7 +2531,7 @@ def select_anchors(rec: dict, anchor_id: str, all_: bool, what: str) -> Result[l
     return live_anchors(rec)
 
 
-def cmd_lint(args) -> Result[dict, JudgeError]:
+def cmd_lint(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -2846,7 +2549,7 @@ def cmd_lint(args) -> Result[dict, JudgeError]:
     return Ok({"success": True, "data": data, "error": None})
 
 
-def plan_item_ids(args) -> Result[Any, JudgeError]:
+def plan_item_ids(args) -> Result[Any, ClientError]:
     """Plan item ids for the exclusion check: --plan-item (repeatable) plus --plan-items FILE; None when neither is given.
 
     FILE is `{{ tracker }} show --json` output (one record or a list, each with `id`) or a JSON list of ids.
@@ -2882,13 +2585,21 @@ def exclusion_lint(anchors: list, known) -> dict:
     return {"exclusions": len(listed), "exclusion_warnings": warnings, "exclusions_checked": True}
 
 
-def check_threshold(value: float, name: str = "--threshold") -> Result[float, JudgeError]:
+def check_threshold(value: float, name: str = "--threshold") -> Result[float, ClientError]:
     if not (0.0 <= value <= 1.0):
         return fail("VALIDATION.INPUT", f"{name} must be between 0 and 1, got {value}")
     return Ok(value)
 
 
-def cmd_dedupe(args) -> Result[dict, JudgeError]:
+def batch_request_cap(gate: str, requested: Optional[int]) -> Result[int, ClientError]:
+    if requested is None:
+        return Ok(DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        return fail("VALIDATION.INPUT", "--max-request-bytes must be a positive integer")
+    return Ok(requested)
+
+
+def cmd_dedupe(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
         return loaded
@@ -2907,7 +2618,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
             if score >= threshold:
                 pairs.append({"a": a.get("id"), "b": b.get("id"), "jaccard": round(score, 3), "field_a": fa, "field_b": fb})
     pairs.sort(key=lambda p: (-p["jaccard"], str(p["a"]), str(p["b"])))
-    loaded = load_answers_fixture(args.answers_file, "'<a>|<b>'")
+    loaded = answers_file(args.answers_file, "'<a>|<b>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -2920,12 +2631,13 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
         if isinstance(loaded, Err):
             return loaded
         qs = loaded.value
-        api_key = ""
+
         if pairs and not dry_run and fixture is None:
-            cleared = remote_preflight(args, "The anchor statements")
-            if isinstance(cleared, Err):
-                return cleared
-            api_key = cleared.value
+            try:
+                decidr_client.remote_preflight(getattr(args, "repository_root", "."), "The anchor statements")
+            except ClientError as error:
+                return Err(error)
+
         by_id = {a.get("id"): a for a in anchors}
         requests_out, failures = [], []
         for pair in pairs:
@@ -2941,7 +2653,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                     pair["jev"] = {"choice": None, "confidence": None, "error": fitted.error.to_json()["error"]}
                 requests_out.append(body)
                 continue
-            asked = ask_jev_once(args, api_key, body, qs["questions"], fixture, (f"{pair['a']}|{pair['b']}", "*"))
+            asked = ask_jev_once(args, body, qs["questions"], fixture, (f"{pair['a']}|{pair['b']}", "*"))
             if isinstance(asked, Ok):
                 resp, meta = asked.value
                 choice, conf = answer_choice(resp["answers"][DEDUPE_QUESTION])
@@ -2950,11 +2662,11 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
                 exc = asked.error
                 if exc.code in ABORT_CODES:
                     return asked
-                pair["jev"] = {"choice": None, "confidence": None, "attempts": (exc.meta or {}).get("attempts"), "error": exc.to_json()["error"]}
+                pair["jev"] = {"choice": None, "confidence": None, "attempts": exc.attempts, "error": exc.to_json()["error"]}
                 failures.append((f"{pair['a']}|{pair['b']}", exc))
         if dry_run:
             data["requests"] = requests_out
-            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
             data["likely_duplicates"] = [p for p in pairs if p["jaccard"] >= LIKELY_DUPLICATE_JACCARD]
         else:
             data["likely_duplicates"] = [p for p in pairs if p.get("jev") and p["jev"].get("choice") == "yes" and (p["jev"].get("confidence") or 0.0) >= DEFAULT_THRESHOLD]
@@ -2968,7 +2680,7 @@ def cmd_dedupe(args) -> Result[dict, JudgeError]:
 RUBRIC_QUESTIONS = ("single_constraint", "observable", "faithful", "scoped", "self_contained")
 
 
-def rubric_confirmation_outcome(responses: list, questions: tuple, threshold: float, lint_errors: list) -> Result[dict, JudgeError]:
+def rubric_confirmation_outcome(responses: list, questions: tuple, threshold: float, lint_errors: list) -> Result[dict, ClientError]:
     """Classify two rubric confirmations and an optional tie-breaker.
 
     A third response is meaningful only when the first two choices disagree.
@@ -3043,7 +2755,7 @@ def rubric_confirmation_outcome(responses: list, questions: tuple, threshold: fl
     })
 
 
-def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: dict) -> Result[dict, JudgeError]:
+def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: dict) -> Result[dict, ClientError]:
     value = None
     for key in keys:
         value = fixture.get(key)
@@ -3057,39 +2769,43 @@ def rubric_fixture_response(fixture: dict, keys: tuple, index: int, questions: d
             return fail("FIXTURE.MISSING", f"answers fixture has no confirmation {index + 1} for {keys[0]}",
                         action=f"Give {keys[0]} one answer object per confirmation in the answers file.")
         value = value[index]
-    return validate_response({"model": "fixture", "answers": value}, questions)
+    return fixture_response(value, questions)
 
 
-def _rubric_ask(args, api_key: str, body: dict, qs: dict, fixture, cid, index: int) -> Result[tuple, JudgeError]:
+def _rubric_ask(args, body: dict, qs: dict, fixture, cid, index: int) -> Result[tuple, ClientError]:
     """Confirmation `index` for one candidate: the fixture entry when a fixture is given, else one live request. Ok((response, meta))."""
     if fixture is not None:
         response = rubric_fixture_response(fixture, (cid, "*"), index, qs["questions"])
         if isinstance(response, Err):
             return response
         return Ok((response.value, {"attempts": 1}))
-    return ask_jev_once(args, api_key, body, qs["questions"], None, (cid, "*"))
+    return ask_jev_once(args, body, qs["questions"], None, (cid, "*"))
 
 
-def _rubric_judgement(args, api_key: str, body: dict, qs: dict, fixture, cid, threshold: float, lint_errors: list) -> Result[tuple, JudgeError]:
+def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float, lint_errors: list) -> Result[tuple, ClientError]:
     """Two confirmations, a third on disagreement, then the outcome. Ok((responses, attempts, outcome))."""
     responses = []
     attempts = 0
     for index in range(2):
-        asked = _rubric_ask(args, api_key, body, qs, fixture, cid, index)
+        asked = _rubric_ask(args, body, qs, fixture, cid, index)
         if isinstance(asked, Err):
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts += meta.get("attempts", 1)
+        sends = meta.get("attempts")
+        attempts = (None if attempts is None or sends is None else
+                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
     first_choices = [answer_choice(responses[0]["answers"][qid])[0] for qid in qs["questions"]]
     second_choices = [answer_choice(responses[1]["answers"][qid])[0] for qid in qs["questions"]]
     if first_choices != second_choices:
-        asked = _rubric_ask(args, api_key, body, qs, fixture, cid, 2)
+        asked = _rubric_ask(args, body, qs, fixture, cid, 2)
         if isinstance(asked, Err):
             return asked
         response, meta = asked.value
         responses.append(response)
-        attempts += meta.get("attempts", 1)
+        sends = meta.get("attempts")
+        attempts = (None if attempts is None or sends is None else
+                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
     outcome = rubric_confirmation_outcome(responses, tuple(qs["questions"]), threshold, lint_errors)
     if isinstance(outcome, Err):
         return outcome
@@ -3100,7 +2816,7 @@ RUBRIC_NEXT = ("Plan diagnosis: run `judge` on the item, then `report --run <run
                "A disputed rubric role on a locked anchor: anchor-tuning `triage` with `gate: testability`.")
 
 
-def load_rubric_inputs(args) -> Result[tuple, JudgeError]:
+def load_rubric_inputs(args) -> Result[tuple, ClientError]:
     """Optional confined inputs; seals establish integrity, not calibration or approval."""
     questions_path = getattr(args, "questions", "")
     intent_path = getattr(args, "approved_intent_file", "")
@@ -3112,7 +2828,7 @@ def load_rubric_inputs(args) -> Result[tuple, JudgeError]:
 
     root = settings.find_repo_root(pathlib.Path(getattr(args, "repository_root", ".")))
     if isinstance(root, Err):
-        return Err(_from_tool_error(root.error))
+        return Err(decidr_client.from_tool_error(root.error))
 
     def reject_constant(value):
         raise ValueError(f"non-finite number {value}")
@@ -3149,7 +2865,7 @@ def load_rubric_inputs(args) -> Result[tuple, JudgeError]:
             return fail("RUBRIC.QUESTIONS", "sealed rubric requires exactly questions and digest")
         checked = validate_questions("testability", sealed)
         if isinstance(checked, Err):
-            return Err(_from_tool_error(checked.error))
+            return Err(decidr_client.from_tool_error(checked.error))
         for question in sealed["questions"].values():
             if (not isinstance(question, dict) or set(question) != {"type", "instructions", "criteria"}
                     or question["type"] != "choice" or not isinstance(question["instructions"], str)
@@ -3164,12 +2880,12 @@ def load_rubric_inputs(args) -> Result[tuple, JudgeError]:
             return loaded
         checked = validate_intent_descriptor(loaded.value)
         if isinstance(checked, Err):
-            return Err(_from_tool_error(checked.error))
+            return Err(decidr_client.from_tool_error(checked.error))
         intent = loaded.value
     return Ok((qs, intent, True))
 
 
-def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixture, what: str) -> Result[tuple, JudgeError]:
+def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixture, what: str) -> Result[tuple, ClientError]:
     """Lint, then one Jev request per candidate {id, statement, quote, scope, source_type}. Returns Ok((entries, requests_out)).
 
     An entry is testable when every rubric question has two confident yes
@@ -3192,12 +2908,14 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             if isinstance(fitted, Err):
                 return fitted  # refuse before credentials, emission or any transport
         bodies.append(body)
-    api_key = ""
+
     if candidates and not dry_run and fixture is None:
-        cleared = remote_preflight(args, what + (" and the explicitly selected approved intent" if intent is not None else ""))
-        if isinstance(cleared, Err):
-            return cleared
-        api_key = cleared.value
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                           what + (" and the explicitly selected approved intent" if intent is not None else ""))
+        except ClientError as error:
+            return Err(error)
+
     entries, requests_out, failures = [], [], []
     for c, body in zip(candidates, bodies):
         warnings = lint_statement(c["statement"], c["quote"], c.get("source_type") or "ANC")
@@ -3205,8 +2923,8 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
         entry = {"id": c["id"], "statement": c["statement"], "quote": c["quote"], "scope": c.get("scope") or "",
                  "verdict": None, "failing": list(lint_errors), "answers": None, "lint": {"warnings": warnings, "errors": lint_errors}}
         if explicit_inputs:
-            entry["inputs"] = {"question_seal": questions_digest({"questions": qs["questions"]}),
-                               "request_sha256": questions_digest(body)}
+            entry["inputs"] = {"question_seal": decidr_client.questions_digest({"questions": qs["questions"]}),
+                               "request_sha256": decidr_client.questions_digest(body)}
             if intent is not None:
                 entry["inputs"]["intent"] = {key: intent[key] for key in ("id", "version", "sha256")}
         if dry_run:
@@ -3216,7 +2934,7 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             requests_out.extend((body, json.loads(json.dumps(body))))
             entries.append(entry)
             continue
-        judged = _rubric_judgement(args, api_key, body, qs, fixture, c["id"], threshold, lint_errors)
+        judged = _rubric_judgement(args, body, qs, fixture, c["id"], threshold, lint_errors)
         if isinstance(judged, Ok):
             responses, attempts, outcome = judged.value
             entry["answers"] = responses[0]["answers"]
@@ -3243,12 +2961,12 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
     return Ok((entries, requests_out))
 
 
-def cmd_rubric(args) -> Result[dict, JudgeError]:
+def cmd_rubric(args) -> Result[dict, ClientError]:
     checked = check_threshold(args.threshold)
     if isinstance(checked, Err):
         return checked
     threshold = checked.value
-    loaded = load_answers_fixture(args.answers_file, "anchor id (or 'candidate')")
+    loaded = answers_file(args.answers_file, "anchor id (or 'candidate')")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -3287,18 +3005,18 @@ def cmd_rubric(args) -> Result[dict, JudgeError]:
             "pass": bool(entries) and all(e["verdict"] == "testable" for e in entries) and not dry_run}
     if dry_run:
         data["requests"] = requests_out
-        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(encode_body(b)) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
     return Ok({"success": True, "data": data, "error": None})
 
 
-def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Result[tuple, JudgeError]:
+def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Result[tuple, ClientError]:
     """`add --rubric`: judge the candidate before writing: Ok((entry, refusal)).
 
-    refusal is an ANCHOR.NOT_TESTABLE JudgeError (reported as data.refused, exit 0) unless the rubric passed or
+    refusal is an ANCHOR.NOT_TESTABLE ClientError (reported as data.refused, exit 0) unless the rubric passed or
     --allow-untestable was given, else None. Err when the rubric could not run (a Jev failure or a missing
     answers entry): exit 2 and nothing is recorded, --allow-untestable or not.
     """
-    loaded = load_answers_fixture(getattr(args, "answers_file", ""), "'candidate'")
+    loaded = answers_file(getattr(args, "answers_file", ""), "'candidate'")
     if isinstance(loaded, Err):
         return loaded
     candidate = {"id": "candidate", "statement": statement, "quote": quote, "scope": args.scope or "", "source_type": source_type}
@@ -3307,9 +3025,9 @@ def add_rubric_gate(args, statement: str, quote: str, source_type: str) -> Resul
         return judged
     entry = judged.value[0][0]
     if entry["verdict"] != "testable" and not getattr(args, "allow_untestable", False):
-        return Ok((entry, JudgeError(
+        return Ok((entry, ClientError(
             "ANCHOR.NOT_TESTABLE", f"the statement did not pass the testability rubric ({entry['verdict']}): " + ", ".join(entry["failing"]),
-            recoverable=True,
+            retryable=True,
             action="Reword the statement so each failing criterion holds (see references/anchor-capture.md), re-run `rubric --statement ... --quote ...`, "
                    "or pass --allow-untestable to record it anyway.")))
     return Ok((entry, None))
@@ -3333,9 +3051,10 @@ def triage_lines(r: dict) -> list:
     verdict; they are what triage/rules.json routes on, so the reader sees why a cell goes to exclude, plan, question or human."""
     lines = []
     answers = r.get("answers") or {}
+    answers = {qid: decidr_client._typed_answer(answer) for qid, answer in answers.items()}
     shown = []
     for qid in r.get("triage_questions") or []:
-        if isinstance(answers.get(qid), dict):
+        if qid in answers:
             choice, conf = answer_choice(answers[qid])
             shown.append(f"`{qid}` {choice} ({conf:.2f})")
     if shown:
@@ -3397,7 +3116,7 @@ def report_lines(run: dict, include_passing: bool = False) -> list:
     return lines
 
 
-def cmd_report(args) -> Result[Any, JudgeError]:
+def cmd_report(args) -> Result[Any, ClientError]:
     loaded = load_run(args.run, "run file")
     if isinstance(loaded, Err):
         return loaded
@@ -3432,7 +3151,7 @@ def collect_runs(paths: list) -> list:
     return runs
 
 
-def cmd_coverage(args) -> Result[Any, JudgeError]:
+def cmd_coverage(args) -> Result[Any, ClientError]:
     runs = collect_runs(args.runs)
     if args.gate:
         runs = [r for r in runs if r.get("gate") == args.gate]
@@ -3520,7 +3239,7 @@ def diff_rank(verdict) -> int:
     return SEVERITY.get(verdict, -1)
 
 
-def cmd_diff(args) -> Result[dict, JudgeError]:
+def cmd_diff(args) -> Result[dict, ClientError]:
     loaded = load_run(args.prev, "previous run")
     if isinstance(loaded, Err):
         return loaded
@@ -3597,61 +3316,26 @@ def cmd_diff(args) -> Result[dict, JudgeError]:
 # --------------------------------------------------------------------------- #
 # batch (low layer, tracker-neutral): request lines in, one result line per (item, candidate, repeat) out
 # --------------------------------------------------------------------------- #
-BATCH_RESULT_SCHEMA = "plan-anchor/jev-batch-result/1"
-BATCH_MAX_WORKERS = 4              # parallel Jev evaluators; the anchor-tuning protocol's cap
-BATCH_RETRIES = 1                  # one retry per failed call, recorded as retry_count on the line
-BATCH_FIXTURE_ERROR = "__error__"  # an answers-file attempt {"__error__": "<code>"} simulates a failed call
-BATCH_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 QUESTION_BEAD_KEYS = {"plan": "plan_questions", "dev": "dev_questions"}
 JSON_FENCE_RE = re.compile(r"```json[ \t]*\r?\n(.*?)\r?\n```", re.DOTALL)
 
 
-class BatchSettings(NamedTuple):
-    gate: str              # plan | dev: the default roles when a candidate carries none
-    model: str
-    repeat: int
-    prefix: str            # request ids are <prefix>/<item>/<anchor>/<candidate>/r<n>
-    threshold: float       # the line's verdict; leaning is the same answers at threshold 0
-    timeout: float
-    max_workers: int
-    max_request_bytes: int
-    dry_run: bool
 
 
-class BatchJob(NamedTuple):
-    item_id: str
-    anchor_id: str
-    candidate_id: str
-    repeat: int
-    request_id: str
-    body: dict
-    questions: dict
-    roles: dict
-    kind: str
 
 
 def canonical_digest(value) -> str:
     """SHA-256 of canonical JSON (sorted keys, no spaces): the digest every contract in this skill uses."""
-    return questions_digest(value)
+    return decidr_client.questions_digest(value)
 
 
-def batch_request_id(prefix: str, item_id: str, anchor_id: str, candidate_id: str, repeat: int) -> str:
-    return f"{prefix}/{item_id}/{anchor_id}/{candidate_id}/r{repeat}"
 
 
-def batch_run_id(request_id: str) -> str:
-    """Deterministic run id: the first 16 hex digits of SHA-256 over the request id."""
-    return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
 
 
-def _safe_id(value, what: str) -> Result[str, JudgeError]:
-    if not isinstance(value, str) or not BATCH_ID_RE.match(value):
-        return fail("VALIDATION.INPUT", f"{what} {value!r} is not a safe id (letters, digits and _.:- only)",
-                    action="See assets/schemas/jev-batch-request.schema.json.")
-    return Ok(value)
 
 
-def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> Result[list, JudgeError]:
+def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_roles: dict) -> Result[list, ClientError]:
     """One request line -> its jobs (candidates x repeats, in order). Refuses a malformed line or an oversized request before any call."""
     where = f"request line {number}"
     if not isinstance(line, dict) or set(line) - {"item", "anchor", "questions"}:
@@ -3660,14 +3344,16 @@ def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> 
     item, anchor_rec, candidates = line.get("item"), line.get("anchor"), line.get("questions")
     if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
         return fail("VALIDATION.INPUT", f"{where}: item needs id and non-empty text")
-    checked = _safe_id(item.get("id"), f"{where}: item id")
-    if isinstance(checked, Err):
-        return checked
+    try:
+        item_id = decidr_client._safe_id(item.get("id"), f"{where}: item id")
+    except ClientError as error:
+        return Err(error)
     if not isinstance(anchor_rec, dict) or not isinstance(anchor_rec.get("statement"), str) or not anchor_rec["statement"].strip():
         return fail("VALIDATION.INPUT", f"{where}: anchor needs id and statement")
-    checked = _safe_id(anchor_rec.get("id"), f"{where}: anchor id")
-    if isinstance(checked, Err):
-        return checked
+    try:
+        anchor_id = decidr_client._safe_id(anchor_rec.get("id"), f"{where}: anchor id")
+    except ClientError as error:
+        return Err(error)
     if not isinstance(candidates, list) or not candidates:
         return fail("VALIDATION.INPUT", f"{where}: questions must be a non-empty array of candidates")
     jobs, seen = [], set()
@@ -3676,153 +3362,63 @@ def batch_jobs(line, number: int, settings: BatchSettings, base_roles: dict) -> 
     for cand in candidates:
         if not isinstance(cand, dict):
             return fail("VALIDATION.INPUT", f"{where}: every candidate is an object with candidate_id, questions and optional roles")
-        cid = _safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
-        if isinstance(cid, Err):
-            return cid
-        if cid.value in seen:
-            return fail("VALIDATION.INPUT", f"{where}: candidate {cid.value} is listed twice", action="Use --repeat for repeats.")
-        seen.add(cid.value)
+        try:
+            cid = decidr_client._safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
+        except ClientError as error:
+            return Err(error)
+        if cid in seen:
+            return fail("VALIDATION.INPUT", f"{where}: candidate {cid} is listed twice", action="Use --repeat for repeats.")
+        seen.add(cid)
         qs = {"questions": cand.get("questions"), "roles": cand.get("roles") or base_roles}
-        checked = check_roles(qs, f"{where}: candidate {cid.value}")
+        checked = check_roles(qs, f"{where}: candidate {cid}")
         if isinstance(checked, Err):
             return checked
         body = {"model": settings.model, "state": state, "questions": qs["questions"]}
-        size = len(encode_body(body))
+        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
         if size > settings.max_request_bytes:
-            return fail("JEV.CONTEXT_EXCEEDED", f"{where}: the request for {item['id']}/{cid.value} is {size} bytes, over --max-request-bytes {settings.max_request_bytes}",
+            return fail("JEV.CONTEXT_EXCEEDED", f"{where}: the request for {item['id']}/{cid} is {size} bytes, over --max-request-bytes {settings.max_request_bytes}",
                         action="Shorten the item (see references/plan-size-and-shape.md); never raise the cap to make it fit.")
         for r in range(1, settings.repeat + 1):
-            rid = batch_request_id(settings.prefix, item["id"], anchor_rec["id"], cid.value, r)
-            jobs.append(BatchJob(item["id"], anchor_rec["id"], cid.value, r, rid, body, qs["questions"], qs["roles"], kind))
+            rid = decidr_client.batch_request_id(settings.prefix, item_id, anchor_id, cid, r)
+            jobs.append(decidr_client.BatchJob(item_id, anchor_id, cid, r, rid, body, qs["questions"], qs["roles"], kind))
     return Ok(jobs)
 
 
-def _fixture_attempt(job: BatchJob, fixture: dict, attempt: int) -> Result[dict, JudgeError]:
-    keys = (f"{job.item_id}/{job.candidate_id}/r{job.repeat}", f"{job.item_id}/{job.candidate_id}", job.candidate_id, "*")
-    entry = next((fixture[k] for k in keys if k in fixture), None)
-    if entry is None:
-        return fail("FIXTURE.MISSING", f"answers fixture has no entry for {keys[0]} (or {keys[1]}, {keys[2]}, '*')",
-                    action=f"Add an entry for {keys[0]} to the answers file.")
-    if isinstance(entry, list):
-        if not entry:
-            return fail("FIXTURE.MISSING", f"answers fixture entry for {keys[0]} is an empty list")
-        entry = entry[min(attempt, len(entry)) - 1]
-    if isinstance(entry, dict) and BATCH_FIXTURE_ERROR in entry:
-        code = str(entry[BATCH_FIXTURE_ERROR])
-        return fail(code, f"fixture failure {code}", recoverable=code in TRANSIENT_CODES)
-    return Ok({"model": "fixture", "answers": entry})
 
 
-class _AbortFlag:
-    """Set once by the first call that must stop the batch (AUTH.CREDENTIALS, POLICY.*); later jobs send nothing."""
-
-    def __init__(self):
-        self._event = threading.Event()
-        self.error = None
-
-    def set(self, error: JudgeError) -> None:
-        self.error = error
-        self._event.set()
-
-    def is_set(self) -> bool:
-        return self._event.is_set()
 
 
-def _line(job: BatchJob, settings: BatchSettings, raw, attempts: list, error, dry_run: bool) -> dict:
-    verdict = min_conf = leaning = None
-    if raw is not None:
-        verdict, min_conf = decide(raw["answers"], job.roles, settings.threshold, job.kind)
-        leaning = decide(raw["answers"], job.roles, 0.0, job.kind)[0]
-    return redact_sensitive({
-        "schema": BATCH_RESULT_SCHEMA, "request_id": job.request_id, "run_id": batch_run_id(job.request_id),
-        "item_id": job.item_id, "anchor_id": job.anchor_id, "candidate_id": job.candidate_id, "repeat": job.repeat,
-        "request_sha256": hashlib.sha256(encode_body(job.body)).hexdigest(), "questions_sha256": questions_digest(job.questions),
-        "request": job.body, "roles": job.roles, "kind": job.kind, "dry_run": dry_run, "ok": raw is not None,
-        "raw_response": raw, "answers": raw["answers"] if raw is not None else None,
-        "model_answered": raw.get("model") if raw is not None else None,
-        "threshold": settings.threshold, "verdict": verdict, "min_confidence": min_conf, "leaning": leaning,
-        "retry_count": max(len(attempts) - 1, 0), "attempts": attempts,
-        "error": None if error is None else {"code": error.code, "message": error.message, "recoverable": error.recoverable},
-    })
-
-
-def run_batch_job(job: BatchJob, settings: BatchSettings, api_key: str, fixture, abort: _AbortFlag) -> dict:
-    """One call with one retry on a recoverable failure; returns the result line (raw evidence, redacted)."""
+def run_batch_job(job: decidr_client.BatchJob, settings: decidr_client.BatchSettings, fixture) -> dict:
+    """Run one controlled fixture or dry-run job; live batches use the wheel."""
     if settings.dry_run:
-        return _line(job, settings, None, [], None, True)
-    attempts, raw, error = [], None, None
-    for attempt in range(1, BATCH_RETRIES + 2):
-        if abort.is_set():
-            error = abort.error
-            attempts.append({"attempt": attempt, "ok": False, "error": {"code": error.code, "message": "not sent: the batch aborted", "recoverable": False}})
-            break
-        got = _fixture_attempt(job, fixture, attempt) if fixture is not None else call_jev(job.body, api_key, settings.timeout)
-        if isinstance(got, Ok):
-            got = validate_response(got.value, job.questions)
-        if isinstance(got, Ok):
-            raw, error = got.value, None
-            attempts.append({"attempt": attempt, "ok": True})
-            break
-        error = got.error
-        attempts.append({"attempt": attempt, "ok": False, "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}})
-        if error.code in ABORT_CODES:
-            abort.set(error)
-            break
-        if not (error.recoverable or is_transient(error)) or attempt > BATCH_RETRIES:
-            break
-        if fixture is None:
-            _sleep(error.retry_after if error.retry_after is not None else RETRY_DELAYS[0])
-    return _line(job, settings, raw, attempts, error, False)
+        return decidr_client._line(job, settings, None, [], None, True)
+    if fixture is None:
+        error = ClientError("VALIDATION.INPUT", "run_batch_job requires fixture answers; live calls use call_batch_results")
+        return decidr_client._line(job, settings, None, [], error, False, result_fields=batch_result_fields,
+                                   error_message_limit=900)
+    try:
+        raw = decidr_client._fixture_attempt(job, fixture, 1)
+    except ClientError as error:
+        attempts = [{"attempt": 1, "ok": False,
+                     "error": {"code": error.code, "message": error.message,
+                               "recoverable": getattr(error, "recoverable", error.retryable)}}]
+        return decidr_client._line(job, settings, None, attempts, error, False, result_fields=batch_result_fields,
+                                   error_message_limit=900)
+    attempts = [{"attempt": 1, "ok": True}]
+    return decidr_client._line(job, settings, raw, attempts, None, False, result_fields=batch_result_fields,
+                               error_message_limit=900)
 
 
-async def _aiter(source):
-    if hasattr(source, "__aiter__"):
-        async for value in source:
-            yield value
-    else:
-        for value in source:
-            yield value
+def batch_result_fields(job, settings, raw) -> dict:
+    if raw is None:
+        return {}
+    answers = raw["answers"]
+    verdict, min_confidence = decide(answers, job.roles, settings.threshold, job.kind)
+    return {"verdict": verdict, "min_confidence": round(min_confidence, 3),
+            "leaning": leaning_of(answers, job.roles, job.kind)}
 
 
-class BatchInputError(Exception):
-    """A request line the async API cannot judge; carries the typed JudgeError. The CLI validates every line first, so it never sees one."""
-
-    def __init__(self, error: JudgeError):
-        super().__init__(error.message)
-        self.error = error
-
-
-async def stream_batch(source, settings: BatchSettings, api_key: str = "", fixture=None):
-    """Library API: an async iterator of result lines for an (async) iterable of request-line dicts.
-
-    At most ``settings.max_workers`` Jev calls run at once. Lines are yielded in request order (candidates,
-    then repeats, within each request line) as soon as each one and every line before it has an answer, so
-    the stream is deterministic for the same input; consumers still key lines by id, never by position.
-    Raises BatchInputError for an invalid request line.
-    """
-    loop = asyncio.get_running_loop()
-    base = load_question_set(settings.gate)
-    if isinstance(base, Err):
-        raise BatchInputError(base.error)
-    abort = _AbortFlag()
-    pending = collections.deque()
-    window = settings.max_workers * 2
-    with concurrent.futures.ThreadPoolExecutor(max_workers=settings.max_workers) as pool:
-        number = 0
-        async for line in _aiter(source):
-            number += 1
-            jobs = batch_jobs(line, number, settings, base.value["roles"])
-            if isinstance(jobs, Err):
-                raise BatchInputError(jobs.error)
-            for job in jobs.value:
-                pending.append(loop.run_in_executor(pool, run_batch_job, job, settings, api_key, fixture, abort))
-                while len(pending) >= window:
-                    yield await pending.popleft()
-        while pending:
-            yield await pending.popleft()
-
-
-def read_request_lines(path: str) -> Result[list, JudgeError]:
+def read_request_lines(path: str) -> Result[list, ClientError]:
     """Request lines from a file or stdin (``-``): the same parser for both, one JSON object per non-empty line."""
     if path == "-":
         text = sys.stdin.read()
@@ -3847,7 +3443,7 @@ def read_request_lines(path: str) -> Result[list, JudgeError]:
     return Ok(lines)
 
 
-def read_batch_results(path: str) -> Result[list, JudgeError]:
+def read_batch_results(path: str) -> Result[list, ClientError]:
     """Every line of a result stream or log, in file order."""
     p = pathlib.Path(path)
     if not p.is_file():
@@ -3864,105 +3460,97 @@ def read_batch_results(path: str) -> Result[list, JudgeError]:
             line = json.loads(raw)
         except json.JSONDecodeError as exc:
             return fail("INPUT.MALFORMED", f"result stream line {n} is not JSON: {exc}")
-        if not isinstance(line, dict) or line.get("schema") != BATCH_RESULT_SCHEMA:
-            return fail("INPUT.MALFORMED", f"result stream line {n} is not a {BATCH_RESULT_SCHEMA} record")
+        if not isinstance(line, dict) or line.get("schema") not in {
+                decidr_client.BATCH_RESULT_SCHEMA, "plan-anchor/jev-batch-result/1"}:
+            return fail("INPUT.MALFORMED", f"result stream line {n} is not a supported batch result record")
         lines.append(line)
     return Ok(lines)
 
 
-def write_stdout_line(text: str) -> None:
-    """One JSONL line to stdout, byte for byte as written to the log: through the binary buffer, because a text-mode
-    stdout on Windows turns "\n" into "\r\n". A stream without a buffer (a test's StringIO) gets the text."""
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-        return
-    sys.stdout.flush()
-    buffer.write(text.encode("utf-8"))
-    buffer.flush()
-
-
-def encode_result_line(line: dict) -> str:
-    return json.dumps(line, ensure_ascii=False) + "\n"  # key order kept: request_sha256 hashes the request as sent
-
-
-def batch_settings(args, prefix: str) -> Result[BatchSettings, JudgeError]:
-    if getattr(args, "repeat", 1) < 1:
-        return fail("VALIDATION.INPUT", "--repeat must be at least 1")
-    if not 1 <= args.max_workers <= BATCH_MAX_WORKERS:
-        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {BATCH_MAX_WORKERS}")
-    if not prefix.strip() or any(c.isspace() for c in prefix):
-        return fail("VALIDATION.INPUT", "--request-prefix must be non-empty and contain no whitespace")
-    threshold = check_threshold(getattr(args, "threshold", DEFAULT_THRESHOLD))
-    if isinstance(threshold, Err):
-        return threshold
-    gate = getattr(args, "gate", "plan")
-    cap = getattr(args, "max_request_bytes", None) or (DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
-    return Ok(BatchSettings(gate, args.model, getattr(args, "repeat", 1), prefix, threshold.value, args.timeout,
-                            args.max_workers, cap, bool(args.dry_run)))
-
-
-def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, JudgeError]:
-    name = run_name or stamp()
-    checked = _safe_id(name, "--run-name")
-    if isinstance(checked, Err):
-        return checked
-    return Ok(pathlib.Path(run_dir) / f"tournament-{name}.jsonl")
-
-
-def pump_batch(lines: list, settings: BatchSettings, api_key: str, fixture, log_path: pathlib.Path, echo: bool) -> Result[list, JudgeError]:
-    """Run the low layer over validated request lines; tee every result line, unchanged, to stdout (when ``echo``)
-    and to the append-only log, flushing both after every line so a crash keeps the evidence."""
-
-    async def drive() -> list:
-        out = []
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8", newline="\n") as log:
-            async for line in stream_batch(lines, settings, api_key, fixture):
-                text = encode_result_line(line)
-                log.write(text)
-                log.flush()
-                if echo:
-                    write_stdout_line(text)
-                out.append(line)
-        return out
-
-    try:
-        return Ok(asyncio.run(drive()))
-    except BatchInputError as exc:
-        return Err(exc.error)
-
-
-def validate_request_lines(lines: list, settings: BatchSettings) -> Result[int, JudgeError]:
-    """Every line checked before any call: a bad line late in the stream never leaves earlier requests half-sent."""
+def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_path: pathlib.Path, echo: bool) -> Result[list, ClientError]:
+    """Validate and persist domain results; the generated client streams wheel records."""
     base = load_question_set(settings.gate)
     if isinstance(base, Err):
         return base
-    total, keys = 0, set()
-    for number, line in enumerate(lines, start=1):
-        jobs = batch_jobs(line, number, settings, base.value["roles"])
-        if isinstance(jobs, Err):
-            return jobs
-        for job in jobs.value:
-            if job.request_id in keys:
-                return fail("VALIDATION.INPUT", f"request {job.request_id} appears twice in the stream",
-                            action="Pair each item, anchor and candidate once; use --repeat for repeats.")
-            keys.add(job.request_id)
-        total += len(jobs.value)
-    return Ok(total)
+    jobs = []
+    for number, request_line in enumerate(lines, start=1):
+        built = batch_jobs(request_line, number, settings, base.value["roles"])
+        if isinstance(built, Err):
+            return built
+        jobs.extend(built.value)
+    completed = {}
+
+    def persist(record):
+        position = record["position"]
+        job = jobs[position]
+        wheel_attempts = record["attempts"]
+        if record["ok"]:
+            attempts = [{"attempt": wheel_attempts, "ok": True}]
+            line = decidr_client._line(job, settings, record, attempts, None, False,
+                                       result_fields=batch_result_fields, error_message_limit=900)
+        else:
+            error = record["error"]
+            attempts = [{"attempt": wheel_attempts, "ok": False,
+                         "error": {"code": error.code, "message": error.message,
+                                   "recoverable": getattr(error, "recoverable", error.retryable)}}]
+            line = decidr_client._line(job, settings, None, attempts, error, False,
+                                       result_fields=batch_result_fields, error_message_limit=900)
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8", newline="\n") as log:
+                text = decidr_client.encode_result_line(line, redact=redact_sensitive)
+                log.write(text)
+                log.flush()
+                if echo:
+                    decidr_client.write_stdout_line(text)
+        except OSError as exc:
+            raise decidr_client.BatchInputError(fail("SCRIPT.IO", f"batch result log could not be written: {exc}",
+                                       action="Check the run directory is writable.").error) from exc
+        completed[position] = line
+
+    try:
+        result = decidr_client.call_batch_results(
+            [job.body for job in jobs],
+            model=settings.model, project="plan-anchor", agent_role="tournament",
+            abort_on=frozenset({"auth"}), keyring_service=None,
+            keyring_account=None, timeout_secs=settings.timeout,
+            workers=settings.max_workers, on_result=persist,
+            consent_what="The anchor statements, scopes and item texts in the request stream",
+        )
+    except decidr_client.BatchInputError as exc:
+        return Err(exc.error)
+    if not result["ok"]:
+        return Err(result["error"])
+    return Ok([completed[record["position"]] for record in result["value"]])
 
 
-def run_low_layer(args, lines: list) -> Result[Any, JudgeError]:
+
+
+def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, ClientError]:
+    name = run_name or stamp()
+    try:
+        checked = decidr_client._safe_id(name, "--run-name")
+    except ClientError as error:
+        return Err(error)
+    return Ok(pathlib.Path(run_dir) / f"tournament-{checked}.jsonl")
+
+
+
+
+
+
+def run_low_layer(args, lines: list) -> Result[Any, ClientError]:
     """The shared CLI path for `batch` and `bead-batch`: validate, consent, stream, log. Stdout carries only result lines."""
-    settings = batch_settings(args, args.request_prefix)
-    if isinstance(settings, Err):
-        return settings
-    settings = settings.value
-    checked = validate_request_lines(lines, settings)
-    if isinstance(checked, Err):
-        return checked
-    loaded = load_answers_fixture(args.answers_file, "'<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>'")
+    try:
+        settings = decidr_client.batch_settings(args, args.request_prefix, check_threshold=check_threshold,
+                                                request_cap=batch_request_cap)
+    except ClientError as error:
+        return Err(error)
+    base = load_question_set(settings.gate)
+    if isinstance(base, Err):
+        return base
+    question_sets = base.value["roles"]
+    loaded = answers_file(args.answers_file, "'<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -3973,24 +3561,65 @@ def run_low_layer(args, lines: list) -> Result[Any, JudgeError]:
     log_path = batch_log_path(run_dir, args.run_name)
     if isinstance(log_path, Err):
         return log_path
-    api_key = ""
+
     if not settings.dry_run and fixture is None:
-        cleared = remote_preflight(args, "The anchor statements, scopes and item texts in the request stream")
-        if isinstance(cleared, Err):
-            return cleared
-        api_key = cleared.value
-    pumped = pump_batch(lines, settings, api_key, fixture, log_path.value, echo=True)
-    if isinstance(pumped, Err):
-        return pumped
-    return Ok(StreamedResult([x for x in pumped.value if not x["ok"] and not x["dry_run"]]))
+        try:
+            decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                           "The anchor statements, scopes and item texts in the request stream")
+        except ClientError as error:
+            return Err(error)
+    return run_recorded_batch(lines, settings, fixture, log_path.value, echo=True, question_sets=question_sets)
 
 
-class StreamedResult(NamedTuple):
-    """A command whose stdout was the result lines: main prints nothing more; exit 2 when any line has no answer."""
-    failed: list
+def run_recorded_batch(lines: list, settings: decidr_client.BatchSettings, fixture, log_path: pathlib.Path,
+                       *, echo: bool, question_sets: dict) -> Result[decidr_client.StreamedResult, ClientError]:
+    """Connect the shared stream and durable record writer to plan-anchor's question and verdict rules."""
+    try:
+        decidr_client.validate_request_lines(lines, settings, question_sets, batch_jobs)
+        decidr_client.check_fixture_coverage(lines, settings, question_sets, batch_jobs, fixture)
+    except decidr_client.BatchInputError as error:
+        return Err(error.error)
+    except ClientError as error:
+        return Err(error)
+    if fixture is None and not settings.dry_run:
+        completed = _live_batch_results(lines, settings, log_path, echo)
+        if isinstance(completed, Err):
+            return completed
+        return Ok(decidr_client.streamed_result(completed.value))
+
+    async def records():
+        async for line in decidr_client.stream_batch(
+            lines, settings, make_jobs=batch_jobs,
+            run_job=lambda job, active_settings: run_batch_job(job, active_settings, fixture),
+            question_sets=question_sets, window_factor=1,
+            abort=lambda result: result.get("error") is not None
+            and result["error"]["code"].startswith(("AUTH.", "POLICY.")),
+        ):
+            yield line
+
+    def persist(line):
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8", newline="\n") as log:
+                log.write(decidr_client.encode_result_line(line, redact=redact_sensitive))
+                log.flush()
+        except OSError as error:
+            return Err(fail("SCRIPT.IO", f"batch result log could not be written: {error}",
+                            action="Check the run directory is writable.").error)
+        return Ok(None)
+
+    try:
+        results = decidr_client.pump_batch(records(), log_result=persist, echo=echo)
+    except decidr_client.BatchInputError as error:
+        return Err(error.error)
+    except ClientError as error:
+        return Err(error)
+    return Ok(decidr_client.streamed_result(results))
 
 
-def cmd_batch(args) -> Result[Any, JudgeError]:
+
+
+def cmd_batch(args) -> Result[Any, ClientError]:
     lines = read_request_lines(args.input)
     if isinstance(lines, Err):
         return lines
@@ -4008,7 +3637,7 @@ class TrackerReader:
         self.cwd = cwd
         self._run = run
 
-    def _json(self, argv: list, what: str) -> Result[Any, JudgeError]:
+    def _json(self, argv: list, what: str) -> Result[Any, ClientError]:
         try:
             proc = self._run([self.cli, *argv], cwd=str(self.cwd), stdin=subprocess.DEVNULL, capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
@@ -4023,7 +3652,7 @@ class TrackerReader:
         except json.JSONDecodeError:
             return fail("TRACKER.READ", f"{what} printed no JSON", action="Check the tracker CLI version supports --json.")
 
-    def show(self, bead_id: str) -> Result[dict, JudgeError]:
+    def show(self, bead_id: str) -> Result[dict, ClientError]:
         got = self._json(["show", bead_id, "--json"], f"{{ tracker }} show {bead_id}")
         if isinstance(got, Err):
             return got
@@ -4035,7 +3664,7 @@ class TrackerReader:
         return fail("TRACKER.READ", f"{{ tracker }} show {bead_id} --json did not print one bead",
                     action="Check the bead id with `{{ tracker }} show <id>`.")
 
-    def children(self, bead: dict) -> Result[list, JudgeError]:
+    def children(self, bead: dict) -> Result[list, ClientError]:
         """Child records with status (closed children carry close_reason)."""
 {% if tracker == "br" %}
         ids = [d.get("id") for d in bead.get("dependents") or []
@@ -4053,17 +3682,17 @@ class TrackerReader:
         return Ok(got.value)
 
 
-def open_tracker(args) -> Result[TrackerReader, JudgeError]:
+def open_tracker(args) -> Result[TrackerReader, ClientError]:
     """The tracker this repository selected (anchor_tracker.py resolve); imported lazily, so the low layer needs neither it nor PyYAML."""
     import anchor_tracker  # lazy
 
     selected = anchor_tracker.resolve(pathlib.Path(getattr(args, "repository_root", "") or "."))
     if isinstance(selected, Err):
-        return Err(_from_tool_error(selected.error))
+        return Err(decidr_client.from_tool_error(selected.error))
     return Ok(TrackerReader(selected.value.cli_path, selected.value.root))
 
 
-def fenced_json_object(text: str, where: str) -> Result[dict, JudgeError]:
+def fenced_json_object(text: str, where: str) -> Result[dict, ClientError]:
     """The one fenced ```json block of a question bead's description, as an object."""
     blocks = JSON_FENCE_RE.findall(text or "")
     if len(blocks) != 1:
@@ -4078,7 +3707,7 @@ def fenced_json_object(text: str, where: str) -> Result[dict, JudgeError]:
     return Ok(value)
 
 
-def bead_candidate(base_qs: dict, a: dict, gate: str, bead: dict, candidate_id: str) -> Result[dict, JudgeError]:
+def bead_candidate(base_qs: dict, a: dict, gate: str, bead: dict, candidate_id: str) -> Result[dict, ClientError]:
     """A question bead (or a candidate child of it) as one low-layer candidate: its fenced JSON merged onto the
     gate's default set after the anchor record's own overrides, exactly as `judge` merges them."""
     parsed = fenced_json_object(bead.get("description") or "", f"question bead {bead.get('id')}")
@@ -4096,7 +3725,7 @@ def bead_candidate(base_qs: dict, a: dict, gate: str, bead: dict, candidate_id: 
     return Ok({"candidate_id": candidate_id, "questions": merged.value["questions"], "roles": merged.value["roles"]})
 
 
-def bead_request_lines(args, reader: TrackerReader) -> Result[list, JudgeError]:
+def bead_request_lines(args, reader: TrackerReader) -> Result[list, ClientError]:
     """Item beads x one anchor's gate question bead (and, with --candidates, its open child beads) -> request lines."""
     rec = load_record(args.anchors)
     if isinstance(rec, Err):
@@ -4155,7 +3784,7 @@ def bead_request_lines(args, reader: TrackerReader) -> Result[list, JudgeError]:
     return Ok(lines)
 
 
-def cmd_bead_batch(args) -> Result[Any, JudgeError]:
+def cmd_bead_batch(args) -> Result[Any, ClientError]:
     reader = open_tracker(args)
     if isinstance(reader, Err):
         return reader
@@ -4164,8 +3793,8 @@ def cmd_bead_batch(args) -> Result[Any, JudgeError]:
         return lines
     if args.emit:
         for line in lines.value:
-            write_stdout_line(json.dumps(line, ensure_ascii=False) + "\n")
-        return Ok(StreamedResult([]))
+            decidr_client.write_stdout_line(decidr_client.encode_result_line(line, redact=redact_sensitive))
+        return Ok(decidr_client.streamed_result([]))
     return run_low_layer(args, lines.value)
 
 
@@ -4287,7 +3916,7 @@ def _tournament_contract():
     return anchor_tuning_contract
 
 
-def check_tune_request(request) -> Result[dict, JudgeError]:
+def check_tune_request(request) -> Result[dict, ClientError]:
     """The request passes anchor_tuning_contract.py request, is a planning/development tune, and its authority digests hold."""
     contract = _tournament_contract()
     if not isinstance(request, dict):
@@ -4301,7 +3930,7 @@ def check_tune_request(request) -> Result[dict, JudgeError]:
         return fail("TOURNAMENT.REQUEST_INVALID", f"the request is missing a required field: {exc}",
                     action="Render the request with anchor-tuning-tune-request.md.j2 and validate it against anchor-tuning-request.schema.json.")
     if isinstance(checked, Err):
-        out = JudgeError("TOURNAMENT.REQUEST_INVALID", f"anchor_tuning_contract.py request: {checked.error.code}: {checked.error.message}",
+        out = ClientError("TOURNAMENT.REQUEST_INVALID", f"anchor_tuning_contract.py request: {checked.error.code}: {checked.error.message}",
                          action="Fix the request named by the violation; the runner never repairs a request.")
         out.data = {"violation": {"code": checked.error.code, "message": checked.error.message}}
         return Err(out)
@@ -4333,10 +3962,10 @@ def _choice_question_problem(question) -> Optional[str]:
 
 
 def _expected_answers(roles: dict) -> dict:
-    return {qid: {"type": "choice", "choice": choice, "confidence": 1.0} for qid, choice in roles.items()}
+    return {qid: decidr_client.ChoiceAnswer(choice, 1.0, {choice: 1.0}) for qid, choice in roles.items()}
 
 
-def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str) -> Result[Oracle, JudgeError]:
+def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str) -> Result[Oracle, ClientError]:
     loaded = load_json(path, "oracle")
     if isinstance(loaded, Err):
         return loaded
@@ -4363,7 +3992,7 @@ def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str)
         if not isinstance(c, dict):
             return bad("every case must be an object")
         cid = c.get("case_id")
-        if not isinstance(cid, str) or not BATCH_ID_RE.match(cid) or cid in seen:
+        if not isinstance(cid, str) or re.fullmatch(decidr_client.BATCH_ID_RE, cid) is None or cid in seen:
             return bad(f"case_id {cid!r} must be a unique safe id")
         seen.add(cid)
         if c.get("probe") not in ORACLE_PROBES:
@@ -4398,7 +4027,7 @@ def load_oracle(path: str, request: dict, role_ids: set, roles: dict, kind: str)
 
 
 
-def freeze_oracle(out_dir: pathlib.Path, oracle_value: dict, digest: str, request: dict) -> Result[None, JudgeError]:
+def freeze_oracle(out_dir: pathlib.Path, oracle_value: dict, digest: str, request: dict) -> Result[None, ClientError]:
     """The oracle is frozen in the output folder before the first call; a different oracle later is refused."""
     events = request["tuning_history"]["events"]
     if events and events[-1]["oracle"]["sha256"] != digest:
@@ -4420,7 +4049,7 @@ def freeze_oracle(out_dir: pathlib.Path, oracle_value: dict, digest: str, reques
     return Ok(None)
 
 
-def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, JudgeError]:
+def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, ClientError]:
     """Bundles to evaluate: the baseline (current questions) first, then the listed or cross-product candidate bundles."""
     loaded = load_json(path, "candidates")
     if isinstance(loaded, Err):
@@ -4442,7 +4071,7 @@ def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, Jud
         if not isinstance(entries, dict) or len(entries) < request["candidate_minimum"]:
             return bad(f"role {role} needs at least candidate_minimum ({request['candidate_minimum']}) candidates")
         for cid, q in entries.items():
-            if not BATCH_ID_RE.match(cid):
+            if re.fullmatch(decidr_client.BATCH_ID_RE, cid) is None:
                 return bad(f"candidate id {cid!r} is not a safe id")
             problem = _choice_question_problem(q)
             if problem:
@@ -4467,7 +4096,7 @@ def load_candidates(path: str, request: dict, role_ids: set) -> Result[list, Jud
     bundles, seen = [], set()
     for b in listed:
         bid = b.get("bundle_id") if isinstance(b, dict) else None
-        if not isinstance(bid, str) or not BATCH_ID_RE.match(bid) or bid in seen or bid == BASELINE_BUNDLE:
+        if not isinstance(bid, str) or re.fullmatch(decidr_client.BATCH_ID_RE, bid) is None or bid in seen or bid == BASELINE_BUNDLE:
             return bad(f"bundle_id {bid!r} must be a unique safe id other than {BASELINE_BUNDLE!r}")
         seen.add(bid)
         roles = b.get("roles")
@@ -4613,7 +4242,7 @@ def _acceptance_table(chosen: BundleScore, baseline: BundleScore, oracle: Oracle
     return table
 
 
-def index_stream(raw_lines: list, jobs: list) -> Result[dict, JudgeError]:
+def index_stream(raw_lines: list, jobs: list) -> Result[dict, ClientError]:
     """Key the stream by (case, bundle, repeat), never by position, and prove every line answers the request this oracle and these candidates produce."""
     expected = {(j.item_id, j.candidate_id, j.repeat): j for j in jobs}
     indexed = {}
@@ -4629,13 +4258,15 @@ def index_stream(raw_lines: list, jobs: list) -> Result[dict, JudgeError]:
             return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} is a dry run; nothing was judged",
                         action="Run the tournament without --dry-run.")
         if line.get("request_id") != job.request_id or canonical_digest(line.get("request")) != canonical_digest(job.body) \
-                or line.get("request_sha256") != hashlib.sha256(encode_body(line.get("request"))).hexdigest():
+                or line.get("request_sha256") != hashlib.sha256(json.dumps(line.get("request"), allow_nan=False).encode("utf-8")).hexdigest():
             return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} does not carry this tournament's request",
                         action="The oracle, candidates, model or correlation id changed since the stream was written; rerun into a new --out.")
         if line.get("ok"):
-            checked = validate_response(line.get("raw_response"), job.questions)
-            if isinstance(checked, Err) or line.get("answers") != line["raw_response"].get("answers"):
+            if line.get("answers") != line["raw_response"].get("answers"):
                 return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} has answers that differ from its raw response")
+        if line.get("ok"):
+            line = dict(line, answers={qid: decidr_client._typed_answer(answer)
+                                       for qid, answer in line["answers"].items()})
         indexed[key] = line
     return Ok(indexed)
 
@@ -4670,7 +4301,7 @@ def _history_event(request: dict, oracle: Oracle, chosen: BundleScore, chosen_li
 
 def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dict, repeat: int, roles: dict, kind: str,
                       out_dir: pathlib.Path, results_path: pathlib.Path, workers: int, started: float,
-                      choose: str = "") -> Result[dict, JudgeError]:
+                      choose: str = "") -> Result[dict, ClientError]:
     """Score, rank, select and assemble the anchor-tuning result variables; the contract checks them before they are written.
 
     Accepted bundles that tie on every ranking key except complexity and id are co-leaders: without ``choose`` none
@@ -4781,10 +4412,10 @@ def tournament_result(request: dict, oracle: Oracle, bundles: list, indexed: dic
     return Ok(variables)
 
 
-def cmd_tournament(args) -> Result[dict, JudgeError]:
+def cmd_tournament(args) -> Result[dict, ClientError]:
     started = time.monotonic()
-    if not 1 <= args.max_workers <= BATCH_MAX_WORKERS:
-        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {BATCH_MAX_WORKERS}")
+    if not 1 <= args.max_workers <= decidr_client.BATCH_MAX_WORKERS:
+        return fail("VALIDATION.INPUT", f"--max-workers must be between 1 and {decidr_client.BATCH_MAX_WORKERS}")
     if args.choose and not args.results:
         return fail("VALIDATION.INPUT", "--choose seals a co-leader of an existing stream; pass that stream with --results",
                     action="Rerun as `tournament --results <out>/results.jsonl --choose <bundle_id> --out <new folder>`.")
@@ -4819,7 +4450,7 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
     frozen = freeze_oracle(out_dir, oracle_raw.value, oracle.sha256, request)
     if isinstance(frozen, Err):
         return frozen
-    loaded = load_answers_fixture(args.answers_file, "'<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>'")
+    loaded = answers_file(args.answers_file, "'<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -4829,7 +4460,7 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
                       "questions": [{"candidate_id": b.bundle_id, "questions": b.questions, "roles": roles} for b in bundles]}
                      for c in oracle.cases]
     max_bytes = DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV
-    settings = BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
+    settings = decidr_client.BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
                              args.timeout, args.max_workers, max_bytes, bool(args.dry_run))
     jobs = []
     for number, line in enumerate(request_lines, start=1):
@@ -4841,24 +4472,26 @@ def cmd_tournament(args) -> Result[dict, JudgeError]:
         results_path = pathlib.Path(args.results)
     elif args.dry_run:
         path = out_dir / TOURNAMENT_DRY_RESULTS
-        pumped = pump_batch(request_lines, settings, "", None, path, echo=False)
+        pumped = run_recorded_batch(request_lines, settings, None, path, echo=False, question_sets=roles)
         if isinstance(pumped, Err):
             return pumped
         return Ok({"success": True, "error": None, "data": {
-            "dry_run": True, "requests": len(pumped.value), "results": str(path), "oracle_sha256": oracle.sha256,
+            "dry_run": True, "requests": len(jobs), "results": str(path), "oracle_sha256": oracle.sha256,
             "bundles": [b.bundle_id for b in bundles], "cases": len(oracle.cases)}})
     else:
         results_path = out_dir / TOURNAMENT_RESULTS
         if results_path.exists():
             return fail("TOURNAMENT.OUT_EXISTS", f"{results_path} already holds a result stream; evidence is never overwritten",
                         action="Pass a new --out, or rescore the existing stream with --results.")
-        api_key = ""
+
         if fixture is None:
-            cleared = remote_preflight(args, "The anchor statement, scope and oracle case texts")
-            if isinstance(cleared, Err):
-                return cleared
-            api_key = cleared.value
-        pumped = pump_batch(request_lines, settings, api_key, fixture, results_path, echo=False)
+            try:
+                decidr_client.remote_preflight(getattr(args, "repository_root", "."),
+                                               "The anchor statement, scope and oracle case texts")
+            except ClientError as error:
+                return Err(error)
+
+        pumped = run_recorded_batch(request_lines, settings, fixture, results_path, echo=False, question_sets=roles)
         if isinstance(pumped, Err):
             return pumped
     streamed = read_batch_results(str(results_path))
@@ -4892,13 +4525,13 @@ def add_stream_options(parser) -> None:
     parser.add_argument("--repeat", type=int, default=1, help="identical requests per (item, candidate); default 1")
     parser.add_argument("--request-prefix", default="batch", help="request ids are <prefix>/<item>/<anchor>/<candidate>/r<n>")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="confidence threshold of each line's verdict")
-    parser.add_argument("--max-workers", type=int, default=BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {BATCH_MAX_WORKERS}")
+    parser.add_argument("--max-workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
     parser.add_argument("--max-request-bytes", type=int, default=None, help="refuse any request over this before sending; default the gate's cap")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--dry-run", action="store_true", help="emit the result lines with the requests only; call nothing")
     parser.add_argument("--answers-file", default="", help="fixture answers keyed '<item>/<candidate>/r<n>', '<item>/<candidate>', '<candidate>' or '*'; no network")
-    parser.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    parser.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
 
 
 def add_judge_options(parser, with_item: bool) -> None:
@@ -4952,7 +4585,7 @@ def add_judge_options(parser, with_item: bool) -> None:
     parser.add_argument("--run-dir", default="", help="judge: default <anchors dir>/anchor-runs; check-fixtures: write runs under <run-dir>/fixtures/")
     parser.add_argument("--dry-run", action="store_true", help="write the Jev requests; call nothing")
     parser.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id (check-fixtures: '<anchor>:pass:<n>') or '*'; no network")
-    parser.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    parser.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
 
 
 class _UsageError(Exception):
@@ -4982,7 +4615,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--rubric", action="store_true", help="ask Jev the testability rubric first; refuse (data.refused.code ANCHOR.NOT_TESTABLE) unless it passes")
     a.add_argument("--allow-untestable", action="store_true", help="with --rubric: record the anchor even when the rubric says needs_work")
     a.add_argument("--answers-file", default="", help="with --rubric: fixture answers keyed 'candidate' or '*'; no network")
-    a.add_argument("--repository-root", default=".", help="with --rubric: " + REPO_ROOT_HELP)
+    a.add_argument("--repository-root", default=".", help="with --rubric: " + decidr_client.REPO_ROOT_HELP)
     a.add_argument("--model", default=DEFAULT_MODEL, help="with --rubric: Jev model")
     a.add_argument("--timeout", type=float, default=30.0, help="with --rubric: seconds per request")
     a.add_argument("--stated-by", default=os.environ.get("USER", "user"))
@@ -5048,7 +4681,7 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--jev", action="store_true", help="ask Jev whether each reported pair is the same constraint")
     dd.add_argument("--dry-run", action="store_true", help="with --jev: show the requests; call nothing")
     dd.add_argument("--answers-file", default="", help="fixture answers keyed '<a>|<b>' or '*' (implies --jev); no network")
-    dd.add_argument("--repository-root", default=".", help="with --jev: " + REPO_ROOT_HELP)
+    dd.add_argument("--repository-root", default=".", help="with --jev: " + decidr_client.REPO_ROOT_HELP)
     dd.add_argument("--model", default=DEFAULT_MODEL)
     dd.add_argument("--timeout", type=float, default=30.0)
     dd.set_defaults(func=cmd_dedupe)
@@ -5065,7 +4698,7 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="minimum confidence for a yes to count")
     rb.add_argument("--dry-run", action="store_true", help="show the requests; call nothing")
     rb.add_argument("--answers-file", default="", help="fixture answers keyed by anchor id ('candidate' for --statement) or '*'; no network")
-    rb.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    rb.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     rb.add_argument("--model", default=DEFAULT_MODEL)
     rb.add_argument("--timeout", type=float, default=30.0)
     rb.set_defaults(func=cmd_rubric)
@@ -5151,12 +4784,12 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--out", required=True, help="tournament folder: frozen oracle, result stream, result_vars.json")
     tn.add_argument("--results", default="", help="score this existing result stream instead of calling Jev")
     tn.add_argument("--choose", default="", help="seal this bundle: one of the tied co-leaders an earlier run returned (needs --results)")
-    tn.add_argument("--max-workers", type=int, default=BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {BATCH_MAX_WORKERS}")
+    tn.add_argument("--max-workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
     tn.add_argument("--model", default=DEFAULT_MODEL)
     tn.add_argument("--timeout", type=float, default=30.0)
     tn.add_argument("--dry-run", action="store_true", help="write the request lines; call nothing, score nothing")
     tn.add_argument("--answers-file", default="", help="fixture answers keyed '<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>' or '*'; no network")
-    tn.add_argument("--repository-root", default=".", help=REPO_ROOT_HELP)
+    tn.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tn.set_defaults(func=cmd_tournament)
 
     rp = sub.add_parser("report", help="render a run")
@@ -5180,52 +4813,39 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-CANCELED_EXIT = 130
-
-
-def canceled_envelope() -> dict:
-    """The interrupt envelope: typed like every error, plus the canceled / aborted_by flags."""
-    out = JudgeError("CANCELED", "interrupted before the command finished", recoverable=True,
-                     action="Rerun the command; a judge run is written only when it completes, so nothing partial was recorded.").to_json()
-    out.update({"canceled": True, "aborted_by": "user"})
-    return out
-
-
 def main(argv=None) -> int:
     """0 when the command ran (its outcome, negative or not, is in data); 2 when it could not; 130 on interrupt."""
     try:
         return _main(argv)
     except KeyboardInterrupt:
-        emit(canceled_envelope())
-        return CANCELED_EXIT
+        emit(decidr_client.canceled_envelope())
+        return decidr_client.CANCELED_EXIT
 
 
 def _main(argv=None) -> int:
     try:
         args = build_parser().parse_args(argv)
     except _UsageError as exc:
-        emit(JudgeError("VALIDATION.INPUT", str(exc), action="Run 'jev_judge.py <subcommand> --help' for the accepted arguments.").to_json())
+        emit(ClientError("VALIDATION.INPUT", str(exc), action="Run 'jev_judge.py <subcommand> --help' for the accepted arguments.").to_json())
         return 2
     fmt = getattr(args, "format", "json")
     try:
         outcome = args.func(args)
     except Exception as exc:  # noqa: BLE001 - a JSON error object beats a traceback for the calling agent
-        emit(JudgeError("SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
+        emit(ClientError("SCRIPT.INTERNAL", f"{type(exc).__name__}: {exc}",
                         action="Report this with the command line; check the JSON inputs against references/anchor-document.md.").to_json())
         return 2
     if isinstance(outcome, Err):
         emit(outcome.error.to_json())
         return 2
-    if isinstance(outcome.value, StreamedResult):  # stdout already carried the result lines and nothing else
+    if isinstance(outcome.value, decidr_client.StreamedResult):  # stdout already carried the result lines and nothing else
         failed = outcome.value.failed
         if not failed:
             return 0
-        first = failed[0]["error"] or {}
-        error = JudgeError(first.get("code") or "EXECUTION.JEV",
-                           f"{len(failed)} request(s) got no answer; first {failed[0]['request_id']}: {first.get('message')}",
-                           recoverable=bool(first.get("recoverable")),
-                           action="Read each failed line's error field; rerun only those requests once the cause is fixed.")
-        sys.stderr.write(json.dumps(error.to_json(), sort_keys=True) + "\n")  # stdout stays pure result lines
+        cause = next((row for row in failed if (row.get("error") or {}).get("code") != "CANCELED"), failed[0])
+        summary = {"success": False, "data": {"unanswered": len(failed), "request_id": cause.get("request_id")},
+                   "error": cause.get("error")}
+        sys.stderr.write(json.dumps(redact_sensitive(summary), sort_keys=True) + "\n")  # stdout stays pure result lines
         return 2
     emit(outcome.value, fmt)
     return 0
@@ -5236,6 +4856,6 @@ if __name__ == "__main__":
         utf8_stdio()
         code = main()
     except KeyboardInterrupt:  # between the imports and main's own handler
-        emit(canceled_envelope())
-        code = CANCELED_EXIT
+        emit(decidr_client.canceled_envelope())
+        code = decidr_client.CANCELED_EXIT
     sys.exit(code)

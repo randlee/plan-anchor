@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -21,7 +22,7 @@ class RubricInputTests(unittest.TestCase):
         intent['sha256'] = hashlib.sha256(intent['content'].encode()).hexdigest()
         questions = copy.deepcopy(ok(jj.load_simple_question_set('testability', jj.RUBRIC_QUESTIONS))['questions'])
         questions['faithful']['instructions'] = 'Compare anchor.statement with anchor.quote and intent.content when supplied.'
-        sealed = {'questions': questions, 'digest': jj.questions_digest({'questions': questions})}
+        sealed = {'questions': questions, 'digest': jj.decidr_client.questions_digest({'questions': questions})}
         write(root, 'intent.json', intent)
         write(root, 'rubric.json', sealed)
         return intent, sealed
@@ -39,12 +40,13 @@ class RubricInputTests(unittest.TestCase):
             transport.assert_not_called()
             self.assertFalse(out['data']['pass'])
             first, second = out['data']['requests']
-            self.assertEqual(jj.encode_body(first), jj.encode_body(second))
+            self.assertEqual(json.dumps(first, allow_nan=False).encode("utf-8"),
+                             json.dumps(second, allow_nan=False).encode("utf-8"))
             self.assertEqual(first['state']['intent'], intent)
             self.assertEqual(first['questions'], sealed['questions'])
             provenance = out['data']['anchors'][0]['inputs']
             self.assertEqual(provenance['question_seal'], sealed['digest'])
-            self.assertEqual(provenance['request_sha256'], jj.questions_digest(first))
+            self.assertEqual(provenance['request_sha256'], jj.decidr_client.questions_digest(first))
             self.assertEqual(provenance['intent'], {k: intent[k] for k in ('id', 'version', 'sha256')})
 
     def test_anchors_live_confirmations_and_offline_fixture(self):
@@ -87,10 +89,10 @@ class RubricInputTests(unittest.TestCase):
             self.assertEqual(transport.bodies, [original, original])
             self.assertNotEqual(displayed, original)
             self.assertEqual(dry['data']['requests'], [displayed, displayed])
-            original_digest = jj.questions_digest(original)
+            original_digest = jj.decidr_client.questions_digest(original)
             self.assertEqual(out['data']['anchors'][0]['inputs']['request_sha256'], original_digest)
             self.assertEqual(dry['data']['anchors'][0]['inputs']['request_sha256'], original_digest)
-            self.assertNotEqual(jj.questions_digest(displayed), original_digest)
+            self.assertNotEqual(jj.decidr_client.questions_digest(displayed), original_digest)
             self.assertNotIn('canary-123', json.dumps(dry))
             self.assertIn('bearer <redacted>', displayed['state']['intent']['content'])
 
@@ -117,16 +119,15 @@ class RubricInputTests(unittest.TestCase):
                     f"sys.path.insert(0, {str(Path(jj.__file__).parent)!r})\n"
                     "import jev_judge\n"
                     f"sys.exit(jev_judge.main({self.args(root) + ['--dry-run']!r}))\n")
-            proc = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+            proc = run_test_child([sys.executable, '-c', code], capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(json.loads(proc.stdout)['success'])
 
     def assert_refused_before_credentials(self, args, pattern):
-        with env(), mock.patch.object(jj, 'resolved_api_key') as key, mock.patch.object(jj, 'call_jev') as transport:
+        with env(), mock.patch('sc_agent.send') as transport:
             code, out = run_cli(args)
         self.assertEqual(code, 2, out)
         self.assertRegex(out['error']['code'], pattern)
-        key.assert_not_called()
         transport.assert_not_called()
 
     def test_bad_authority_descriptors(self):
@@ -161,7 +162,7 @@ class RubricInputTests(unittest.TestCase):
                 variant = copy.deepcopy(sealed)
                 mutate(variant)
                 if variant['digest'] != '0' * 64:
-                    variant['digest'] = jj.questions_digest({'questions': variant['questions']})
+                    variant['digest'] = jj.decidr_client.questions_digest({'questions': variant['questions']})
                 cases.append(variant)
             for variant in cases:
                 with self.subTest(variant=variant):

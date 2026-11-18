@@ -63,13 +63,13 @@ Verified: `test_jev_judge.py::DecideTests` (all rows, including `test_row1_not_a
 Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. Status: shipped.
 Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_runs_ignored`, `DiffTests`.
 
-**REQ-011** The script alone shall own the retry policy: up to three attempts for 429, 529, 5xx, network and invalid responses, no retry on 401, and an error on one anchor shall not lose the others.
-Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
+**REQ-011** The shared sc-decidr client shall own provider retries and status classification. Plan-anchor shall make one client call per logical request and shall not resend provider failures; it shall record the wheel-reported attempt count on typed failures, abort on authentication failure, and continue judging other anchors after a non-authentication failure.
+Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018. Status: shipped.
 Verified: `test_jev_judge.py::TransportPolicyTests`.
 
-**REQ-012** Every Jev answer shall be checked by `validate_response`, which requires exactly the requested answer IDs.
+**REQ-012** Every Jev answer shall be checked before use by sc-decidr's shared typed response decoder for live replies and the shared client fixture validator for fixture replies. The check requires exactly the requested answer IDs, a type matching each question, and finite probabilities and confidence values in the range 0 through 1. Invalid replies are `DECIDR.RESPONSE_INVALID`.
 Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
-Verified: `test_jev_judge.py::ResponseValidationTests.test_validate_response_requires_exact_answer_ids`.
+Verified: `test_jev_judge.py::JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid` (shared client fixture validation; runs in the sc-plan-anchor CI suite).
 
 **REQ-013** Each run shall be written to its own run file that copies the statement, quote and provenance it judged.
 Source: `design/data-model-and-gating.md` §1–2. Status: shipped.
@@ -204,7 +204,7 @@ Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.t
 Source: ANC-028, ANC-029, ANC-030. Status: shipped.
 Verified: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_triage_request_and_result_render_validate_relationally`.
 
-**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request to fast stand-in models (Claude `haiku`, Codex `luna`) in parallel with Jev, one session per cell per model in an empty temp dir with no tools, validate each answer with `validate_response`, and record it beside the Jev answer without changing gating.
+**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request to fast stand-in models (Claude `haiku`, Codex `luna`) in parallel with Jev, one session per cell per model in an empty temp dir with no tools, check each answer before use with sc-decidr's shared typed response decoder (exact answer IDs, matching answer types, and finite probabilities and confidence in the range 0 through 1; malformed replies are `DECIDR.RESPONSE_INVALID`), and record it beside the Jev answer without changing gating.
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md`. Status: planned.
 Verified: none.
 
@@ -222,9 +222,9 @@ Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.9 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. The installer is the exception (REQ-059).
+**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. `decidr_client.py` may import `sc_agent` only for a live decision call and reports a missing wheel as `DEPENDENCY.SC_DECIDR`; offline paths remain standard-library-only. The installer is the exception (REQ-059).
 Source: OPERATOR; ADR-006. Status: shipped.
-Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.9 floor rest on the CI `dependency-floor` job.
+Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.11 floor are exercised by the unit matrix.
 
 **REQ-048** Functions that can fail in an expected way shall return `Result[T, E]` (frozen `Ok`/`Err` with a literal `ok` discriminant) rather than raise; exceptions are for bugs and are converted to `SCRIPT.INTERNAL` at the CLI boundary.
 Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py` (`anchor_runner_contract.py` since 0.7.1; it keeps `SCRIPT.IO` for unreadable input).
@@ -244,9 +244,9 @@ Verified (0.8.3): `test_jev_failures.py::JudgeAndCheckFixtures` and `DedupeAndRu
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures". Status: shipped for runner contract failures; planned for stand-in launches.
 Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 
-**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.9 and 3.x, a Python 3.9 job without PyYAML and on the PyYAML 5.1 floor, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip.
+**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel recorded in `.github/workflows/tests.yml`.
 Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
-Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml` only checks that the workflow installs PyYAML; the matrix itself is the workflow.
+Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml`; `test_install_sc_decidr_ci.py::DecidrWheelInstallerTests.test_supported_runners_download_and_install_the_same_pinned_wheel` and `test_release_and_wheel_versions_follow_client_template`. The matrix itself is the workflow.
 
 ## Documentation and packaging
 
@@ -256,7 +256,7 @@ Verified: none.
 
 **REQ-054** Examples shall be executable with repository-valid paths, supported commands and supported JSON schemas.
 Source: ANC-013. Status: shipped.
-Verified: partial: `test_jev_judge.py::QuoteTests.test_shipped_example_record_is_valid_lint_clean_and_renders`, `ErrorHandlingTests.test_documented_question_sets_load`, `RubricTests.test_shipped_question_sets_load_and_fixtures_validate`, `ResponseValidationTests.test_shipped_fixture_passes_validation`. README and reference command snippets are not executed.
+Verified: partial: `test_jev_judge.py::QuoteTests.test_shipped_example_record_is_valid_lint_clean_and_renders`, `ErrorHandlingTests.test_documented_question_sets_load`, `RubricTests.test_shipped_question_sets_load_and_fixtures_validate`, `JudgeFixtureTests.test_fixture_answers_by_id_and_star`, `JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid`. README and reference command snippets are not executed.
 
 **REQ-055** Maintainer tests shall not be redistributed with the plugin.
 Source: `tests/sc-plan-anchor/test_package_layout.py`. Status: shipped.

@@ -1,6 +1,6 @@
 """plugins/sc-plan-anchor/install.py: rendering, destinations, ownership, upgrades, tracker switching, envelope.
 
-Tests that render need the sc-compose wheel (CPython 3.11 wheels on PyPI) and
+Tests that render need the sc-compose wheel on PyPI and
 PyYAML; without them they skip with the reason. CI's installer job sets
 PLAN_ANCHOR_REQUIRE_SC_COMPOSE=1, which turns those skips into failures.
 """
@@ -17,8 +17,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -30,6 +32,14 @@ INSTALLER = PLUGIN / "install.py"
 GENERATOR = ROOT / "scripts" / "gen_install_data.py"
 VERSION = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))["version"]
 REQUIRE = os.environ.get("PLAN_ANCHOR_REQUIRE_SC_COMPOSE") == "1"
+_SUBPROCESS_TIMEOUT_SECONDS = 60
+
+
+def _run_subprocess(*popenargs, **kwargs):
+    """Run one test child with a bound and no access to the test runner's stdin."""
+    kwargs["timeout"] = _SUBPROCESS_TIMEOUT_SECONDS
+    kwargs["stdin"] = subprocess.DEVNULL
+    return run_test_child(*popenargs, **kwargs)
 
 
 def _load(name, path):
@@ -58,7 +68,7 @@ def _missing_deps():
 
 MISSING = _missing_deps()
 SKIP_REASON = (f"needs {', '.join(MISSING)}: pip install pyyaml 'sc-compose>=1.8.0,<2' "
-               "(sc-compose publishes CPython 3.11 wheels); CI's installer job runs these")
+               "(sc-compose must be installed); CI's installer job runs these")
 
 
 def needs_wheel(cls):
@@ -68,12 +78,41 @@ def needs_wheel(cls):
 
 
 def _git(*args, cwd=ROOT):
-    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, check=True).stdout
+    return _run_subprocess(["git", "-C", str(cwd), *args], capture_output=True, check=True).stdout
 
 
 def _has_commit(rev):
-    return subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
-                          capture_output=True).returncode == 0
+    return _run_subprocess(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+                           capture_output=True).returncode == 0
+
+
+class InstallerPythonFloorTests(unittest.TestCase):
+    def test_inline_script_metadata_requires_python_311_without_upper_cap(self):
+        source = INSTALLER.read_text(encoding="utf-8")
+        match = re.search(r"(?m)^# /// script\n((?:#.*\n)*?)# ///$", source)
+        self.assertIsNotNone(match, "installer must have a PEP 723 script block")
+        metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in match.group(1).splitlines()))
+        self.assertEqual(metadata["requires-python"], ">=3.11")
+
+
+class SubprocessRunnerTests(unittest.TestCase):
+    def test_child_processes_get_bounded_timeout_and_closed_stdin(self):
+        completed = subprocess.CompletedProcess(["example"], 0)
+        with mock.patch.object(subprocess, "run", return_value=completed) as run:
+            result = _run_subprocess(["example"], timeout=None, stdin=None)
+
+        self.assertIs(result, completed)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["timeout"], _SUBPROCESS_TIMEOUT_SECONDS)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_timeout_fails_without_retry(self):
+        timeout = subprocess.TimeoutExpired(["example"], _SUBPROCESS_TIMEOUT_SECONDS)
+        with mock.patch.object(subprocess, "run", side_effect=timeout) as run:
+            with self.assertRaisesRegex(AssertionError, "test child timed out"):
+                _run_subprocess(["example"])
+
+        run.assert_called_once()
 
 
 def sha(data):
@@ -120,7 +159,7 @@ class TempRepo:
         self.dir = tempfile.TemporaryDirectory()
         test.addCleanup(self.dir.cleanup)
         self.root = Path(self.dir.name).resolve()
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        _run_subprocess(["git", "init", "-q", str(self.root)], check=True)
         if beads is not None:
             self.beads(beads)
 
@@ -196,14 +235,14 @@ class RenderingTests(unittest.TestCase):
                     "assets/examples/plan-anchor-repo-guidelines.example.md"}
         expected |= {f"references/{p.name[:-len('.j2')]}" for p in (source / "references").iterdir()}
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
-        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 8)
+        self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 9)
         self.assertEqual(set(self.package.rendered), expected)
         self.assertEqual(len([r for r in expected if r.startswith("references/")]), 23)
         self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 5 + 23 + 8)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
+        self.assertEqual(len(templates), 3 + 5 + 23 + 9)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -252,7 +291,7 @@ class RenderingTests(unittest.TestCase):
                         "out['bad'] = sorted(v for v in ('docs/plans/phase-<current>', '../x', '/x', 'x/', 'a\\\\b', 'yes')\n"
                         "                    if s.plan_dir_problem(v))\n"
                         "print(json.dumps(out))\n")
-                proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
+                proc = _run_subprocess([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 installed = json.loads(proc.stdout)
             for remote in (None, True, False):
@@ -912,7 +951,7 @@ class RealInstallTests(unittest.TestCase):
     def repo(self, name):
         root = self.tmp / name
         root.mkdir()
-        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        _run_subprocess(["git", "init", "-q", str(root)], check=True)
         return root
 
     def backend(self, root, tracker):
@@ -924,9 +963,9 @@ class RealInstallTests(unittest.TestCase):
         self.backend(root, tracker)
         env = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
         env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
-        proc = subprocess.run([sys.executable, str(Path(plugin) / "install.py"), "--dest", str(root),
-                               "--tracker", tracker, "--target", ",".join(inst.TARGETS), *extra],
-                              env=env, capture_output=True, text=True, encoding="utf-8")
+        proc = _run_subprocess([sys.executable, str(Path(plugin) / "install.py"), "--dest", str(root),
+                                "--tracker", tracker, "--target", ",".join(inst.TARGETS), *extra],
+                               env=env, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["success"], proc.stdout)
         return root
@@ -967,8 +1006,8 @@ class RealInstallTests(unittest.TestCase):
                 grep = shutil.which("grep")
                 if grep:  # the same check with the grep a reader would run
                     other = "bd" if tracker == "br" else "br"
-                    proc = subprocess.run([grep, "-rnwI", other, *[f".{t}" for t in inst.TARGETS], ".sc"],
-                                          cwd=str(root), capture_output=True, text=True, encoding="utf-8")
+                    proc = _run_subprocess([grep, "-rnwI", other, *[f".{t}" for t in inst.TARGETS], ".sc"],
+                                           cwd=str(root), capture_output=True, text=True, encoding="utf-8")
                     lines = [line for line in proc.stdout.splitlines()
                              if "references/installation-and-troubleshooting.md:" not in line]
                     self.assertEqual(lines, [])
@@ -994,7 +1033,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 5 + 23 + 8) + 1)  # + the seeded triage README
+            self.assertEqual(checked, 3 * (3 + 5 + 23 + 9) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):

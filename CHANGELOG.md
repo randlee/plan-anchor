@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.12.14 — 2026-11-18
+
+- Upgrade the generated shared client and supported wheel environment to the published sc-decidr/sitr 0.2.9 release without changing client behavior.
+- Install the exact pinned sc-decidr wheel from PyPI in CI instead of a prerelease GitHub tag.
+
+## 0.12.13 — 2026-11-18
+
+- Bound and isolate CI child processes, return typed timeout failures, and remove unused imports from rendered scripts.
+
+## 0.12.12 — 2026-11-18
+
+- Re-render the shared client from sc-decidr 0.2.8 and stop fixture batch jobs after authentication or policy errors.
+
+## 0.12.11 — 2026-11-18
+
+- Keep tournament `--results` compatible with legacy `plan-anchor/jev-batch-result/1` logs without `sends`; current results use the shared `jev-batch-result/1` record and include `sends`.
+- Preserve the first non-cancellation batch error unchanged in the stderr summary, and correct batch ordering, retry, response-size and error-code documentation.
+- Correct the sc-decidr version-source and fixture-validation evidence citations.
+
+## 0.12.10 — 2026-11-18
+
+- Correct the review agent’s invalid response error code and bound test child processes.
+
+## 0.12.9 — 2026-11-18
+
+- Use sc-decidr's shared default TypeSafe keyring entry for every decision call. The legacy `plan-anchor` / `typesafe-api-key` credential is no longer read; migrate it to service `TYPESAFE_API_KEY` and the current OS account, or supply `TYPESAFE_API_KEY` through the process environment or repository `.env`.
+- Add a real installed-wheel regression proving `.env` then process-environment precedence with platform keyring access trapped.
+
+## 0.12.8 — 2026-11-17
+
+- Render the sc-decidr 0.2.7 shared client, use typed answers and shared batch, consent, error and cancellation records, and remove plan-anchor duplicates.
+
+## 0.12.7
+
+- Update transport error references to the shared client codes.
+
+## 0.12.6
+
+- Adopt the sc-decidr 0.2.5 consumer template and preserve plan-anchor context-overflow shortening with shared error codes.
+
+## 0.12.5
+
+- Adopt the sc-decidr 0.2.4 generated client and its shared ClientError for wheel and local errors; remove local conversions and action overrides, preserving Rust messages and context-shortening state.
+
+## 0.12.4 — 2026-11-16
+
+- Render the shared client from sc-decidr 0.2.3 and use its error adapters and streaming result helpers, removing duplicated wheel-facing logic.
+- Preserve plan-anchor auth redaction, domain validation and durable logging while taking send counts and retryability from the wheel.
+- Use the generated client version as the single CI wheel pin, including Windows unit runners, and update controlled overflow fixtures to the released result shape.
+
+## 0.12.3 — 2026-11-16
+
+- Flush each completed live batch result immediately, preserving request correlation and input-ordered returned results even when callbacks finish out of order.
+- Report shared-client configuration, logging and invalid-result failures with matching error codes and corrective actions.
+
+## 0.12.2 — 2026-11-16
+
+- Render the shared client from the released sc-decidr wheel and use its recorded version in installation guidance.
+
+## 0.12.1 — 2026-11-16
+
+- Integrate the shared sc-decidr transport while preserving plan-anchor behavior.
+- Retain Python 3.11 dependency-floor coverage and add installed-wheel live integration reports.
+
+## 0.12.0 — 2026-11-15
+
+- Add the shared `decidr_client.py` consumer template for sc-decidr 0.2.0:
+  lazy wheel loading, model and keyring pass-through, typed category mapping,
+  cancellation, batch callbacks, timeout/worker options and injected logging.
+- Pin the client to sc-agent `prerelease/v0.2.0` as the concrete starting
+  point for sc-agent's consumer template.
+- Raise the supported Python floor to 3.11, remove the Python 3.9 CI and
+  dependency-floor jobs, and allow the installer to run on later Python versions.
+
 `VERSION` is the single source of truth: every version in shipped metadata (plugin and marketplace manifests, `SKILL.md`, each reference, each agent, each registry) equals it exactly. A PR that changes shipped content raises `VERSION`, moves every version with it, and adds a `## X.Y.Z — date` section here. `scripts/check_version_sync.py` and `tests/sc-plan-anchor/test_version_ssot.py` enforce it (see CONTRIBUTING.md).
 
 ## 0.11.2 — 2026-11-16
