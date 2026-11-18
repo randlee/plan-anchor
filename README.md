@@ -62,7 +62,7 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | Need | For | Notes |
 | --- | --- | --- |
 | `python3` 3.11+ | everything | Scripts are standard-library only except `anchor_tracker.py` and `plan_anchor_settings.py` (PyYAML) and live `jev_judge.py` calls (`sc-decidr`) |
-| `sc-decidr` wheel | live Jev calls | Use `SC_DECIDR_VERSION` in the installed `scripts/decidr_client.py` to select the matching platform wheel from the [prerelease releases](https://github.com/randlee/sc-agent/releases); offline commands do not import it |
+| `sc-decidr` wheel | live Jev calls | Install the exact `SC_DECIDR_VERSION` recorded in the installed `scripts/decidr_client.py` from [PyPI](https://pypi.org/project/sc-decidr/) (`python3 -m pip install "sc-decidr==<SC_DECIDR_VERSION>"`); pip selects the platform wheel, and offline commands do not import it |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |

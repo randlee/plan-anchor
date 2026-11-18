@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the pinned sc-decidr prerelease wheel on CI's supported runners."""
+"""Install the pinned sc-decidr PyPI wheel on CI's supported runners."""
 import os
 from pathlib import Path
 import re
@@ -39,10 +39,8 @@ def main():
     if platform is None:
         raise SystemExit(f"No sc-decidr wheel for {runner[0]}/{runner[1]}")
     version = client_version()
-    asset = f"sc_decidr-{version}-cp311-abi3-{platform}.whl"
-    subprocess.run(["gh", "release", "download", f"prerelease/v{version}", "--repo", "randlee/sc-agent", "--pattern", asset],
-                   check=True, stdin=subprocess.DEVNULL, timeout=COMMAND_TIMEOUT_SECONDS)
-    subprocess.run([sys.executable, "-m", "pip", "install", asset],
+    subprocess.run([sys.executable, "-m", "pip", "install", "--index-url", "https://pypi.org/simple",
+                    "--only-binary=:all:", f"sc-decidr=={version}"],
                    check=True, stdin=subprocess.DEVNULL, timeout=COMMAND_TIMEOUT_SECONDS)
 
 
