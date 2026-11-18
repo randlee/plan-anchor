@@ -87,7 +87,7 @@ Open `<folder>/.sc/plan-anchor/install-lock.json`. Its `files` map lists the fil
 
 Remove `__pycache__` directories within the removed skill trees, then folders left empty.
 
-Settings are your choice: keep `<folder>/.sc/plan-anchor/settings.yaml` to retain the tracker and consent settings, or remove it. Remove `.sc/plan-anchor/` only when it is empty. Tracker data and user-owned overrides are not installer-owned files; keep them unless you separately choose to remove them.
+Settings are your choice: keep `<folder>/.sc/plan-anchor/settings.yaml` to retain the tracker and consent settings, or remove it. The installer seeds `.sc/plan-anchor/triage/README.md`, `plan-questions.jsonl` and `rules.json` once. These defaults are user-owned and outside the lock: keep them, or remove the `triage/` directory if you no longer want them. Remove `.sc/plan-anchor/` only when it is empty. Tracker data and user-owned overrides are not installer-owned files; keep them unless you separately choose to remove them.
 
 ## Install the CLIs
 
