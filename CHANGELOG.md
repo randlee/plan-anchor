@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.15 — 2026-11-18
+
+- Document the sc-compose CLI install, complete test dependencies, tracker bootstrap, and lock-based uninstall for every harness.
+- Bound settings Git commands and return typed discovery failures or ignore-check diagnostics on timeout.
+- Explain how to select anchors when check-fixtures is called without --id or --all.
+
 ## 0.12.14 — 2026-11-18
 
 - Upgrade the generated shared client and supported wheel environment to the published sc-decidr/sitr 0.2.9 release without changing client behavior.

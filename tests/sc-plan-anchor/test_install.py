@@ -509,6 +509,14 @@ class InstallTests(unittest.TestCase):
             registry = repo.path(f".{target}/skills/plan-anchoring/registry.yaml").read_text(encoding="utf-8")
             self.assertIn(f"path: .{target}/agents/anchor-tuning.md", registry)
 
+    def test_fresh_install_is_not_a_legacy_migration(self):
+        repo = TempRepo(self, beads="sqlite")
+        data = self.ok(run_install(repo))
+        self.assertIsNone(data["previous_version"])
+        self.assertFalse(data["migration"])
+        self.assertEqual(data["plan"]["replace"], [])
+        self.assertEqual(data["plan"]["remove"], [])
+
     # #81: an upgrade covers every harness the folder uses; --target only adds.
     def test_unlocked_claude_install_upgrades_every_present_harness(self):
         repo = TempRepo(self, beads="sqlite")

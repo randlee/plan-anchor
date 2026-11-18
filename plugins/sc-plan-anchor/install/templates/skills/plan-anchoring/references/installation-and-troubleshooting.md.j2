@@ -81,6 +81,14 @@ This install is rendered for `{{ tracker }}`; both gates read anchor and questio
 
 Rerun the installer for the install folder with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. The switched folder is byte-for-byte what a fresh install with that `--tracker` writes into an empty folder, the lock and settings files included, in either direction. Commit the settings file, the lock file and the re-rendered files together.
 
+## Uninstall
+
+Open `<folder>/.sc/plan-anchor/install-lock.json`. Its `files` map lists the files this install wrote for every harness: `.<harness>/skills/plan-anchoring/` and `.<harness>/agents/anchor-*.md` for `claude`, `codex` and `cursor`. Review any edits you want to keep, then remove the listed files and the lock itself. Do not remove unrelated files in a harness folder.
+
+Remove `__pycache__` directories within the removed skill trees, then folders left empty.
+
+Settings are your choice: keep `<folder>/.sc/plan-anchor/settings.yaml` to retain the tracker and consent settings, or remove it. The installer seeds `.sc/plan-anchor/triage/README.md`, `plan-questions.jsonl` and `rules.json` once. These defaults are user-owned and outside the lock: keep them, or remove the `triage/` directory if you no longer want them. Remove `.sc/plan-anchor/` only when it is empty. Tracker data and user-owned overrides are not installer-owned files; keep them unless you separately choose to remove them.
+
 ## Install the CLIs
 
 **python3** (3.11 or newer; PyYAML supports tracker/settings lookup, and live Jev calls also need the sc-decidr wheel in this interpreter; offline commands do not import that wheel)
@@ -116,8 +124,25 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 **sc-compose** (1.8.0 or newer)
 
-- Install it from the Synaptic Canvas `sc-compose` release or team package
-  source, then confirm `sc-compose --version` reports at least 1.8.0.
+The Python wheel supplies bindings, not the CLI. Use the GitHub release binary (CI uses release 1.8.0). On macOS or Linux, run this in a directory where you want to keep the extracted CLI; choose your release target below:
+
+| Machine | target |
+| --- | --- |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| macOS Intel | `x86_64-apple-darwin` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` |
+
+```bash
+target=aarch64-apple-darwin
+bundle="sc-compose_1.8.0_${target}"
+curl --fail --location "https://github.com/randlee/sc-compose/releases/download/v1.8.0/${bundle}.tar.gz" --output "${bundle}.tar.gz"
+tar -xzf "${bundle}.tar.gz"
+export PATH="$(pwd)/${bundle}/bin:$PATH"
+sc-compose --version
+```
+
+Keep that `bin` directory on PATH in future shells. On Windows, install the CLI with `winget install --id randlee.sc-compose --exact`, then run `sc-compose --version` in a new shell. The version must be at least 1.8.0.
 - The skill uses strict checked-in Jinja2 templates for every anchor-tuning
   request/result. Do not continue with hand-built JSON when this CLI is absent.
 
@@ -219,6 +244,7 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 {% if tracker != "bd" %}
 - `TRACKER.INIT_FAILED`: `br init` exited non-zero (its exit code and stderr are in `data`) or created no workspace.
 {% endif %}
+- Settings Git commands have a 30-second bound. `REPO.NOT_FOUND` with a `git rev-parse` timeout means discovery could not finish; check Git and retry. A `git check-ignore` timeout is returned as a settings diagnostic so you can check ignore rules manually.
 - `SETTINGS.UNKNOWN_KEY`, `SETTINGS.SCHEMA_VERSION`, `SETTINGS.INVALID_TRACKER`, `SETTINGS.INVALID_PLAN_DIR`, `SETTINGS.MALFORMED`: fix `.sc/plan-anchor/settings.yaml` to the form above.
 - `BEADS.METADATA_INVALID`: `.beads/metadata.json` is not a readable JSON object; repair it before selection can run.
 - Installer `INSTALL.DEST_GLOBAL`: `--dest` named the home directory, a global harness directory or a plugin cache; pass a repository or a parent folder of repositories.

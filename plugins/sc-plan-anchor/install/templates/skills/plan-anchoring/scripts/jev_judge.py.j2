@@ -2447,7 +2447,8 @@ def cmd_check_fixtures(args) -> Result[dict, ClientError]:
             return found
         anchors = [found.value]
     else:
-        return fail("VALIDATION.INPUT", "pass --id ANC-NNN or --all")
+        return fail("VALIDATION.INPUT", "pass --id ANC-NNN or --all",
+                    action="Select an anchor with --id ANC-NNN, or pass --all to check every active anchor.")
     built = judge_context(args, rec)
     if isinstance(built, Err):
         return built
