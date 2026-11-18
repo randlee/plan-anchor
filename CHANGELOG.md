@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.11 — 2026-11-18
+
+- Keep tournament `--results` compatible with legacy `plan-anchor/jev-batch-result/1` logs without `sends`; current results use the shared `jev-batch-result/1` record and include `sends`.
+- Preserve the first non-cancellation batch error unchanged in the stderr summary, and correct batch ordering, retry, response-size and error-code documentation.
+- Correct the sc-decidr version-source and fixture-validation evidence citations.
+
 ## 0.12.10 — 2026-11-18
 
 - Correct the review agent’s invalid response error code and bound test child processes.
@@ -8,9 +14,6 @@
 
 - Use sc-decidr's shared default TypeSafe keyring entry for every decision call. The legacy `plan-anchor` / `typesafe-api-key` credential is no longer read; migrate it to service `TYPESAFE_API_KEY` and the current OS account, or supply `TYPESAFE_API_KEY` through the process environment or repository `.env`.
 - Add a real installed-wheel regression proving `.env` then process-environment precedence with platform keyring access trapped.
-- Keep tournament `--results` compatible with legacy `plan-anchor/jev-batch-result/1` logs without `sends`; current results use the shared `jev-batch-result/1` record and include `sends`.
-- Preserve the first non-cancellation batch error unchanged in the stderr summary, and correct batch ordering, retry, response-size and error-code documentation.
-- Correct the sc-decidr version-source and fixture-validation evidence citations.
 
 ## 0.12.8 — 2026-11-17
 
