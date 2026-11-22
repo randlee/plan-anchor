@@ -1,12 +1,14 @@
 # Changelog
 
+## 0.12.17 — 2026-11-22
+
+- Re-render and pin the plan-anchor client to sc-decidr 0.3.6, including its thread-safe lazy logger.
+
 ## 0.12.16 — 2026-11-21
 
 - Adopt the shared sc-decidr 0.3.0 client and returned wheel results; use its native batch callbacks and cancellation.
 - Keep offline fixture preparation in the consumer and remove the Python batch executor.
 - Complete the Phase I consumer migration to sc-decidr 0.3.3: derive the developer wheel install from the client template's CI pin and distinguish an absent Linux Secret Service from a keyring error when the service is available.
-- Re-render and pin the plan-anchor client to sc-decidr 0.3.6, including its thread-safe lazy logger.
-
 ## 0.12.15 — 2026-11-18
 
 - Document the sc-compose CLI install, complete test dependencies, tracker bootstrap, and lock-based uninstall for every harness.
