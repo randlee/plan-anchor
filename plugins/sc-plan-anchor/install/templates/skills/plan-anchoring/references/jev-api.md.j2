@@ -37,7 +37,7 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 
 ```json
 {
-  "model": "jev-latest",
+  "model": "jev",
   "state": {
     "anchor": {"id": "ANC-012", "statement": "...", "scope": "..."},
     "item": {"id": "ex-42", "title": "...", "text": "..."}
@@ -94,7 +94,7 @@ Agents and plan-anchor never add provider retry loops around the client. Typed f
 
 ## Models
 
-`jev-latest` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) with `--model jev-1.13.0`.
+`jev` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) with `--model jev-1.14.0`.
 
 ## Error codes
 
@@ -182,7 +182,7 @@ Every result line is also teed, unchanged, to an append-only log, flushed after 
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--model` | `jev-latest` | Model alias or pinned version |
+| `--model` | `jev` | Model alias or pinned version |
 | `--threshold` | 0.6 | Confidence gate (`verdict-gating.md`) |
 | `--questions` | `assets/questions/<gate>.json` | Alternative question-set file |
 | `--overrides-file` | none | Per-anchor overrides read from the question beads |

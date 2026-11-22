@@ -403,7 +403,7 @@ class JevTransportErrorContracts(unittest.TestCase):
         self.assertEqual((code, result["explanation"]), (0, "dry run; request does not fit"))
         self.assertEqual(result["error"], {
             "code": "JEV.CONTEXT_EXCEEDED",
-            "message": "request is 5727 bytes with the item at 2055 chars, over --max-request-bytes 1000; the item is already at --min-item-chars 2000",
+            "message": "request is 5720 bytes with the item at 2055 chars, over --max-request-bytes 1000; the item is already at --min-item-chars 2000",
             "recoverable": False,
             "suggested_action": "Shorten the evidence for this item (names, counts and summaries only), shorten the question overrides, or raise --max-request-bytes."})
 

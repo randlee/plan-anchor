@@ -95,7 +95,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(baseline[0], 0, baseline)
         self.assertEqual(planted, baseline)
         data = planted[1]["data"]
-        self.assertEqual((data["model_requested"], data["threshold"]), ("jev-latest", 0.6))
+        self.assertEqual((data["model_requested"], data["threshold"]), ("jev", 0.6))
         self.assertIsNone(data["results"][0]["verdict"])
         self.assertTrue(planted[2], "dry run wrote no run file")
 
@@ -132,7 +132,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(planted, baseline)
         code, out, requests = planted
         self.assertEqual(code, 0, out)
-        self.assertEqual({body["model"] for body, _ in requests}, {"jev-latest"})
+        self.assertEqual({body["model"] for body, _ in requests}, {"jev"})
         self.assertTrue(all("keyring_service" not in options and "keyring_account" not in options
                             for _, options in requests))
         result = out["data"]["results"][0]

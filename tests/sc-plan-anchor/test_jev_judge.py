@@ -2693,7 +2693,7 @@ class ErrorHandlingTests(unittest.TestCase):
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), flag)
             self.assertIn(f"argument {flag}: invalid", out["error"]["message"])
         self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD, jj.DEFAULT_MAX_ITEM_CHARS, jj.DEFAULT_MAX_CODE_LINES),
-                         ("jev-latest", 0.6, 24000, 8))
+                         ("jev", 0.6, 24000, 8))
         self.assertFalse(hasattr(jj, "JEV_URL"))
         self.assertFalse(hasattr(jj, "parse_env_number") or hasattr(jj, "_env_number"))
 
