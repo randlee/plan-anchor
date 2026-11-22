@@ -204,11 +204,13 @@ Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, an
 Install the CLI from the Need table, then the test dependencies CI uses:
 
 ```bash
-python3 -m pip install "jsonschema>=4,<5" "pyyaml>=5.1" "sc-compose>=1.8.0,<2" "sc-decidr==0.2.9"
+SC_DECIDR_VERSION=$(sed -n 's/^sc_decidr_pin: //p' \
+  plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/scripts/decidr_client.py.j2)
+python3 -m pip install "jsonschema>=4,<5" "pyyaml>=5.1" "sc-compose>=1.8.0,<2" "sc-decidr==$SC_DECIDR_VERSION"
 python3 -m unittest discover -s tests/sc-plan-anchor -v
 ```
 
-The sc-decidr pin is `SC_DECIDR_VERSION` in the client template. The dependency-floor CI job also runs without PyYAML and with `pyyaml==5.1`; the installer job requires the sc-compose Python wheel as well as its separate CLI.
+The development install reads `sc_decidr_pin` from the client template, the same source used by the dependency-floor CI installer. The dependency-floor CI job also runs without PyYAML and with `pyyaml==5.1`; the installer job requires the sc-compose Python wheel as well as its separate CLI.
 
 Maintainer tests live outside the marketplace plugin so plugin consumers do not
 redistribute or inherit this repository's test suite. They use fixture answers

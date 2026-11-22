@@ -27,14 +27,27 @@ class LiveHarnessSetupTests(unittest.TestCase):
                 module.test_default_keychain_succeeds_or_times_out(Path("unused"), monkeypatch, record)
                 monkeypatch.delenv.assert_called_once_with('TYPESAFE_API_KEY', raising=False)
                 record.assert_called_once_with("result", expected)
+        keyring_read = module.jj.Err(module.jj.ClientError(
+            "AUTH.CREDENTIALS", "denied", data={"id": "secrets.keyring_read"}))
         with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
-                mock.patch.object(module.jj, "call_jev", return_value=module.jj.Err(
-                    module.jj.ClientError("AUTH.CREDENTIALS", "denied", data={"id": "secrets.keyring_read"}))):
+                mock.patch.object(module, "secret_service_available", return_value=True), \
+                mock.patch.object(module.jj, "call_jev", return_value=keyring_read):
             with self.assertRaises(AssertionError):
                 module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), mock.Mock())
         with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
-                mock.patch.object(module.jj, "call_jev", return_value=module.jj.Err(
-                    module.jj.ClientError("AUTH.CREDENTIALS", "missing data", data=None))):
+                mock.patch.object(module, "secret_service_available", return_value=False), \
+                mock.patch.object(module.jj, "call_jev", return_value=keyring_read):
+            record = mock.Mock()
+            module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), record)
+            self.assertEqual(
+                record.call_args_list[0],
+                mock.call("result", "default keychain: secret service absent: secrets.keyring_read"),
+            )
+        other_error = module.jj.Err(module.jj.ClientError(
+            "AUTH.CREDENTIALS", "missing data", data={"id": "secrets.keyring_miss"}))
+        with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
+                mock.patch.object(module, "secret_service_available", return_value=False), \
+                mock.patch.object(module.jj, "call_jev", return_value=other_error):
             with self.assertRaises(AssertionError):
                 module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), mock.Mock())
 
