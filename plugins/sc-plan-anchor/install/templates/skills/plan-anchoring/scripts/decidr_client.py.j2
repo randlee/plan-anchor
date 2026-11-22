@@ -71,8 +71,13 @@ def from_tool_error(error: Any) -> ClientError:
     """A consumer Result error (a ClientError, or a ToolError with code, message, action, data) as a ClientError."""
     if isinstance(error, ClientError):
         return error
-    return ClientError(error.code, error.message, action=error.action,
-                       data=None if error.data is None else dict(error.data))
+    fields = cast(Record, error) if isinstance(error, dict) else {
+        key: getattr(error, key, None) for key in ("code", "message", "action", "data")}
+    code, message = fields.get("code", fields.get("id")), fields.get("message")
+    data = fields.get("data")
+    return ClientError(code if isinstance(code, str) else "DECIDR.ERROR",
+                       message if isinstance(message, str) else "Unknown tool error",
+                       action=fields.get("action"), data=dict(cast(Mapping[str, Any], data)) if isinstance(data, Mapping) else None)
 
 
 CANCELED_EXIT = 130
@@ -498,12 +503,12 @@ def result_line(
         error_message_limit: int | None = None) -> Record:
     """The one durable batch result line. ``raw`` is a raw answer or a successful call record."""
     sends = None
-    if raw is not None and "attempts" in raw and type(raw.get("ok")) is bool:  # a call record
-        sends = raw["attempts"]
+    if raw is not None and type(raw.get("ok")) is bool:  # a call record
+        sends = raw.get("attempts")
         if raw["ok"]:
             raw = {"model": raw.get("model_answered"), "answers": raw.get("value"), "sends": sends}
         else:
-            error, raw = raw["error"], None
+            error, raw = from_tool_error(raw.get("error")), None
     elif error is not None:
         sends = error.attempts
     if type(sends) is not int or sends < 0:
