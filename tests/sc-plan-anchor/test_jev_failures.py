@@ -37,7 +37,7 @@ REFUSED_RUNNER = (
     "sys.path.insert(0, sys.argv[1])\n"
     "import jev_judge\n"
     "def refused(*args, **kwargs):\n"
-    "    return json.dumps({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}})\n"
+    "    return sc_decidr_test_double.envelope({'sends': 3, 'position': 0, 'error': {'id': 'http.network', 'category': 'network', 'message': 'Connection refused', 'attempts': 3}})\n"
     "import sc_agent; sc_agent.send = refused\n"
     "raise SystemExit(jev_judge.main(sys.argv[3:]))\n"
 )

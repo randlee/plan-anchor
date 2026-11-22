@@ -67,7 +67,8 @@ def wheel_line(line, *, position=0, sends=1):
     value.setdefault("position", position)
     value.setdefault("digests", {})
     value.setdefault("sends", value.get("error", {}).get("attempts", sends))
-    return json.dumps(value)
+    from sc_decidr_test_double import envelope
+    return envelope(value)
 
 
 def context_overflow_line(*, sends=1, position=0):
@@ -75,5 +76,5 @@ def context_overflow_line(*, sends=1, position=0):
     return wheel_line({"error": {
         "id": "decision.context_exceeded",
         "message": "the API answered HTTP 413: request exceeds the model's context window",
-        "recovery": "shorten the request and send again", "status": 413, "category": "validation",
+        "action": "shorten the request and send again", "status": 413, "category": "validation",
     }}, sends=sends, position=position)

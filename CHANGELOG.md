@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.16 — 2026-11-21
+
+- Adopt the shared sc-decidr 0.3.0 client and returned wheel results; use its native batch callbacks and cancellation.
+- Keep offline fixture preparation in the consumer and remove the Python batch executor.
+
 ## 0.12.15 — 2026-11-18
 
 - Document the sc-compose CLI install, complete test dependencies, tracker bootstrap, and lock-based uninstall for every harness.

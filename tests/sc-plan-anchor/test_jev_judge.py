@@ -87,14 +87,14 @@ def env(**values):
     # Unit fixtures never contact a provider or access a developer's platform credential store.
     missing_key = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
     with mock.patch.dict(os.environ, values, clear=True), \
-            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-            mock.patch("sc_agent.send", return_value=missing_key):
+            mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+            mock.patch("sc_agent.send", return_value=__import__("sc_decidr_test_double").envelope(missing_key)):
         yield
 
 
 def consented():
     """The repository's allow_remote_judge is true (the real lookup is tested in test_remote_judge_setting)."""
-    return mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None)
+    return mock.patch.object(jj.decidr_client, "remote_preflight", return_value={"ok": True, "value": None})
 
 
 @contextlib.contextmanager
@@ -198,7 +198,7 @@ def client_transport(transport):
 @contextlib.contextmanager
 def stub_client(transport):
     with mock.patch("sc_agent.send", side_effect=client_transport(transport)), \
-            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()):
+            mock.patch("sc_agent.Cancel", return_value=mock.Mock()):
         yield
 
 
@@ -211,8 +211,8 @@ class CredentialLookupTests(unittest.TestCase):
         }
         for category, (code, action) in cases.items():
             with self.subTest(category=category):
-                detail = {"id": "example.error", "category": category, "message": "controlled failure", "recovery": action}
-                with consented(), mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                detail = {"id": "example.error", "category": category, "message": "controlled failure", "action": action}
+                with consented(), mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
                         mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})):
                     result = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
                 self.assertEqual(result.code, code)
@@ -229,10 +229,10 @@ class CredentialLookupTests(unittest.TestCase):
         for code, action in cases.items():
             for batch in (False, True):
                 with self.subTest(code=code, batch=batch), consented(), \
-                        mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+                        mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
                         mock.patch.object(jj, "load_question_set", return_value=jj.Ok({"roles": {}})), \
-                        mock.patch("sc_agent.send_batch" if batch else "sc_agent.send",
-                                          side_effect=jj.decidr_client.ClientError(code, "controlled failure", action=action)):
+                        mock.patch.object(jj.decidr_client, "call_batch_results" if batch else "call_result",
+                                          return_value={"ok": False, "error": jj.ClientError(code, "controlled failure", action=action)}):
                     result = (jj._live_batch_results([], settings, Path("unused"), False) if batch else
                               jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
                     error = failure(result)
@@ -248,7 +248,7 @@ class CredentialLookupTests(unittest.TestCase):
     def test_call_forwards_keyring_overrides_to_shared_client_without_forwarding_a_key_or_session_log(self):
         token = mock.Mock()
         response = {"model": "jev-x", "answers": plan_answers()}
-        with consented(), mock.patch("sc_agent.CancelToken", return_value=token), \
+        with consented(), mock.patch("sc_agent.Cancel", return_value=token), \
                 mock.patch("sc_agent.send", return_value=wheel_line({"response": response})) as send, \
                 mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
             result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
@@ -260,9 +260,9 @@ class CredentialLookupTests(unittest.TestCase):
         self.assertIsInstance(args[0], str)
         self.assertEqual(json.loads(args[0]), {"model": "jev-latest", "state": {}, "questions": {}})
         self.assertEqual((kwargs["project"], kwargs["agent_role"], boundary.call_args.kwargs["abort_on"]),
-                         ("plan-anchor", "judge", frozenset({"auth"})))
-        self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], kwargs["timeout_secs"]),
-                         (None, None, 45))
+                         (None, "plan-anchor", frozenset({"auth"})))
+        self.assertEqual(("keyring_service" in kwargs, "keyring_account" in kwargs, kwargs["timeout_secs"]),
+                         (False, False, 45))
         self.assertIs(kwargs["cancel"], token)
         self.assertEqual([name for name in kwargs if "key" in name.lower()
                           and name not in {"keyring_service", "keyring_account"}], [])
@@ -277,7 +277,7 @@ class CredentialLookupTests(unittest.TestCase):
                 detail = {"id": identifier, "category": category, "message": "provider detail",
                           "attempts": attempts, "status": status}
                 token = mock.Mock()
-                with consented(), mock.patch("sc_agent.CancelToken", return_value=token), \
+                with consented(), mock.patch("sc_agent.Cancel", return_value=token), \
                         mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})) as send, \
                         mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
                     result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
@@ -288,13 +288,13 @@ class CredentialLookupTests(unittest.TestCase):
                 expected = "provider detail"
                 self.assertEqual(result.error.message, expected)
                 kwargs = send.call_args.kwargs
-                self.assertEqual((kwargs["keyring_service"], kwargs["keyring_account"], boundary.call_args.kwargs["abort_on"]),
-                                 (None, None, frozenset({"auth"})))
+                self.assertEqual(("keyring_service" in kwargs, "keyring_account" in kwargs, boundary.call_args.kwargs["abort_on"]),
+                                 (False, False, frozenset({"auth"})))
                 self.assertIs(kwargs["cancel"], token)
 
     def test_missing_key_is_the_wheels_typed_auth_error(self):
         auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
-        with consented(), mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+        with consented(), mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send", return_value=wheel_line({"error": auth})):
             error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
         self.assertEqual((error.code, error.message, error.attempts),
@@ -353,7 +353,7 @@ class Judged:
             if consent:
                 stack.enter_context(consented())
             stack.enter_context(mock.patch("sc_agent.send", side_effect=client_transport(transport)))
-            stack.enter_context(mock.patch("sc_agent.CancelToken", return_value=mock.Mock()))
+            stack.enter_context(mock.patch("sc_agent.Cancel", return_value=mock.Mock()))
             self.code, self.out = run_cli(argv)
         self.run = self.out.get("data") if isinstance(self.out, dict) else None
         self.result = self.run["results"][0] if self.run and self.run.get("results") else None
