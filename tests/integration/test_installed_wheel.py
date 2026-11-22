@@ -117,5 +117,5 @@ def test_default_keychain_succeeds_or_times_out(live, monkeypatch, record_proper
         record_property('result', 'default keychain: success')
     else:
         assert isinstance(outcome, jj.Err)
-        assert outcome.error.data['id'] == 'secrets.keyring_timeout', outcome.error.to_json()
+        assert (outcome.error.data or {}).get('id') == 'secrets.keyring_timeout', outcome.error.to_json()
         record_property('result', 'default keychain: secrets.keyring_timeout')

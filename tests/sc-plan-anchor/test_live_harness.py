@@ -30,6 +30,11 @@ class LiveHarnessSetupTests(unittest.TestCase):
                     module.jj.ClientError("AUTH.CREDENTIALS", "denied", data={"id": "secrets.keyring_read"}))):
             with self.assertRaises(AssertionError):
                 module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), mock.Mock())
+        with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
+                mock.patch.object(module.jj, "call_jev", return_value=module.jj.Err(
+                    module.jj.ClientError("AUTH.CREDENTIALS", "missing data", data=None))):
+            with self.assertRaises(AssertionError):
+                module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), mock.Mock())
 
     def test_fixture_routes_both_current_client_calls_to_isolated_config(self):
         path = Path(__file__).resolve().parents[1] / "integration" / "test_installed_wheel.py"
