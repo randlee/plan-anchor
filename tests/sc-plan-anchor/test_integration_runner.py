@@ -31,13 +31,16 @@ class IntegrationRunnerInputs(unittest.TestCase):
                     '--source-sha', 'source', '--pin-tag', 'prerelease/v0.2.5', '--pin-sha', 'wheel',
                     '--platform', 'macos', '--results', str(root / 'results')]
             with mock.patch.object(runner, 'ROOT', root), mock.patch.object(sys, 'argv', argv), \
-                    mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch.dict(os.environ, {"SC_AGENT_TEST_TRAP_PLATFORM_KEYRING": "1"}, clear=True), \
                     mock.patch.object(runner.subprocess, 'run', return_value=mock.Mock(returncode=0)) as run:
                 self.assertEqual(runner.main(), 0)
             self.assertEqual(run.call_count, 2)
             self.assertEqual(run.call_args_list[0].kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(run.call_args_list[0].kwargs["timeout"], 600)
             self.assertEqual(run.call_args_list[0].kwargs["env"]["SC_PROJECT"], "plan-anchor")
+            self.assertNotIn("SC_AGENT_TEST_TRAP_PLATFORM_KEYRING", run.call_args_list[0].kwargs["env"])
+            self.assertTrue(any(case.endswith('::test_default_keychain_succeeds_or_times_out')
+                                for case in run.call_args_list[0].args[0]))
             self.assertEqual(run.call_args_list[1].kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(run.call_args_list[1].kwargs["timeout"], 60)
             command = run.call_args_list[1].args[0]

@@ -11,6 +11,26 @@ from unittest import mock
 
 
 class LiveHarnessSetupTests(unittest.TestCase):
+    def test_keychain_case_accepts_only_success_or_typed_timeout(self):
+        path = Path(__file__).resolve().parents[1] / "integration" / "test_installed_wheel.py"
+        spec = importlib.util.spec_from_file_location("controlled_keychain_harness", path)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(os.environ, {"PLAN_ANCHOR_LIVE_INTEGRATION": "1"}), \
+                mock.patch.dict(sys.modules, {"pytest": types.SimpleNamespace(fixture=lambda function: function)}):
+            spec.loader.exec_module(module)
+        outcomes = [module.jj.Ok({}), module.jj.Err(module.jj.ClientError("AUTH.CREDENTIALS", "timeout", data={"id": "secrets.keyring_timeout"}))]
+        with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
+                mock.patch.object(module.jj, "call_jev", side_effect=outcomes):
+            for expected in ("default keychain: success", "default keychain: secrets.keyring_timeout"):
+                record = mock.Mock()
+                module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), record)
+                record.assert_called_once_with("result", expected)
+        with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
+                mock.patch.object(module.jj, "call_jev", return_value=module.jj.Err(
+                    module.jj.ClientError("AUTH.CREDENTIALS", "denied", data={"id": "secrets.keyring_read"}))):
+            with self.assertRaises(AssertionError):
+                module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), mock.Mock())
+
     def test_fixture_routes_both_current_client_calls_to_isolated_config(self):
         path = Path(__file__).resolve().parents[1] / "integration" / "test_installed_wheel.py"
         spec = importlib.util.spec_from_file_location("controlled_live_harness", path)

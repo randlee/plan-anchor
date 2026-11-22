@@ -105,3 +105,17 @@ def test_invalid_key_maps_auth_and_withholds_body(live, monkeypatch, record_prop
     assert key not in json.dumps(outcome.error.to_json())
     assert all(key not in path.read_text() for path in live.rglob('*.jsonl'))
     record_property('result', 'AUTH.CREDENTIALS; provider message preserved; key absent from error/log')
+
+
+def test_default_keychain_succeeds_or_times_out(live, monkeypatch, record_property):
+    monkeypatch.delenv(os.environ['PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE'], raising=False)
+    body = {'model': 'jev', 'state': jj.build_state(anchor(),
+            {'id': 's1', 'title': 'Sprint', 'text': 'Copy the legacy runtime crates.'}),
+            'questions': PLAN_QS['questions']}
+    outcome = jj.call_jev(body, 120)
+    if isinstance(outcome, jj.Ok):
+        record_property('result', 'default keychain: success')
+    else:
+        assert isinstance(outcome, jj.Err)
+        assert outcome.error.data['id'] == 'secrets.keyring_timeout', outcome.error.to_json()
+        record_property('result', 'default keychain: secrets.keyring_timeout')
