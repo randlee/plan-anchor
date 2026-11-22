@@ -43,15 +43,15 @@ def main():
                     # REQ-SAG-0004 requires each decision to carry a caller-supplied project.
                     # Keep the live suite's calls in the plan-anchor project through sc-agent's
                     # documented project-resolution path instead of changing the wheel contract.
-                    'SC_PROJECT': 'plan-anchor',
-                    'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING': '1'})
+                    'SC_PROJECT': 'plan-anchor'})
         python = args.venv.resolve() / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         results = args.results.resolve()
         results.mkdir(parents=True, exist_ok=True)
         junit = results / f'{args.platform}.xml'
         test_file = ROOT / 'tests/integration/test_installed_wheel.py'
         cases = [f'{test_file}::{name}' for name in ('test_judge_writes_real_run_artifact',
-                 'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body')]
+                 'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body',
+                 'test_default_keychain_succeeds_or_times_out')]
         with tempfile.TemporaryDirectory(prefix='plan-anchor-integration-') as scratch:
             completed = subprocess.run([str(python), '-m', 'pytest', *cases, '-v',
                                         '-o', 'junit_family=legacy', f'--junitxml={junit}'],

@@ -38,6 +38,9 @@ class IntegrationRunnerInputs(unittest.TestCase):
             self.assertEqual(run.call_args_list[0].kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(run.call_args_list[0].kwargs["timeout"], 600)
             self.assertEqual(run.call_args_list[0].kwargs["env"]["SC_PROJECT"], "plan-anchor")
+            self.assertNotIn("SC_AGENT_TEST_TRAP_PLATFORM_KEYRING", run.call_args_list[0].kwargs["env"])
+            self.assertTrue(any(case.endswith('::test_default_keychain_succeeds_or_times_out')
+                                for case in run.call_args_list[0].args[0]))
             self.assertEqual(run.call_args_list[1].kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(run.call_args_list[1].kwargs["timeout"], 60)
             command = run.call_args_list[1].args[0]
