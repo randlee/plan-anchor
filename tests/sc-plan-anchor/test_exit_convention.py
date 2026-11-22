@@ -83,9 +83,9 @@ class ConventionCase(unittest.TestCase):
         output = io.StringIO()
         auth = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
         with mock.patch.dict(os.environ, clean_env(), clear=True), \
-                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None), \
-                mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
-                mock.patch("sc_agent.send", return_value=auth), \
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value={"ok": True, "value": None}), \
+                mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+                mock.patch("sc_agent.send", return_value=__import__("sc_decidr_test_double").envelope(auth)), \
                 contextlib.redirect_stdout(output):
             code = jj.main(list(argv))
         return code, json.loads(output.getvalue())

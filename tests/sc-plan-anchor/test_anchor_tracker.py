@@ -871,7 +871,7 @@ class RepositoryContractTests(unittest.TestCase):
         client = ast.parse((SCRIPTS / "decidr_client.py").read_text(encoding="utf-8"))
         runtime_imports = [node for node in ast.walk(client)
                            if isinstance(node, ast.Import) and any(alias.name == "sc_agent" for alias in node.names)]
-        calls = [node for node in client.body if isinstance(node, ast.FunctionDef) and node.name == "_load_wheel"]
+        calls = [node for node in client.body if isinstance(node, ast.FunctionDef) and node.name == "load_wheel"]
         self.assertEqual(len(runtime_imports), 1)
         self.assertEqual(len(calls), 1)
         self.assertEqual({node for call in calls for node in ast.walk(call) if node in runtime_imports}, set(runtime_imports))

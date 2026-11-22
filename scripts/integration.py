@@ -40,6 +40,10 @@ def main():
         env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
                     'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
                     'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.wheel_version or args.pin_tag.removeprefix('prerelease/v'),
+                    # REQ-SAG-0004 requires each decision to carry a caller-supplied project.
+                    # Keep the live suite's calls in the plan-anchor project through sc-agent's
+                    # documented project-resolution path instead of changing the wheel contract.
+                    'SC_PROJECT': 'plan-anchor',
                     'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING': '1'})
         python = args.venv.resolve() / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         results = args.results.resolve()

@@ -198,7 +198,6 @@ plugins/sc-plan-anchor/
 
 Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
 
-The shared client's `MODELS` list documents the model selectors rendered for this consumer; it does not restrict the model passed to a call.
 
 ## Development
 

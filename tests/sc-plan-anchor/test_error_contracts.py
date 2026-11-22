@@ -97,9 +97,9 @@ def call_main(main, argv, *, env=None, stdin=None, client_calls=None):
     missing = (json.dumps({"sends": 0, "error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}}),
                "AUTH.CREDENTIALS")
     with mock.patch.dict(os.environ, environment, clear=True), contextlib.redirect_stdout(buf), \
-            mock.patch("sc_agent.CancelToken", return_value=mock.Mock()), \
+            mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
             mock.patch("sc_agent.send", side_effect=[line for line, _ in client_calls] if client_calls is not None else None,
-                              return_value=missing[0]), \
+                              return_value=__import__("sc_decidr_test_double").envelope(missing[0])), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
         code = main(argv)
     return code, json.loads(buf.getvalue())
@@ -268,7 +268,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
         for name, (argv, files, env, stdin, exit_code, error, data) in JEV_CASES.items():
             with self.subTest(name), Workspace(files):
                 # Auth-envelope cases control consent; real consent/settings cases remain separate.
-                consent = (mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None)
+                consent = (mock.patch.object(jj.decidr_client, "remote_preflight", return_value={"ok": True, "value": None})
                            if name in {"auth_missing_key", "auth_bad_format"} else contextlib.nullcontext())
                 with consent:
                     code, out = call_main(jj.main, list(argv), env=env, stdin=stdin)
@@ -352,7 +352,7 @@ class JevTransportErrorContracts(unittest.TestCase):
 
     def judge(self, calls, extra=(), gate="plan", item=ITEM):
         with Workspace({"anchors.json": LOCKED, "item.txt": item}), \
-                mock.patch.object(jj.decidr_client, "remote_preflight", return_value=None):
+                mock.patch.object(jj.decidr_client, "remote_preflight", return_value={"ok": True, "value": None}):
             argv = ["judge", "--anchors", "anchors.json", "--gate", gate, "--all", "--item-id", "ex-42", "--item-file", "item.txt",
                     "--run-dir", "runs", "--no-confirm", *extra]
             code, out = call_main(jj.main, argv, env=LIVE, client_calls=list(calls))
@@ -403,7 +403,7 @@ class JevTransportErrorContracts(unittest.TestCase):
         self.assertEqual((code, result["explanation"]), (0, "dry run; request does not fit"))
         self.assertEqual(result["error"], {
             "code": "JEV.CONTEXT_EXCEEDED",
-            "message": "request is 5727 bytes with the item at 2055 chars, over --max-request-bytes 1000; the item is already at --min-item-chars 2000",
+            "message": "request is 5720 bytes with the item at 2055 chars, over --max-request-bytes 1000; the item is already at --min-item-chars 2000",
             "recoverable": False,
             "suggested_action": "Shorten the evidence for this item (names, counts and summaries only), shorten the question overrides, or raise --max-request-bytes."})
 
