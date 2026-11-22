@@ -120,13 +120,6 @@ class DecidrClientTests(unittest.TestCase):
                 sys.modules["sc_agent"] = previous_agent
 
         seen = []
-        ready = threading.Event()
-
-        class LocalRunner(ThreadingHTTPServer):
-            def serve_forever(self, *args, **kwargs):
-                ready.set()
-                return super().serve_forever(*args, **kwargs)
-
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
@@ -147,12 +140,15 @@ class DecidrClientTests(unittest.TestCase):
                 self.reply({"model": "jev-latest", "answers": {"q": {"type": "noul", "noul": 0.5}},
                             "usage": {"input_tokens": 1, "output_tokens": 1}})
 
-        server = LocalRunner(("127.0.0.1", 0), Handler)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         server.daemon_threads = True
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server.timeout = 5  # Hang guard, never an elapsed-time assertion.
+        def serve():
+            for _ in range(2):
+                server.handle_request()
+        thread = threading.Thread(target=serve, daemon=True)
         thread.start()
         try:
-            self.assertTrue(ready.wait(5), "local runner did not become ready")
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 run_test_child(["git", "init", "-q", str(root)], check=True, timeout=10)
@@ -168,8 +164,9 @@ class DecidrClientTests(unittest.TestCase):
                 def trapped_keyring(name):
                     raise RuntimeError("test keyring refused")
                 def send(request, **kwargs):
+                    kwargs["timeout_secs"] = 5
                     return native_send(request, base_url=f"http://127.0.0.1:{server.server_port}/v1",
-                                       keyring_lookup=trapped_keyring, **kwargs)
+                                       keyring_lookup=trapped_keyring, sleep=lambda _: None, **kwargs)
                 with patch.object(wheel, "send", side_effect=send), patch.dict(os.environ, environment, clear=True), patch.object(client, "remote_preflight", return_value={"ok": True, "value": None}), \
                         patch.dict(sys.modules, {"sc_agent": wheel}):
                     previous_cwd = os.getcwd()
@@ -190,9 +187,9 @@ class DecidrClientTests(unittest.TestCase):
                         os.chdir(previous_cwd)
             self.assertEqual(seen, ["Bearer env-test-key", "Bearer dotenv-test-key"])
         finally:
-            server.shutdown()
-            thread.join(5)
+            thread.join(12)
             server.server_close()
+            self.assertFalse(thread.is_alive(), "scripted runner did not finish")
 
 
     def test_batch_missing_wheel_and_error_paths(self):

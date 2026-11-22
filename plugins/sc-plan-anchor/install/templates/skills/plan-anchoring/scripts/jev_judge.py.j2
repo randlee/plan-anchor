@@ -129,7 +129,7 @@ from typing import Any, Callable, Mapping, NamedTuple, Optional
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from result import Err, Ok, Result, utf8_stdio  # noqa: E402
 import decidr_client  # noqa: E402
-from decidr_client import (ClientError, from_tool_error, _typed_answer, NoulAnswer, ChoiceAnswer, ScoreAnswer, BoxAnswer)  # noqa: E402
+from decidr_client import (ClientError, from_tool_error, typed_answer, NoulAnswer, ChoiceAnswer, ScoreAnswer, BoxAnswer)  # noqa: E402
 
 
 DEFAULT_MODEL = "jev"
@@ -240,7 +240,7 @@ def redact_sensitive(value):
 
 
 def emit(obj, fmt: str = "json") -> None:
-    obj = redact_sensitive(decidr_client._json_answers(obj))
+    obj = redact_sensitive(decidr_client.json_answers(obj))
     if fmt == "json":
         print(json.dumps(obj, indent=2, ensure_ascii=False))
     else:
@@ -311,7 +311,7 @@ def write_text_atomic(path: str, text: str) -> None:
 
 def save_json(path: str, obj: dict) -> None:
     """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout (REQ-017): no key or bearer token reaches a file."""
-    write_text_atomic(path, json.dumps(redact_sensitive(decidr_client._json_answers(obj)), indent=2, ensure_ascii=False) + "\n")
+    write_text_atomic(path, json.dumps(redact_sensitive(decidr_client.json_answers(obj)), indent=2, ensure_ascii=False) + "\n")
 
 
 def short_date(iso: str) -> str:
@@ -1789,12 +1789,12 @@ def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_it
         if isinstance(answered, Ok):
             sends = answered.value.get("attempts")
             meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+                                 decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
             return Ok((answered.value, meta))
         else:
             sends = answered.error.attempts
             meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                 decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+                                 decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
             if answered.error.retry_after_ms is not None:
                 meta["retry_after_ms"] = answered.error.retry_after_ms
         exc = answered.error
@@ -1833,7 +1833,7 @@ def answer_choice(ans: dict) -> tuple:
 def fixture_response(answers: dict, questions: dict) -> Result[dict, ClientError]:
     """Parse controlled fixture answers through sc-decidr's typed response parser."""
     job = decidr_client.BatchJob("fixture", None, "fixture", 1, "fixture", {}, questions, {}, "fixture")
-    parsed = decidr_client._fixture_attempt(job, {"*": answers}, 1)
+    parsed = decidr_client.fixture_attempt(job, {"*": answers}, 1)
     if not parsed["ok"]:
         return Err(parsed["error"])
     return Ok({**parsed["value"], "usage": {}})
@@ -2238,7 +2238,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                     resp2, meta2 = second.value
                     sends = meta2.get("attempts")
                     meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+                                         decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     verdict2, min_conf2 = decide(resp2["answers"], qs["roles"], ctx["threshold"], entry["kind"])
                     if verdict2 == verdict:
                         entry["confirmed"] = True
@@ -2251,7 +2251,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
                         return second
                     sends = exc2.attempts
                     meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                         decidr_client._total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
+                                         decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
                     entry["confirm_error"] = exc2.to_json()["error"]
             entry.update({"verdict": verdict, "answers": resp["answers"], "min_confidence": round(min_conf, 3),
                           "explanation": explain(verdict, min_conf, ctx["gate"]), "usage": resp.get("usage")})
@@ -2790,7 +2790,7 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
         responses.append(response)
         sends = meta.get("attempts")
         attempts = (None if attempts is None or sends is None else
-                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
+                    decidr_client.total_attempts([{"sends": attempts}, {"sends": sends}]))
     first_choices = [answer_choice(responses[0]["answers"][qid])[0] for qid in qs["questions"]]
     second_choices = [answer_choice(responses[1]["answers"][qid])[0] for qid in qs["questions"]]
     if first_choices != second_choices:
@@ -2801,7 +2801,7 @@ def _rubric_judgement(args, body: dict, qs: dict, fixture, cid, threshold: float
         responses.append(response)
         sends = meta.get("attempts")
         attempts = (None if attempts is None or sends is None else
-                    decidr_client._total_attempts([{"sends": attempts}, {"sends": sends}]))
+                    decidr_client.total_attempts([{"sends": attempts}, {"sends": sends}]))
     outcome = rubric_confirmation_outcome(responses, tuple(qs["questions"]), threshold, lint_errors)
     if isinstance(outcome, Err):
         return outcome
@@ -3046,7 +3046,7 @@ def triage_lines(r: dict) -> list:
     verdict; they are what triage/rules.json routes on, so the reader sees why a cell goes to exclude, plan, question or human."""
     lines = []
     answers = r.get("answers") or {}
-    answers = {qid: decidr_client._typed_answer(answer) for qid, answer in answers.items()}
+    answers = {qid: decidr_client.typed_answer(answer) for qid, answer in answers.items()}
     shown = []
     for qid in r.get("triage_questions") or []:
         if qid in answers:
@@ -3339,13 +3339,13 @@ def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_ro
     item, anchor_rec, candidates = line.get("item"), line.get("anchor"), line.get("questions")
     if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
         return fail("VALIDATION.INPUT", f"{where}: item needs id and non-empty text")
-    _checked = decidr_client._safe_id(item.get("id"), f"{where}: item id")
+    _checked = decidr_client.safe_id(item.get("id"), f"{where}: item id")
     if not _checked["ok"]:
         return Err(_checked["error"])
     item_id = _checked["value"]
     if not isinstance(anchor_rec, dict) or not isinstance(anchor_rec.get("statement"), str) or not anchor_rec["statement"].strip():
         return fail("VALIDATION.INPUT", f"{where}: anchor needs id and statement")
-    _checked = decidr_client._safe_id(anchor_rec.get("id"), f"{where}: anchor id")
+    _checked = decidr_client.safe_id(anchor_rec.get("id"), f"{where}: anchor id")
     if not _checked["ok"]:
         return Err(_checked["error"])
     anchor_id = _checked["value"]
@@ -3357,7 +3357,7 @@ def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_ro
     for cand in candidates:
         if not isinstance(cand, dict):
             return fail("VALIDATION.INPUT", f"{where}: every candidate is an object with candidate_id, questions and optional roles")
-        _checked = decidr_client._safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
+        _checked = decidr_client.safe_id(cand.get("candidate_id"), f"{where}: candidate_id")
         if not _checked["ok"]:
             return Err(_checked["error"])
         cid = _checked["value"]
@@ -3386,22 +3386,22 @@ def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_ro
 def run_batch_job(job: decidr_client.BatchJob, settings: decidr_client.BatchSettings, fixture) -> dict:
     """Run one controlled fixture or dry-run job; live batches use the wheel."""
     if settings.dry_run:
-        return decidr_client._line(job, settings, None, [], None, True)
+        return decidr_client.result_line(job, settings, None, [], None, True)
     if fixture is None:
         error = ClientError("VALIDATION.INPUT", "run_batch_job requires fixture answers; live calls use call_batch_results")
-        return decidr_client._line(job, settings, None, [], error, False, result_fields=batch_result_fields,
+        return decidr_client.result_line(job, settings, None, [], error, False, result_fields=batch_result_fields,
                                    error_message_limit=900)
-    fixture_result = decidr_client._fixture_attempt(job, fixture, 1)
+    fixture_result = decidr_client.fixture_attempt(job, fixture, 1)
     if not fixture_result["ok"]:
         error = fixture_result["error"]
         attempts = [{"attempt": 1, "ok": False,
                      "error": {"code": error.code, "message": error.message,
                                "recoverable": getattr(error, "recoverable", error.retryable)}}]
-        return decidr_client._line(job, settings, None, attempts, error, False, result_fields=batch_result_fields,
+        return decidr_client.result_line(job, settings, None, attempts, error, False, result_fields=batch_result_fields,
                                    error_message_limit=900)
     raw = fixture_result["value"]
     attempts = [{"attempt": 1, "ok": True}]
-    return decidr_client._line(job, settings, raw, attempts, None, False, result_fields=batch_result_fields,
+    return decidr_client.result_line(job, settings, raw, attempts, None, False, result_fields=batch_result_fields,
                                error_message_limit=900)
 
 
@@ -3485,14 +3485,14 @@ def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_
         wheel_attempts = record["attempts"]
         if record["ok"]:
             attempts = [{"attempt": wheel_attempts, "ok": True}]
-            line = decidr_client._line(job, settings, record, attempts, None, False,
+            line = decidr_client.result_line(job, settings, record, attempts, None, False,
                                        result_fields=batch_result_fields, error_message_limit=900)
         else:
             error = record["error"]
             attempts = [{"attempt": wheel_attempts, "ok": False,
                          "error": {"code": error.code, "message": error.message,
                                    "recoverable": getattr(error, "recoverable", error.retryable)}}]
-            line = decidr_client._line(job, settings, None, attempts, error, False,
+            line = decidr_client.result_line(job, settings, None, attempts, error, False,
                                        result_fields=batch_result_fields, error_message_limit=900)
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3508,15 +3508,12 @@ def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_
             return
         completed[position] = line
 
-    try:
-        result = decidr_client.call_batch_results(
-            [job.body for job in jobs],
-            model=settings.model,
-            abort_on=frozenset({"auth"}), timeout_secs=settings.timeout,
-            workers=settings.max_workers, on_result=persist,
-        )
-    except decidr_client.BatchInputError as exc:
-        return Err(exc.error)
+    result = decidr_client.call_batch_results(
+        [job.body for job in jobs],
+        model=settings.model,
+        abort_on=frozenset({"auth"}), timeout_secs=settings.timeout,
+        workers=settings.max_workers, on_result=persist,
+    )
     if failures:
         return Err(failures[0])
     if not result["ok"]:
@@ -3528,7 +3525,7 @@ def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_
 
 def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, ClientError]:
     name = run_name or stamp()
-    _checked = decidr_client._safe_id(name, "--run-name")
+    _checked = decidr_client.safe_id(name, "--run-name")
     if not _checked["ok"]:
         return Err(_checked["error"])
     checked = _checked["value"]
@@ -4262,7 +4259,7 @@ def index_stream(raw_lines: list, jobs: list) -> Result[dict, ClientError]:
             if line.get("answers") != line["raw_response"].get("answers"):
                 return fail("TOURNAMENT.EVIDENCE_MISMATCH", f"stream line {job.request_id} has answers that differ from its raw response")
         if line.get("ok"):
-            line = dict(line, answers={qid: decidr_client._typed_answer(answer)
+            line = dict(line, answers={qid: decidr_client.typed_answer(answer)
                                        for qid, answer in line["answers"].items()})
         indexed[key] = line
     return Ok(indexed)
