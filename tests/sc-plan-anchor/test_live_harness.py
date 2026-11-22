@@ -23,7 +23,9 @@ class LiveHarnessSetupTests(unittest.TestCase):
                 mock.patch.object(module.jj, "call_jev", side_effect=outcomes):
             for expected in ("default keychain: success", "default keychain: secrets.keyring_timeout"):
                 record = mock.Mock()
-                module.test_default_keychain_succeeds_or_times_out(Path("unused"), mock.Mock(), record)
+                monkeypatch = mock.Mock()
+                module.test_default_keychain_succeeds_or_times_out(Path("unused"), monkeypatch, record)
+                monkeypatch.delenv.assert_called_once_with('TYPESAFE_API_KEY', raising=False)
                 record.assert_called_once_with("result", expected)
         with mock.patch.dict(os.environ, {"PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE": "TYPESAFE_API_KEY"}), \
                 mock.patch.object(module.jj, "call_jev", return_value=module.jj.Err(
