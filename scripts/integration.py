@@ -36,7 +36,8 @@ def main():
                       if line.strip() and not line.lstrip().startswith('#'))
         if not values.get(variable):
             raise RuntimeError('TypeSafe key is required; no integration tests run')
-        env = {k: v for k, v in os.environ.items() if k != variable and not k.endswith('_API_KEY') and not k.startswith('SC_AGENT__')}
+        env = {k: v for k, v in os.environ.items() if k not in (variable, 'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING')
+               and not k.endswith('_API_KEY') and not k.startswith('SC_AGENT__')}
         env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
                     'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
                     'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.wheel_version or args.pin_tag.removeprefix('prerelease/v'),
