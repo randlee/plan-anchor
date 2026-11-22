@@ -31,7 +31,7 @@ def retryable(detail: str) -> bool:
     return category(detail) in {"busy", "network"}
 
 
-class CancelToken:
+class Cancel:
     def cancel(self):
         pass
 
@@ -92,23 +92,46 @@ def _valid_answer(answer) -> bool:
     return False
 
 
+def envelope(line):
+    value = json.loads(line) if isinstance(line, str) else dict(line)
+    if "ok" in value:
+        return value
+    if value.get("error") is not None:
+        detail = dict(value["error"])
+        detail.setdefault("attempts", value.get("sends", 1))
+        return {"ok": False, "error": detail, "index": value.get("position", 0)}
+    body = dict(value.get("response", {}))
+    body.setdefault("answers", {})
+    body.update(attempts=value.get("sends", 1), session_id=value.get("session_id"), question_digests=value.get("digests", {}))
+    return {"ok": True, "value": body, "index": value.get("position", 0)}
+
+
 def send(*args, **kwargs):
-    return json.dumps({"sends": 0, "position": 0,
-                       "error": {"id": "auth.credentials", "category": "auth",
-                                 "message": "missing key", "attempts": 0}})
+    return envelope({"sends": 0, "error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
 
 
 def send_batch(*args, **kwargs):
-    return []
+    return {"ok": True, "value": []}
+
+
+def batch_result(lines, on_result):
+    items = []
+    for line in lines:
+        value = envelope(line)
+        index = value.pop("index", 0)
+        on_result(index, value)
+        items.append({"index": index, "result": value})
+    return {"ok": True, "value": sorted(items, key=lambda item: item["index"])}
 
 
 def as_module() -> ModuleType:
     module = ModuleType("sc_agent")
     module.SagError = SagError
-    module.CancelToken = CancelToken
+    module.Cancel = Cancel
     module.category = category
     module.retryable = retryable
     module.parse_result = lambda line: parse_result(line, module)
+    module.logger = lambda name: {"ok": True, "value": object()}
     module.send = send
     module.send_batch = send_batch
     return module

@@ -8,12 +8,15 @@ They supply no answer fixtures and assert no model probability or timing.
 
 Use the canonical sc-agent prerelease installer to checksum-verify and install
 the chosen matched wheels in a fresh Python 3.11+ environment. Install pytest,
-jsonschema, PyYAML and the supported sc-compose Python package there; put the
-released sc-compose CLI on PATH. Provide an sc-agent checkout containing the
-shared report generator (for example, commit `4fc8cdc`); the wheel's exact source
-revision is recorded separately by `--pin-sha`. Pass the TypeSafe credential
-variable name from the sc-agent export explicitly; plan-anchor does not parse
-SDK source for credential names. A missing renderer fails before any live test runs.
+jsonschema, PyYAML (required by the settings fixture) and the supported sc-compose
+Python package there. Keep the released sc-compose CLI on PATH; a minimal Colima
+Linux container also needs `git` because the fixture initializes scratch repos.
+The sc-compose Python package does not provide that CLI. Provide an sc-agent
+checkout containing the shared report generator (for example, commit `4fc8cdc`);
+the wheel's exact source revision is recorded separately by `--pin-sha`. Pass the
+TypeSafe credential variable name from the sc-agent export explicitly;
+plan-anchor does not parse SDK source for credential names. A missing renderer
+fails before any live test runs.
 
 Export credentials with sc-agent's existing `scripts/integration.py --export-env`
 to a new temporary mode-0600 `.env` outside a checkout. The integration command

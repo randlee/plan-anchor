@@ -36,18 +36,23 @@ def main():
                       if line.strip() and not line.lstrip().startswith('#'))
         if not values.get(variable):
             raise RuntimeError('TypeSafe key is required; no integration tests run')
-        env = {k: v for k, v in os.environ.items() if k != variable and not k.endswith('_API_KEY') and not k.startswith('SC_AGENT__')}
+        env = {k: v for k, v in os.environ.items() if k not in (variable, 'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING')
+               and not k.endswith('_API_KEY') and not k.startswith('SC_AGENT__')}
         env.update({variable: values[variable], 'PLAN_ANCHOR_LIVE_INTEGRATION': '1',
                     'PLAN_ANCHOR_INTEGRATION_KEY_VARIABLE': variable,
                     'PLAN_ANCHOR_INTEGRATION_WHEEL_VERSION': args.wheel_version or args.pin_tag.removeprefix('prerelease/v'),
-                    'SC_AGENT_TEST_TRAP_PLATFORM_KEYRING': '1'})
+                    # REQ-SAG-0004 requires each decision to carry a caller-supplied project.
+                    # Keep the live suite's calls in the plan-anchor project through sc-agent's
+                    # documented project-resolution path instead of changing the wheel contract.
+                    'SC_PROJECT': 'plan-anchor'})
         python = args.venv.resolve() / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
         results = args.results.resolve()
         results.mkdir(parents=True, exist_ok=True)
         junit = results / f'{args.platform}.xml'
         test_file = ROOT / 'tests/integration/test_installed_wheel.py'
         cases = [f'{test_file}::{name}' for name in ('test_judge_writes_real_run_artifact',
-                 'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body')]
+                 'test_batch_preserves_correlation_and_durable_log', 'test_invalid_key_maps_auth_and_withholds_body',
+                 'test_default_keychain_succeeds_or_times_out')]
         with tempfile.TemporaryDirectory(prefix='plan-anchor-integration-') as scratch:
             completed = subprocess.run([str(python), '-m', 'pytest', *cases, '-v',
                                         '-o', 'junit_family=legacy', f'--junitxml={junit}'],

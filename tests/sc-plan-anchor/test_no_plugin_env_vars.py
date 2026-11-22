@@ -95,7 +95,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(baseline[0], 0, baseline)
         self.assertEqual(planted, baseline)
         data = planted[1]["data"]
-        self.assertEqual((data["model_requested"], data["threshold"]), ("jev-latest", 0.6))
+        self.assertEqual((data["model_requested"], data["threshold"]), ("jev", 0.6))
         self.assertIsNone(data["results"][0]["verdict"])
         self.assertTrue(planted[2], "dry run wrote no run file")
 
@@ -115,8 +115,8 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
             try:
                 with mock.patch.dict(os.environ, dict(environment, TYPESAFE_API_KEY="sk-test-0001"), clear=True), \
                         mock.patch("sc_agent.send", side_effect=send), \
-                        mock.patch("sc_agent.CancelToken", return_value=object()), \
-                        mock.patch.object(module.decidr_client, "remote_preflight", return_value=None), \
+                        mock.patch("sc_agent.Cancel", return_value=object()), \
+                        mock.patch.object(module.decidr_client, "remote_preflight", return_value={"ok": True, "value": None}), \
                         contextlib.redirect_stdout(buf):
                     code = module.main(list(JUDGE))
             finally:
@@ -132,8 +132,8 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(planted, baseline)
         code, out, requests = planted
         self.assertEqual(code, 0, out)
-        self.assertEqual({body["model"] for body, _ in requests}, {"jev-latest"})
-        self.assertTrue(all(options["keyring_service"] is None and options["keyring_account"] is None
+        self.assertEqual({body["model"] for body, _ in requests}, {"jev"})
+        self.assertTrue(all("keyring_service" not in options and "keyring_account" not in options
                             for _, options in requests))
         result = out["data"]["results"][0]
         # 0.65 is within 0.10 of the default 0.6: confirmation stays on (CONFIRM_NEAR=0 ignored), the item
