@@ -3389,20 +3389,20 @@ def run_batch_job(job: decidr_client.BatchJob, settings: decidr_client.BatchSett
         return decidr_client.result_line(job, settings, None, [], None, True)
     if fixture is None:
         error = ClientError("VALIDATION.INPUT", "run_batch_job requires fixture answers; live calls use call_batch_results")
-        return decidr_client.result_line(job, settings, None, [], error, False, result_fields=batch_result_fields,
-                                   error_message_limit=900)
+        return decidr_client.result_line(job, settings, None, [], error, False,
+                                         result_fields=batch_result_fields)
     fixture_result = decidr_client.fixture_attempt(job, fixture, 1)
     if not fixture_result["ok"]:
         error = fixture_result["error"]
         attempts = [{"attempt": 1, "ok": False,
                      "error": {"code": error.code, "message": error.message,
                                "recoverable": getattr(error, "recoverable", error.retryable)}}]
-        return decidr_client.result_line(job, settings, None, attempts, error, False, result_fields=batch_result_fields,
-                                   error_message_limit=900)
+        return decidr_client.result_line(job, settings, None, attempts, error, False,
+                                         result_fields=batch_result_fields)
     raw = fixture_result["value"]
     attempts = [{"attempt": 1, "ok": True}]
-    return decidr_client.result_line(job, settings, raw, attempts, None, False, result_fields=batch_result_fields,
-                               error_message_limit=900)
+    return decidr_client.result_line(job, settings, raw, attempts, None, False,
+                                     result_fields=batch_result_fields)
 
 
 def batch_result_fields(job, settings, raw) -> dict:
@@ -3486,14 +3486,14 @@ def _live_batch_results(lines: list, settings: decidr_client.BatchSettings, log_
         if record["ok"]:
             attempts = [{"attempt": wheel_attempts, "ok": True}]
             line = decidr_client.result_line(job, settings, record, attempts, None, False,
-                                       result_fields=batch_result_fields, error_message_limit=900)
+                                       result_fields=batch_result_fields)
         else:
             error = record["error"]
             attempts = [{"attempt": wheel_attempts, "ok": False,
                          "error": {"code": error.code, "message": error.message,
                                    "recoverable": getattr(error, "recoverable", error.retryable)}}]
             line = decidr_client.result_line(job, settings, None, attempts, error, False,
-                                       result_fields=batch_result_fields, error_message_limit=900)
+                                       result_fields=batch_result_fields)
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(log_path, "a", encoding="utf-8", newline="\n") as log:

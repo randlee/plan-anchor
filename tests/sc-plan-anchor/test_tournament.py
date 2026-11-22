@@ -562,7 +562,8 @@ class BatchTests(TournamentCase):
 
     def test_live_batch_uses_shared_client_attempt_count_and_keeps_input_order(self):
         request = request_line("s1", "We copy the legacy crates.", ("c1", PLAN_QS["questions"]))
-        wheel_error = wheel_line({"error": {"id": "http.provider_busy", "category": "busy", "message": "busy",
+        long_message = "busy:" + ("x" * 1000)
+        wheel_error = wheel_line({"error": {"id": "http.provider_busy", "category": "busy", "message": long_message,
                                               "attempts": 5, "retry_after_ms": 2500}})
         settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
         log_path = self.d / "live.jsonl"
@@ -575,6 +576,7 @@ class BatchTests(TournamentCase):
         line = self.records(log_path)[0]
         self.assertEqual((line["request_id"], line["ok"], line["retry_count"], line["attempts"][0]["attempt"]),
                          ("live/s1/ANC-001/c1/r1", False, 4, 5))
+        self.assertEqual(line["error"]["message"], long_message)
         self.assertEqual(json.loads(log_path.read_text(encoding="utf-8")), line)
         send_batch.assert_called_once()
         args, kwargs = send_batch.call_args
