@@ -162,11 +162,7 @@ class DecidrClientTests(unittest.TestCase):
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         server.daemon_threads = True
-        server.timeout = 5  # Hang guard, never an elapsed-time assertion.
-        def serve():
-            for _ in range(2):
-                server.handle_request()
-        thread = threading.Thread(target=serve, daemon=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as directory:
@@ -207,9 +203,10 @@ class DecidrClientTests(unittest.TestCase):
                         os.chdir(previous_cwd)
             self.assertEqual(seen, ["Bearer env-test-key", "Bearer dotenv-test-key"])
         finally:
+            server.shutdown()
             thread.join(12)
             server.server_close()
-            self.assertFalse(thread.is_alive(), "scripted runner did not finish")
+            self.assertFalse(thread.is_alive(), f"scripted runner did not finish; captured requests: {seen!r}")
 
 
     def test_batch_missing_wheel_and_error_paths(self):
