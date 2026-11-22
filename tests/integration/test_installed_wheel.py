@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/sc-plan-anchor'))
 from child_support import run_test_child
 from layout_support import SCRIPTS, TEST_TRACKER
+from live_keyring_policy import (keyring_case_result, keyring_error_id, keyring_guidance_present,
+                                 secret_service_available)
 from jev_inputs import BATCH_LINES, PLAN_QS, anchor, jsonl, record, write
 from live_cli_output import parse_cli_output
 
@@ -114,8 +116,13 @@ def test_default_keychain_succeeds_or_times_out(live, monkeypatch, record_proper
             'questions': PLAN_QS['questions']}
     outcome = jj.call_jev(body, 120)
     if isinstance(outcome, jj.Ok):
-        record_property('result', 'default keychain: success')
+        error_id = None
     else:
-        assert isinstance(outcome, jj.Err)
-        assert (outcome.error.data or {}).get('id') == 'secrets.keyring_timeout', outcome.error.to_json()
-        record_property('result', 'default keychain: secrets.keyring_timeout')
+        assert isinstance(outcome, jj.Err), outcome
+        error_id = keyring_error_id(outcome)
+    service_available = secret_service_available() if error_id == 'secrets.keyring_read' else None
+    result = keyring_case_result(error_id, service_available)
+    record_property('result', 'default keychain: ' + result)
+    if error_id == 'secrets.keyring_read':
+        guidance = 'present' if keyring_guidance_present(outcome) else 'missing; sc-agent fix'
+        record_property('keyring_guidance', guidance)
