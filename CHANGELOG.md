@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.18 — Unreleased
+
+- Re-render the plan-anchor client from sc-decidr 0.4.0 and update its pinned wheel version.
+
 ## 0.12.17 — 2026-11-22
 
 - Re-render and pin the plan-anchor client to sc-decidr 0.3.6, including its thread-safe lazy logger.
