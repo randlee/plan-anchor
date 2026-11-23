@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.18 — Unreleased
+## 0.13.0 — 2026-11-23
 
 - Re-render the plan-anchor client from sc-decidr 0.4.0 and update its pinned wheel version.
 
