@@ -41,6 +41,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+GIT_TIMEOUT_SECONDS = 30
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
 INSTALLER_SKILL = "plan-anchor-installer"
 HARNESS = PLUGIN / "install" / "harness"
@@ -187,12 +188,20 @@ def parse(v: str):
     return tuple(int(x) for x in v.split("."))
 
 
+def git_run(*args: str):
+    try:
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False,
+                              stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise CheckError(f"git {' '.join(args)} timed out after {GIT_TIMEOUT_SECONDS} seconds") from None
+
+
 def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False).stdout
+    return git_run(*args).stdout
 
 
 def show(ref: str, rel: str):
-    out = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=ROOT, capture_output=True, text=True, check=False)
+    out = git_run("show", f"{ref}:{rel}")
     return out.stdout if out.returncode == 0 else None
 
 
@@ -288,8 +297,7 @@ def release_checks(want: str, drift: list) -> int:
 
 def require_commit(ref: str) -> None:
     """CheckError unless ``ref`` names a commit here: a missing base must fail, never skip the PR rule."""
-    done = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=ROOT,
-                          capture_output=True, text=True, check=False)
+    done = git_run("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
     if done.returncode != 0:
         raise CheckError(f"--base {ref!r} is not a commit in this clone; fetch it (actions/checkout with "
                          "fetch-depth: 0, or git fetch origin <branch>) so the pull-request rule can run")

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tarfile
 import tempfile
@@ -66,7 +67,7 @@ def tree(root):
 
 def git_repo(path, backend=None, settings=None):
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    run_test_child(["git", "init", "-q", str(path)], check=True)
     if backend is not None:
         (path / ".beads").mkdir()
         (path / ".beads" / "metadata.json").write_text(json.dumps({"backend": backend}), encoding="utf-8")
@@ -148,7 +149,7 @@ class GlobalDestinationTests(Scratch):
     def test_refusal_through_the_real_process(self):
         dest = self.home / ".claude"
         dest.mkdir()
-        proc = subprocess.run([sys.executable, str(PLUGIN / "install.py"), "--dest", str(dest), "--tracker", "br"],
+        proc = run_test_child([sys.executable, str(PLUGIN / "install.py"), "--dest", str(dest), "--tracker", "br"],
                               env=child_env(self.home), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         envelope = json.loads(proc.stdout)
@@ -211,7 +212,7 @@ class ParentFolderInstallTests(Scratch):
             anchors.write_text(json.dumps({"schema": "plan-anchoring/anchors/1", "plan": "p", "intent_ref": "i.md",
                                            "anchors": []}), encoding="utf-8")
             script = self.parent / ".codex" / "skills" / "plan-anchoring" / "scripts" / "jev_judge.py"
-            proc = subprocess.run([sys.executable, str(script), "agent-preflight", "--workspace-root", str(child),
+            proc = run_test_child([sys.executable, str(script), "agent-preflight", "--workspace-root", str(child),
                                    "--script", str(script), "--anchors", str(anchors)], cwd=str(cwd),
                                   env=child_env(self.home), capture_output=True, text=True, encoding="utf-8")
             with self.subTest(child=child.name):
@@ -296,7 +297,7 @@ class ParentFolderInstallTests(Scratch):
 
 class SessionStartHookTests(Scratch):
     def run_hook(self, cwd):
-        proc = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart"}),
+        proc = run_test_child([sys.executable, str(HOOK)], input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart"}),
                               env=child_env(self.home), capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stderr, "")
@@ -345,7 +346,7 @@ class SessionStartHookTests(Scratch):
         lock = write_lock(repo, "0.7.3")
         lock.write_text("{not json", encoding="utf-8")
         self.assertEqual(self.run_hook(repo), "")
-        proc = subprocess.run([sys.executable, str(HOOK)], input="not json", cwd=str(repo), env=child_env(self.home),
+        proc = run_test_child([sys.executable, str(HOOK)], input="not json", cwd=str(repo), env=child_env(self.home),
                               capture_output=True, text=True, encoding="utf-8")
         self.assertEqual((proc.returncode, proc.stdout), (0, ""))
 
@@ -442,7 +443,7 @@ class SelfContainedPluginTests(Scratch):
         (bin_dir / "br").chmod(0o755)
         if os.name == "nt":
             self.skipTest("the fake br is a POSIX shell script")
-        proc = subprocess.run([sys.executable, "-I", str(copy / "install.py"), "--dest", str(repo), "--tracker", "br",
+        proc = run_test_child([sys.executable, "-I", str(copy / "install.py"), "--dest", str(repo), "--tracker", "br",
                                "--no-remote-judge", "--target", "claude,codex,cursor"], cwd=str(self.tmp),
                               env=child_env(self.home, bin_dir), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -480,7 +481,7 @@ class UpgradeFromMarketplaceReleaseTests(Scratch):
         bin_dir.mkdir()
         (bin_dir / "br").write_text("#!/bin/sh\necho br 0.7.4\n", encoding="utf-8")
         (bin_dir / "br").chmod(0o755)
-        proc = subprocess.run([sys.executable, "-I", str(old / "plugins/sc-plan-anchor/install.py"), "--dest", str(repo),
+        proc = run_test_child([sys.executable, "-I", str(old / "plugins/sc-plan-anchor/install.py"), "--dest", str(repo),
                                "--no-remote-judge", "--target", "claude,codex"], cwd=str(self.tmp),
                               env=child_env(self.home, bin_dir), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)

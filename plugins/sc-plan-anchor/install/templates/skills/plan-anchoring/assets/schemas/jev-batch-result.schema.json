@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://synaptic-canvas.dev/plan-anchor/jev-batch-result.schema.json",
   "title": "jev_judge.py batch result line",
-  "description": "One JSON line per (item, candidate, repeat), written to stdout and appended, unchanged, to the run log anchor-runs/tournament-<run>.jsonl as soon as the line and every line before it have an answer. Lines come in request order, but consumers key them by item_id, anchor_id, candidate_id and repeat. request_id is <prefix>/<item_id>/<anchor_id>/<candidate_id>/r<repeat>; run_id is the first 16 hex digits of SHA-256 over it; request_sha256 is SHA-256 over the exact request bytes sent. verdict reads the answers at threshold; leaning reads them at 0. The runner writes no tracker record: choosing and sealing a candidate is the anchor-tuning agent's.",
+  "description": "One JSON line per (item, candidate, repeat), written to stdout and appended unchanged to the run log anchor-runs/tournament-<run>.jsonl. Live results are written as calls complete, so their order is completion order; deterministic fixture results follow request order. Consumers correlate records by request_id and item_id, anchor_id, candidate_id and repeat. request_id is <prefix>/<item_id>/<anchor_id>/<candidate_id>/r<n>; run_id is the first 16 hex digits of SHA-256 over it; request_sha256 is SHA-256 over the exact request bytes sent. verdict reads the answers at threshold; leaning reads them at 0. retry_count and attempts use sc-decidr typed send counts; the wheel owns provider retries. The runner writes no tracker record: choosing and sealing a candidate is the anchor-tuning agent's.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -28,12 +28,13 @@
     "min_confidence",
     "leaning",
     "retry_count",
+    "sends",
     "attempts",
     "error"
   ],
   "properties": {
     "schema": {
-      "const": "plan-anchor/jev-batch-result/1"
+      "const": "jev-batch-result/1"
     },
     "request_id": {
       "type": "string",
@@ -149,8 +150,11 @@
     },
     "retry_count": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 1
+      "minimum": 0
+    },
+    "sends": {
+      "type": ["integer", "null"],
+      "minimum": 0
     },
     "attempts": {
       "type": "array",

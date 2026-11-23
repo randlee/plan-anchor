@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11,<3.12"
+# requires-python = ">=3.11"
 # dependencies = [
 #   "pyyaml>=5.1",
 #   "sc-compose>=1.8.0,<2",
@@ -17,9 +17,7 @@ The marketplace plugin ships only the ``plan-anchor-installer`` skill; it runs
 this script.
 
 The inline script metadata above lets ``uv run`` supply PyYAML and the
-sc-compose wheel. The header pins Python 3.11 (uv downloads it when needed);
-the code itself runs on Python 3.9+, so ``python3 install.py`` works wherever
-both packages import.
+sc-compose wheel. Python 3.11 or newer is required.
 
 What it reads:
   - Its package files, under this plugin directory: ``plugin.json`` (the
@@ -177,8 +175,9 @@ def _load_plain_script(name: str) -> ModuleType:
 
     Its rendering for either tracker is its body, byte for byte (test_install.py renders it
     strictly and compares), so the installer runs the code it installs without needing
-    sc-compose to import. Only result.py and plan_anchor_paths.py are loaded this way; the
-    tracker-specific scripts are rendered for one tracker and never imported here.
+    sc-compose to import. result.py, plan_anchor_paths.py and the shared decidr_client are
+    loaded this way; the tracker-specific scripts are rendered for one tracker and never
+    imported here.
     """
     path = SCRIPTS_DIR / f"{name}.py.j2"
     body = template_body(path.read_text(encoding="utf-8"))
@@ -193,6 +192,8 @@ def _load_plain_script(name: str) -> ModuleType:
 
 _result = _load_plain_script("result")
 _paths = _load_plain_script("plan_anchor_paths")
+_decidr_client = _load_plain_script("decidr_client")
+sys.modules["decidr_client"] = _decidr_client
 Err, Ok, Result, ToolError, err, utf8_stdio = (_result.Err, _result.Ok, _result.Result, _result.ToolError,
                                                _result.err, _result.utf8_stdio)
 find_lock, find_settings, global_location = _paths.find_lock, _paths.find_settings, _paths.global_location
@@ -322,7 +323,7 @@ def load_package(plugin_dir: Path = PLUGIN_DIR) -> Result[Package, ToolError]:
 
 def check_sc_compose() -> Result[Any, ToolError]:
     action = (f"Run with `uv run {Path(__file__).name}` (it installs {SC_COMPOSE_SPEC} itself), or "
-              f"python3 -m pip install '{SC_COMPOSE_SPEC}' (CPython 3.11 wheels).")
+              f"python3 -m pip install '{SC_COMPOSE_SPEC}'.")
     try:
         module = importlib.import_module("sc_compose")
     except ImportError as exc:
@@ -1353,7 +1354,7 @@ def install(opts: Options, *, which: Which = shutil.which, run: Runner = subproc
         "targets": plan.targets,
         "target_reasons": plan.target_reasons,
         "dry_run": opts.dry_run,
-        "migration": lock.value is None,
+        "migration": lock.value is None and bool(plan.replace or plan.remove),
         "plan": {
             "create": plan.create,
             "replace": plan.replace,

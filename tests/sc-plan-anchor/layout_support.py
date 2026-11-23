@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -84,17 +85,37 @@ def rendered(tracker: str) -> Path:
         package = inst.load_package()
         if isinstance(package, inst.Err):
             raise AssertionError(package.error.message)
-        renderer = inst.Renderer(sc_compose(), package.value)
-        files = inst.wanted_files(package.value, renderer, list(TARGETS), tracker)
-        if isinstance(files, inst.Err):
-            raise AssertionError(files.error.message)
         root = _scratch_dir() / tracker
-        for key, (data, executable) in files.value.items():
-            path = root / key
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            if executable:
-                path.chmod(0o755)
+        found = inst.check_sc_compose()
+        if isinstance(found, inst.Ok):
+            renderer = inst.Renderer(found.value, package.value)
+            files = inst.wanted_files(package.value, renderer, list(TARGETS), tracker)
+            if isinstance(files, inst.Err):
+                raise AssertionError(files.error.message)
+            for key, (data, executable) in files.value.items():
+                path = root / key
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                if executable:
+                    path.chmod(0o755)
+        else:
+            for target in TARGETS:
+                skill = root / f".{target}" / "skills" / "plan-anchoring"
+                render_skill_cli(tracker, skill)
+                harness = HARNESS / target
+                render_cli(harness / "registry.yaml", tracker, skill / "registry.yaml")
+                for template in sorted(AGENT_TEMPLATES.glob("*.md.j2")):
+                    name = template.name[:-3]
+                    body_path = _scratch_dir() / f"{tracker}-{target}-{name}.body"
+                    render_cli(template, tracker, body_path)
+                    frontmatter = (harness / "agents" / name).read_text(encoding="utf-8")
+                    separator = frontmatter.find("\n---\n", 4)
+                    if not frontmatter.startswith("---\n") or separator < 0:
+                        raise AssertionError(f"{harness / 'agents' / name} lacks YAML frontmatter")
+                    destination = root / f".{target}" / "agents" / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(frontmatter[:separator + 5] + body_path.read_text(encoding="utf-8"),
+                                           encoding="utf-8")
         _renders[tracker] = root
     return _renders[tracker]
 
@@ -126,7 +147,7 @@ def render_cli(template: Path, tracker: str, out: Path) -> None:
                            "(scripts/install_sc_compose_ci.py) must be available")
     version = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))["version"]
     out.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run([binary, "render", "--root", str(template.parent), "--strict", "--var", f"tracker={tracker}",
+    proc = run_test_child([binary, "render", "--root", str(template.parent), "--strict", "--var", f"tracker={tracker}",
                            "--var", f"version={version}", "--file", str(template), "--output", str(out)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:

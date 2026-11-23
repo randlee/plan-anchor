@@ -3,6 +3,7 @@
 The Jev transport (`jev_judge.call_jev`) is replaced with a stub, so these tests prove the deterministic
 half of the skill (IDs, gating, policy, coverage, diffs, reports), not Jev's own behaviour.
 """
+from jev_test_support import wheel_line, context_overflow_line
 import contextlib
 import datetime as _dt
 import hashlib
@@ -14,28 +15,52 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from child_support import run_test_child
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugins" / "sc-plan-anchor" / "install" / "templates" / "skills" / "plan-anchoring"
 from layout_support import SCRIPTS  # noqa: E402 - the scripts as installed for one tracker
 sys.path.insert(0, str(SCRIPTS))
 import jev_judge as jj  # noqa: E402
+from jev_test_support import QUOTE, STATEMENT, anchor, record, run_cli, write  # noqa: E402
 
 PLAN_ROLES = {"relevance": "relevant", "compliance": "addressed", "conflict": "contradicted"}
 DEV_ROLES = {"relevance": "relevant", "compliance": "implemented", "conflict": "violated", "evidence": "evidenced"}
 OPTIONS = ("yes", "no", "unclear")
-STATEMENT = "The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules; no runtime crate is written from scratch."
-QUOTE = "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code"
 REQ_STATEMENT = "All public CLI commands must support --json output with a stable schema."
 LIVE_ENV = {"TYPESAFE_API_KEY": "sk-test-0001"}
 ASSETS = SKILL / "assets"
 TRIAGE_IDS = {"owns", "specific", "stated", "paraphrase", "partial"}
 
 
+class TypedChoiceFixture(dict):
+    """A JSON-serializable controlled answer with the wheel's typed field interface."""
+
+    @property
+    def choice(self):
+        return self["choice"]
+
+    @property
+    def confidence(self):
+        return self["confidence"]
+
+    @property
+    def probabilities(self):
+        return self["probabilities"]
+
+
+class TypedNoulFixture(dict):
+    """A JSON-serializable controlled noul answer with the wheel's typed field interface."""
+
+    @property
+    def noul(self):
+        return self["noul"]
+
+
 def answer(choice, p=0.9, options=OPTIONS):
     rest = round((1 - p) / (len(options) - 1), 4)
     probs = {o: (p if o == choice else rest) for o in options}
-    return {"type": "choice", "choice": choice, "confidence": p, "probabilities": probs}
+    return TypedChoiceFixture({"type": "choice", "choice": choice, "confidence": p, "probabilities": probs})
 
 
 def plan_answers(rel="yes", comp="yes", conf="no", p=0.9, rel_p=None, comp_p=None, conf_p=None):
@@ -49,56 +74,27 @@ def dev_answers(rel="yes", comp="yes", conf="no", evid="yes", p=0.9, evid_p=None
             "evidenced": answer(evid, evid_p if evid_p is not None else p)}
 
 
-def anchor(aid="ANC-001", status="locked", source_type="ANC", source_ref=None, statement=STATEMENT, quote=None, **extra):
-    """A valid anchor record. ANC anchors get the verbatim QUOTE; REQ/ADR anchors quote their register text."""
-    if quote is None:
-        quote = QUOTE if source_type == "ANC" else statement
-    rec = {
-        "id": aid, "source_type": source_type, "source_ref": source_ref, "statement": statement, "quote": quote,
-        "stated_by": "the user", "stated_at": "2026-10-09", "context": "planning session",
-        "summary": "start from the legacy repo", "scope": "the runtime crates", "deterministic_check": "",
-        "fixtures": {"pass": [], "fail": []}, "question_overrides": {}, "version": 1, "status": status,
-        "promoted_to": None, "beads": {"anchor": None, "plan_questions": None, "dev_questions": None}, "history": [],
-    }
-    rec.update(extra)
-    return rec
 
 
-def record(*anchors):
-    return {"schema": "plan-anchoring/anchors/1", "plan": "phase-z", "intent_ref": "docs/plans/phase-z/intent.md",
-            "anchors": list(anchors)}
 
 
-def write(d, name, value):
-    path = Path(d) / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value) if not isinstance(value, str) else value, encoding="utf-8")
-    return str(path)
 
 
-def run_cli(argv):
-    """Run main() in-process; returns (exit code, parsed JSON or raw text)."""
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        code = jj.main(argv)
-    out = buf.getvalue()
-    try:
-        return code, json.loads(out)
-    except json.JSONDecodeError:
-        return code, out
 
 
 @contextlib.contextmanager
 def env(**values):
-    # Unit fixtures control both credential sources; never consult a developer's store.
+    # Unit fixtures never contact a provider or access a developer's platform credential store.
+    missing_key = json.dumps({"error": {"id": "auth.credentials", "category": "auth", "message": "missing key", "attempts": 0}})
     with mock.patch.dict(os.environ, values, clear=True), \
-            mock.patch.object(jj, "credential_store_api_key", return_value=""):
+            mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+            mock.patch("sc_agent.send", return_value=__import__("sc_decidr_test_double").envelope(missing_key)):
         yield
 
 
 def consented():
     """The repository's allow_remote_judge is true (the real lookup is tested in test_remote_judge_setting)."""
-    return mock.patch.object(jj, "remote_judge_consent", return_value=jj.Ok(None))
+    return mock.patch.object(jj.decidr_client, "remote_preflight", return_value={"ok": True, "value": None})
 
 
 @contextlib.contextmanager
@@ -128,82 +124,218 @@ def ok(result):
 
 def failure(result):
     """The JudgeError of an Err result; an Ok fails the test."""
-    if not isinstance(result, jj.Err) or not isinstance(result.error, jj.JudgeError):
-        raise AssertionError(f"expected Err(JudgeError), got {result!r}")
+    if not isinstance(result, jj.Err) or not isinstance(result.error, jj.ClientError):
+        raise AssertionError(f"expected Err(ClientError), got {result!r}")
     return result.error
 
 
 class Transport:
-    """Stub for jev_judge.call_jev: a queue of responses (dicts, returned as Ok) or JudgeErrors (returned as Err), recorded per call."""
+    """Controlled wheel results: a queue of responses or typed consumer errors, recorded per call."""
 
     def __init__(self, *script, gate="plan"):
         self.script = list(script)
         self.bodies = []
         self.gate = gate
 
-    def __call__(self, body, api_key, timeout):
+    def __call__(self, body, timeout):
         self.bodies.append(json.loads(json.dumps(body)))
         step = self.script.pop(0) if self.script else self.default()
-        if isinstance(step, jj.JudgeError):
+        if isinstance(step, jj.ClientError):
             return jj.Err(step)
         if isinstance(step, Exception):
             raise step
-        return jj.Ok(step)
+        if isinstance(step, dict) and isinstance(step.get("answers"), dict):
+            step = {**step, "answers": dict(step["answers"])}
+            gate_ids = {"relevant", "addressed", "contradicted", "implemented", "violated", "evidenced"}
+            for qid in set(body.get("questions", {})) - gate_ids:
+                step["answers"].setdefault(qid, answer("no"))
+        return jj.Ok({**step, "attempts": 1})
 
     def default(self):
         return {"model": "jev-1.13.0", "answers": dev_answers() if self.gate == "dev" else plan_answers()}
 
 
+def client_transport(transport):
+    """Adapt controlled outcomes to the shared client's public (JSON line, category code) seam."""
+    def send(request, *, timeout_secs=None, **kwargs):
+        key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+        if not key or any(ord(char) < 33 or ord(char) > 126 for char in key):
+            detail = {"id": "auth.credentials", "category": "auth", "message": "missing or invalid key", "attempts": 0}
+            return wheel_line({"error": detail})
+        body = json.loads(request) if isinstance(request, str) else request
+        got = transport(body, timeout_secs)
+        if isinstance(got, jj.Ok):
+            request_questions = set(body.get("questions", {})) if isinstance(body, dict) else set()
+            response_answers = got.value.get("answers")
+            if request_questions and (not isinstance(response_answers, dict) or set(response_answers) != request_questions):
+                return wheel_line({"error": {"id": "decision.response_parse", "category": "response_invalid",
+                                              "message": "answer ids do not match request questions",
+                                              "attempts": 1}})
+            return wheel_line({"response": got.value})
+        error = got.error
+        category = {
+            "AUTH.CREDENTIALS": "auth", "DECIDR.RATE_LIMITED": "quota", "DECIDR.OVERLOADED": "busy",
+            "DECIDR.NETWORK": "network", "DECIDR.RESPONSE_INVALID": "response_invalid",
+            "JEV.CONTEXT_EXCEEDED": "validation", "DECIDR.VALIDATION": "validation", "DECIDR.ERROR": "other",
+        }.get(error.code, "other")
+        if error.code in ("JEV.CONTEXT_EXCEEDED", "DECIDR.CONTEXT_EXCEEDED"):
+            return context_overflow_line(sends=error.attempts)
+        identifier = {
+            "AUTH.CREDENTIALS": "auth.credentials", "DECIDR.RATE_LIMITED": "http.quota_exhausted",
+            "DECIDR.OVERLOADED": "http.provider_busy", "DECIDR.NETWORK": "http.network",
+            "DECIDR.RESPONSE_INVALID": "decision.response_parse", "DECIDR.VALIDATION": "decision.api_validation",
+        }.get(error.code, "other.error")
+        detail = {"id": identifier, "category": category, "message": error.message,
+                  "attempts": error.attempts}
+        if error.status is not None:
+            detail["status"] = error.status
+        if error.retry_after_ms is not None:
+            detail["retry_after_ms"] = error.retry_after_ms
+        return wheel_line({"error": detail})
+    return send
+
+
+@contextlib.contextmanager
+def stub_client(transport):
+    with mock.patch("sc_agent.send", side_effect=client_transport(transport)), \
+            mock.patch("sc_agent.Cancel", return_value=mock.Mock()):
+        yield
+
+
 class CredentialLookupTests(unittest.TestCase):
-    def test_absent_environment_and_empty_store_have_no_key(self):
-        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="") as store:
-            self.assertEqual(jj.resolved_api_key(), "")
-        store.assert_called_once_with()
+    def test_wheel_categories_have_specific_codes_and_actions(self):
+        cases = {
+            "config": ("DECIDR.CONFIG", "configuration"),
+            "log": ("DECIDR.LOG", "log location"),
+            "other": ("DECIDR.ERROR", "error details"),
+        }
+        for category, (code, action) in cases.items():
+            with self.subTest(category=category):
+                detail = {"id": "example.error", "category": category, "message": "controlled failure", "action": action}
+                with consented(), mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+                        mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})):
+                    result = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
+                self.assertEqual(result.code, code)
+                self.assertIn(action, result.action)
+                self.assertEqual(result.message, "controlled failure")
+                self.assertFalse(result.retryable)
 
-    def test_environment_key_wins_without_consulting_the_platform_store(self):
-        with env(TYPESAFE_API_KEY="env-key"), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
-            self.assertEqual(jj.resolved_api_key(), "env-key")
-        store.assert_not_called()
+    def test_client_errors_have_correct_actions_for_single_and_batch(self):
+        cases = {
+            "DECIDR.INVALID_RESULT": "invalid sc-decidr result",
+            "DEPENDENCY.SC_DECIDR": "Install sc-decidr",
+        }
+        settings = mock.Mock(gate="plan", model="jev", timeout=30, max_workers=1)
+        for code, action in cases.items():
+            for batch in (False, True):
+                with self.subTest(code=code, batch=batch), consented(), \
+                        mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+                        mock.patch.object(jj, "load_question_set", return_value=jj.Ok({"roles": {}})), \
+                        mock.patch.object(jj.decidr_client, "call_batch_results" if batch else "call_result",
+                                          return_value={"ok": False, "error": jj.ClientError(code, "controlled failure", action=action)}):
+                    result = (jj._live_batch_results([], settings, Path("unused"), False) if batch else
+                              jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
+                    error = failure(result)
+                    self.assertEqual((error.code, error.message), (code, "controlled failure"))
+                    self.assertIn(action, error.action)
 
-    def test_present_but_invalid_environment_key_fails_closed_without_consulting_store(self):
-        with env(TYPESAFE_API_KEY="  "), mock.patch.object(jj, "credential_store_api_key", return_value="store-key") as store:
-            self.assertEqual(jj.resolved_api_key(), "")
-        store.assert_not_called()
+    def test_remote_preflight_checks_consent_without_reading_credentials(self):
+        args = mock.Mock(repository_root=".")
+        with mock.patch.object(jj.decidr_client, "remote_judge_consent") as consent:
+            jj.decidr_client.remote_preflight(args.repository_root, "anchor text")
+        consent.assert_called_once_with(args.repository_root, "anchor text")
 
-    def test_macos_uses_the_documented_keychain_item(self):
-        completed = mock.Mock(returncode=0, stdout="mac-key\n")
-        with mock.patch.object(jj.sys, "platform", "darwin"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
-            self.assertEqual(jj.credential_store_api_key(), "mac-key")
-        run.assert_called_once_with(
-            ["security", "find-generic-password", "-s", "plan-anchor", "-a", "typesafe-api-key", "-w"],
-            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
-            text=True, encoding="utf-8", timeout=5, check=False,
+    def test_call_forwards_keyring_overrides_to_shared_client_without_forwarding_a_key_or_session_log(self):
+        token = mock.Mock()
+        response = {"model": "jev-x", "answers": plan_answers()}
+        with consented(), mock.patch("sc_agent.Cancel", return_value=token), \
+                mock.patch("sc_agent.send", return_value=wheel_line({"response": response})) as send, \
+                mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
+            result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
+        self.assertIsInstance(result, jj.Ok)
+        self.assertEqual(result.value["model"], response["model"])
+        self.assertEqual(result.value["answers"]["relevant"].choice, "yes")
+        self.assertEqual(result.value["answers"]["relevant"].confidence, 0.9)
+        args, kwargs = send.call_args
+        self.assertIsInstance(args[0], str)
+        self.assertEqual(json.loads(args[0]), {"model": "jev-latest", "state": {}, "questions": {}})
+        self.assertEqual((kwargs["project"], kwargs["agent_role"], boundary.call_args.kwargs["abort_on"]),
+                         (None, "plan-anchor", frozenset({"auth"})))
+        self.assertEqual(("keyring_service" in kwargs, "keyring_account" in kwargs, kwargs["timeout_secs"]),
+                         (False, False, 45))
+        self.assertIs(kwargs["cancel"], token)
+        self.assertEqual([name for name in kwargs if "key" in name.lower()
+                          and name not in {"keyring_service", "keyring_account"}], [])
+        self.assertNotIn("session_log", kwargs)
+
+    def test_wheel_failures_are_forwarded_once_with_overrides_and_attempts(self):
+        cases = (("auth.credentials", "auth", "AUTH.CREDENTIALS", 0, 401),
+                 ("http.provider_busy", "busy", "DECIDR.OVERLOADED", 5, 529),
+                 ("http.network", "network", "DECIDR.NETWORK", 2, None))
+        for identifier, category, code, attempts, status in cases:
+            with self.subTest(category=category):
+                detail = {"id": identifier, "category": category, "message": "provider detail",
+                          "attempts": attempts, "status": status}
+                token = mock.Mock()
+                with consented(), mock.patch("sc_agent.Cancel", return_value=token), \
+                        mock.patch("sc_agent.send", return_value=wheel_line({"error": detail})) as send, \
+                        mock.patch.object(jj.decidr_client, "call_result", wraps=jj.decidr_client.call_result) as boundary:
+                    result = jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 45)
+                send.assert_called_once()
+                self.assertIsInstance(result, jj.Err)
+                self.assertEqual((result.error.code, result.error.attempts, result.error.status),
+                                 (code, attempts, status))
+                expected = "provider detail"
+                self.assertEqual(result.error.message, expected)
+                kwargs = send.call_args.kwargs
+                self.assertEqual(("keyring_service" in kwargs, "keyring_account" in kwargs, boundary.call_args.kwargs["abort_on"]),
+                                 (False, False, frozenset({"auth"})))
+                self.assertIs(kwargs["cancel"], token)
+
+    def test_missing_key_is_the_wheels_typed_auth_error(self):
+        auth = {"id": "auth.credentials", "category": "auth", "message": "no key", "attempts": 0}
+        with consented(), mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
+                mock.patch("sc_agent.send", return_value=wheel_line({"error": auth})):
+            error = failure(jj.call_jev({"model": "jev-latest", "state": {}, "questions": {}}, 30))
+        self.assertEqual((error.code, error.message, error.attempts),
+                         ("AUTH.CREDENTIALS", "no key", 0))
+        self.assertEqual(error.data["message"], "no key")
+
+
+def wheel_error(identifier, category, message, *, status=None, attempts=None, retry_after_ms=None):
+    error = {"id": identifier, "category": category, "message": message}
+    if status is not None:
+        error["status"] = status
+    if attempts is not None:
+        error["attempts"] = attempts
+    if retry_after_ms is not None:
+        error["retry_after_ms"] = retry_after_ms
+    return wheel_line({"error": error}), jj.decidr_client.DECIDR_CATEGORY_CODES.get(category)
+
+
+def shared_error(code, detail):
+    record = jj.decidr_client.decode_result(wheel_line({"error": detail}),
         )
+    return record["error"]
 
-    def test_linux_uses_the_documented_secret_service_item(self):
-        completed = mock.Mock(returncode=0, stdout="linux-key\n")
-        with mock.patch.object(jj.sys, "platform", "linux"), mock.patch.object(jj.subprocess, "run", return_value=completed) as run:
-            self.assertEqual(jj.credential_store_api_key(), "linux-key")
-        run.assert_called_once_with(
-            ["secret-tool", "lookup", "service", "plan-anchor", "account", "typesafe-api-key"],
-            stdin=jj.subprocess.DEVNULL, stdout=jj.subprocess.PIPE, stderr=jj.subprocess.DEVNULL,
-            text=True, encoding="utf-8", timeout=5, check=False,
+
+def http(status, text="", retry_after=None, attempts=1):
+    """A deterministic typed wheel error used by consumer policy tests."""
+    category = ("auth" if status == 401 else "quota" if status == 429 else
+                "busy" if status in (502, 503, 529) or status >= 500 else "validation")
+    identifier = ("auth.credentials" if category == "auth" else "http.quota_exhausted" if category == "quota" else
+                  "http.provider_busy" if category == "busy" else "decision.api_validation")
+    detail = {"id": identifier, "category": category, "message": text or f"wheel typed {category} error",
+              "status": status, "attempts": attempts}
+    if retry_after is not None:
+        detail["retry_after_ms"] = int(retry_after * 1000)
+    return shared_error(jj.decidr_client.DECIDR_CATEGORY_CODES[category], detail)
+
+
+def context_overflow(attempts=1):
+    record = jj.decidr_client.decode_result(context_overflow_line(sends=attempts),
         )
-
-    def test_windows_uses_credential_manager(self):
-        with mock.patch.object(jj.sys, "platform", "win32"), mock.patch.object(jj, "_windows_credential", return_value="windows-key") as credential:
-            self.assertEqual(jj.credential_store_api_key(), "windows-key")
-        credential.assert_called_once_with()
-
-    def test_missing_or_invalid_store_key_fails_closed_without_contacting_jev(self):
-        with env(), mock.patch.object(jj, "credential_store_api_key", return_value="bad key"), consented():
-            error = failure(jj.remote_preflight(mock.Mock(), "anchor text"))
-        self.assertEqual(error.code, "AUTH.CREDENTIALS")
-        self.assertNotIn("bad key", error.message)
-
-
-def http(status, text="", retry_after=None):
-    return jj.http_error(status, text, retry_after)
+    return record["error"]
 
 
 class Judged:
@@ -220,8 +352,8 @@ class Judged:
             stack.enter_context(env(**(LIVE_ENV if env_values is None else env_values)))
             if consent:
                 stack.enter_context(consented())
-            stack.enter_context(mock.patch.object(jj, "call_jev", transport))
-            stack.enter_context(mock.patch.object(jj, "_sleep", self.sleeps.append))
+            stack.enter_context(mock.patch("sc_agent.send", side_effect=client_transport(transport)))
+            stack.enter_context(mock.patch("sc_agent.Cancel", return_value=mock.Mock()))
             self.code, self.out = run_cli(argv)
         self.run = self.out.get("data") if isinstance(self.out, dict) else None
         self.result = self.run["results"][0] if self.run and self.run.get("results") else None
@@ -239,12 +371,15 @@ class AddTests(unittest.TestCase):
     def test_add_creates_file_and_allocates_ids(self):
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "anchors.json")
-            code, out = run_cli(["add", "--anchors", path, "--statement", "  The runtime crates must add no new dependency.  ", "--quote", " no new dependency for this ", "--status", "locked"])
+            fixed_date = _dt.date(2026, 1, 2)
+            with mock.patch.object(jj._dt, "date", wraps=_dt.date) as date_type:
+                date_type.today.return_value = fixed_date
+                code, out = run_cli(["add", "--anchors", path, "--statement", "  The runtime crates must add no new dependency.  ", "--quote", " no new dependency for this ", "--status", "locked"])
             self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["anchor"]["id"], "ANC-001")
             self.assertEqual(out["data"]["anchor"]["statement"], "The runtime crates must add no new dependency.")
             self.assertEqual(out["data"]["anchor"]["quote"], "no new dependency for this")
-            self.assertEqual(out["data"]["anchor"]["stated_at"], _dt.date.today().isoformat())
+            self.assertEqual(out["data"]["anchor"]["stated_at"], "2026-01-02")
             self.assertEqual((out["data"]["lint"], out["data"]["similar"]), ({"warnings": []}, []))
             code, out = run_cli(["add", "--anchors", path, "--statement", "The CLI layer only parses arguments and prints JSON.", "--quote", "keep the CLI thin"])
             self.assertEqual(out["data"]["anchor"]["id"], "ANC-002")
@@ -564,12 +699,12 @@ class DedupeTests(unittest.TestCase):
             self.assertEqual([(p["a"], p["b"]) for p in out["data"]["likely_duplicates"]], [("ANC-001", "ANC-002")])
             self.assertTrue(all(p["jev"] is None for p in out["data"]["pairs"]))
             self.assertEqual(sorted(Path(d).iterdir()), sorted(Path(d) / n for n in ("anchors.json", "answers.json", "partial.json")))  # no run files
-            # live: key and opt-in are enforced before anything is sent
-            with env():
+            # Credential mapping is tested with explicit consent; policy refusal is separate below.
+            with env(), consented():
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
-            with env(TYPESAFE_API_KEY="sk-test"), mock.patch.object(jj, "call_jev", t):
+            with env(TYPESAFE_API_KEY="sk-test"), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--threshold", "0.25", "--jev", "--repository-root", unset_repo()])
             self.assertEqual((code, out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
             self.assertIn("anchor statements", out["error"]["message"])
@@ -581,24 +716,23 @@ class DedupeTests(unittest.TestCase):
     def test_jev_live_uses_the_transport_policy(self):
         with tempfile.TemporaryDirectory() as d:
             path = write(d, "anchors.json", record(anchor(), anchor("ANC-002", statement=self.A, quote="copy the libraries from the legacy repo and remove the legacy-specific code")))
-            t = Transport(http(429), {"model": "jev-1.13.0", "answers": {"same_constraint": answer("yes", 0.8)}})
-            sleeps = []
-            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", sleeps.append):
+            t = Transport(http(429, attempts=4))
+            with live(), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            self.assertEqual((code, len(out["data"]["likely_duplicates"])), (0, 1))
-            self.assertEqual(out["data"]["pairs"][0]["jev"], {"choice": "yes", "confidence": 0.8, "attempts": 2})
-            self.assertEqual((len(t.bodies), sleeps), (2, [1.0]))
+            self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RATE_LIMITED"))
+            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"],
+                              out["data"]["pairs"][0]["jev"]["attempts"]), ("DECIDR.RATE_LIMITED", 4))
+            self.assertEqual(len(t.bodies), 1)
             self.assertEqual(t.bodies[0]["state"]["a"]["id"], "ANC-001")
             t = Transport(http(401))
-            with live(), mock.patch.object(jj, "call_jev", t):
+            with live(), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
-            t = Transport(http(503), http(503), http(503))
-            with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+            t = Transport(http(503, attempts=5))
+            with live(), stub_client(t):
                 code, out = run_cli(["dedupe", "--anchors", path, "--jev"])
-            # 0.8.3: retries exhausted is a Jev failure, exit 2, never a pair silently missing from likely_duplicates
-            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.HTTP"))
-            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("JEV.HTTP", 3))
+            self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "DECIDR.OVERLOADED"))
+            self.assertEqual((out["data"]["pairs"][0]["jev"]["error"]["code"], out["data"]["pairs"][0]["jev"]["attempts"]), ("DECIDR.OVERLOADED", 5))
 
     def test_add_refuses_duplicate_candidates_unless_allowed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -693,7 +827,7 @@ class RubricTests(unittest.TestCase):
             legacy = {q: answer("yes", 0.9) for q in ("single_constraint", "observable", "requirement_form", "faithful", "scoped", "positive_form")}
             with env():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--answers-file", write(d, "legacy.json", {"*": legacy})])
-            self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), ("error", "JEV.RESPONSE_INVALID"))
+            self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), ("error", "DECIDR.RESPONSE_INVALID"))
 
     def test_confirmation_state_machine(self):
         yes = {"answers": rubric_answers()}
@@ -723,7 +857,7 @@ class RubricTests(unittest.TestCase):
             for q in qs["questions"].values():
                 self.assertEqual((q["type"], set(q["criteria"])), ("choice", set(OPTIONS)))
                 self.assertTrue(q["instructions"].strip())
-        ok(jj.validate_response({"answers": rubric_answers()}, ok(jj.load_simple_question_set("testability", jj.RUBRIC_QUESTIONS))["questions"]))
+        self.assertEqual(set(rubric_answers()), set(jj.RUBRIC_QUESTIONS))
         with mock.patch.object(jj, "QUESTIONS_DIR", Path("/nonexistent")):
             self.assertEqual(failure(jj.load_simple_question_set("dedupe", (jj.DEDUPE_QUESTION,))).code, "INPUT.MISSING")
 
@@ -801,25 +935,25 @@ class RubricTests(unittest.TestCase):
             with env():
                 code, out = run_cli(["rubric", "--dry-run"])
             self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-            with env():
+            with env(), consented():
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             t = Transport()
-            with env(TYPESAFE_API_KEY="sk-test"), mock.patch.object(jj, "call_jev", t):
+            with env(TYPESAFE_API_KEY="sk-test"), stub_client(t):
                 code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--repository-root", unset_repo()])
             self.assertEqual((code, out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
 
     def test_live_candidate_uses_the_transport(self):
         response = {"model": "jev-1.13.0", "answers": rubric_answers(scoped=("unclear", 0.7))}
         t = Transport(response, response)
-        with live(), mock.patch.object(jj, "call_jev", t):
+        with live(), stub_client(t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE, "--scope", "runtime crates"])
         self.assertEqual((code, out["data"]["pass"]), (0, False))
         self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"], out["data"]["anchors"][0]["attempts"]), ("needs_work", ["scoped"], 2))
         self.assertEqual(t.bodies[0]["state"]["anchor"]["scope"], "runtime crates")
         self.assertNotIn("item", t.bodies[0]["state"])
         # a state without an item cannot be shortened: over the cap it is refused before any call
-        with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), mock.patch.object(jj, "call_jev", t):
+        with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), stub_client(t):
             code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
         # 0.8.3: no answer from Jev is exit 2 with the typed envelope, not a needs_work/error entry under exit 0
         self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.CONTEXT_EXCEEDED"))
@@ -851,13 +985,13 @@ class RubricTests(unittest.TestCase):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The parser does not call the network.", "--quote", "no network in the parser"])
             self.assertEqual(code, 0)
             self.assertNotIn("rubric", out["data"])
-            with env():
+            with env(), consented():
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertEqual(len(json.loads(Path(path).read_text())["anchors"]), 3)
             response = {"model": "jev-1.13.0", "answers": rubric_answers()}
             t = Transport(response, response)
-            with live(), mock.patch.object(jj, "call_jev", t):
+            with live(), stub_client(t):
                 code, out = run_cli(["add", "--anchors", path, "--statement", "The build uses cargo only.", "--quote", "cargo only", "--rubric"])
             self.assertEqual((code, out["data"]["anchor"]["id"], out["data"]["rubric"]["verdict"]), (0, "ANC-004", "testable"))
             self.assertEqual(t.bodies[0]["state"]["anchor"]["quote"], "cargo only")
@@ -1060,11 +1194,11 @@ class ConfirmTests(unittest.TestCase):
             self.assertEqual((j.result["verdict"], j.result["attempts"]), ("satisfied", 1))
             self.assertNotIn("near_threshold", j.result)
         with tempfile.TemporaryDirectory() as d:
-            t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(503), http(503), http(503))
+            t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(503, attempts=5))
             j = Judged(d, t)
         # 0.8.3: a confirmation Jev never answered is a Jev failure: exit 2; the run keeps the first answer
-        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "JEV.HTTP", "satisfied", 4, "JEV.HTTP"))
-        self.assertEqual(j.sleeps, [1.0, 2.0])
+        self.assertEqual((j.code, j.out["error"]["code"], j.result["verdict"], j.result["attempts"], j.result["confirm_error"]["code"]), (2, "DECIDR.OVERLOADED", "satisfied", 6, "DECIDR.OVERLOADED"))
+        self.assertEqual(j.sleeps, [])
         with tempfile.TemporaryDirectory() as d:  # the second call hitting 401 still aborts the run
             t = Transport({"model": "jev", "answers": plan_answers(comp_p=0.62)}, http(401))
             j = Judged(d, t)
@@ -1179,84 +1313,37 @@ class DecideTests(unittest.TestCase):
         self.assertEqual(self.decide(plan_answers(rel="no", p=0.1), t=0.0)[0], "not_applicable")
 
     def test_noul_fallback(self):
-        self.assertEqual(jj.answer_choice({"type": "noul", "noul": 0.8}), ("yes", 0.6000000000000001))
-        self.assertEqual(jj.answer_choice({"type": "noul", "probability": 0.2}), ("no", 0.6))
-        self.assertEqual(jj.answer_choice({"noul": 0.5}), ("yes", 0.0))
+        self.assertEqual(jj.answer_choice(TypedNoulFixture({"type": "noul", "noul": 0.8})), ("yes", 0.6000000000000001))
+        self.assertEqual(jj.answer_choice(TypedNoulFixture({"type": "noul", "noul": 0.2})), ("no", 0.6))
+        self.assertEqual(jj.answer_choice(TypedNoulFixture({"type": "noul", "noul": 0.5})), ("yes", 0.0))
         answers = plan_answers()
-        answers["contradicted"] = {"type": "noul", "noul": 0.9}
+        answers["contradicted"] = TypedNoulFixture({"type": "noul", "noul": 0.9})
         self.assertEqual(self.decide(answers)[0], "contradicted")
-        self.assertIsNone(jj.answer_problem({"type": "noul", "noul": 0.3}, {"criteria": {}}))
-        self.assertIsNotNone(jj.answer_problem({"type": "noul"}, {"criteria": {}}))
 
 
-class ResponseValidationTests(unittest.TestCase):
-    question = {"type": "choice", "criteria": {"yes": "", "no": "", "unclear": ""}}
-
-    def test_good_answer_passes_and_rounding_is_tolerated(self):
-        self.assertIsNone(jj.answer_problem(answer("yes"), self.question))
-        ok = answer("yes")
-        ok["probabilities"] = {"yes": 0.94, "no": 0.05, "unclear": 0.0}
-        self.assertIsNone(jj.answer_problem(ok, self.question))
-
-    def test_problems_named(self):
-        bad = answer("yes")
-        bad["probabilities"]["yes"] = 0.5
-        self.assertRegex(jj.answer_problem(bad, self.question), "sum to")
-        self.assertRegex(jj.answer_problem(answer("maybe"), self.question), "not one of")
-        self.assertRegex(jj.answer_problem({"type": "choice", "choice": "yes", "confidence": "0.9", "probabilities": {}}, self.question), "confidence")
-        self.assertRegex(jj.answer_problem({"type": "choice", "choice": "yes", "confidence": True, "probabilities": {}}, self.question), "confidence")
-        extra = answer("yes")
-        extra["probabilities"]["other"] = 0.0
-        self.assertRegex(jj.answer_problem(extra, self.question), "keys differ")
-        self.assertRegex(jj.answer_problem({"type": "score", "choice": "yes"}, self.question), "not choice or noul")
-        self.assertRegex(jj.answer_problem("yes", self.question), "not an object")
-
-    def test_validate_response_requires_exact_answer_ids(self):
-        questions = {"relevant": self.question, "addressed": self.question, "contradicted": self.question}
-        error = failure(jj.validate_response({"answers": {"relevant": answer("yes")}}, questions))
-        self.assertEqual(error.code, "JEV.RESPONSE_INVALID")
-        self.assertTrue(error.recoverable)
-        extra = dict(plan_answers(), bonus=answer("yes"))
-        failure(jj.validate_response({"answers": extra}, questions))
-        failure(jj.validate_response({"answers": []}, questions))
-        failure(jj.validate_response(["not", "a", "dict"], questions))
-        self.assertIs(ok(jj.validate_response({"model": "x", "answers": plan_answers()}, questions))["answers"]["relevant"]["choice"], "yes")
-
-    def test_shipped_fixture_passes_validation(self):
-        fixture = json.loads((ASSETS / "examples" / "answers.fixture.json").read_text())
-        plan = ok(jj.load_question_set("plan"))
-        for aid, answers in fixture.items():
-            ok(jj.validate_response({"answers": answers}, plan["questions"]))
+class TypedAnswerChoiceTests(unittest.TestCase):
+    def test_choice_reads_typed_fields(self):
+        self.assertEqual(jj.answer_choice(answer("yes", p=0.75)), ("yes", 0.75))
 
 
-class HttpErrorTests(unittest.TestCase):
-    def test_bodies_withheld_except_422(self):
-        e401 = http(401, "secret body")
-        self.assertEqual(e401.code, "AUTH.CREDENTIALS")
-        self.assertNotIn("secret", str(e401))
-        e422 = http(422, "x" * 400)
-        self.assertEqual(e422.code, "JEV.VALIDATION")
-        self.assertIn("x" * 300, str(e422))
-        self.assertNotIn("x" * 301, str(e422))
-        e500 = http(500, "stack trace")
-        self.assertEqual((e500.code, e500.recoverable, str(e500)), ("JEV.HTTP", True, "Jev HTTP 500; response body withheld"))
-        self.assertEqual((http(429).code, http(529).code, http(418).recoverable), ("JEV.RATE_LIMITED", "JEV.OVERLOADED", False))
-        self.assertTrue(jj.is_transient(e500))
-        self.assertFalse(jj.is_transient(http(418)))
+class WheelErrorMappingTests(unittest.TestCase):
+    def test_typed_categories_map_without_reading_provider_messages(self):
+        examples = (("auth", "AUTH.CREDENTIALS"), ("quota", "DECIDR.RATE_LIMITED"),
+                    ("busy", "DECIDR.OVERLOADED"), ("network", "DECIDR.NETWORK"),
+                    ("response_invalid", "DECIDR.RESPONSE_INVALID"), ("validation", "DECIDR.VALIDATION"))
+        for category, code in examples:
+            with self.subTest(category=category):
+                error = shared_error(None, {"id": "provider.error", "category": category, "message": "typed message"})
+                self.assertEqual(error.code, code)
+        context = jj.decidr_client.decode_result(context_overflow_line(sends=4))["error"]
+        self.assertEqual((context.code, context.attempts), ("DECIDR.CONTEXT_EXCEEDED", 4))
 
-    def test_context_overflow_detected_by_body(self):
-        for body in ('{"error": "max_tokens_exceeded"}', "Token budget exceeded for state", "The TOKEN count EXCEEDS the limit"):
-            self.assertEqual(http(422, body).code, "JEV.CONTEXT_EXCEEDED", body)
-            self.assertEqual(http(400, body).code, "JEV.CONTEXT_EXCEEDED", body)
-        self.assertEqual(http(500, "max_tokens_exceeded").code, "JEV.HTTP")
-        self.assertEqual(http(422, "field 'questions.addressed.criteria' is invalid").code, "JEV.VALIDATION")
-
-    def test_retry_after_parsing(self):
-        self.assertEqual(jj.parse_retry_after("3"), 3.0)
-        self.assertEqual(jj.parse_retry_after("900"), jj.MAX_RETRY_AFTER)
-        self.assertIsNone(jj.parse_retry_after("Wed, 21 Oct 2026"))
-        self.assertIsNone(jj.parse_retry_after(None))
-        self.assertIsNone(jj.parse_retry_after("-1"))
+    def test_retry_after_metadata_comes_from_wheel_detail(self):
+        error = shared_error("DECIDR.OVERLOADED", {
+            "id": "http.provider_busy", "category": "busy", "message": "busy",
+            "attempts": 5, "retry_after_ms": 1250,
+        })
+        self.assertEqual((error.attempts, error.retry_after_ms, error.retry_after_ms), (5, 1250, 1250))
 
 
 class OverrideTests(unittest.TestCase):
@@ -1302,7 +1389,7 @@ class OverrideTests(unittest.TestCase):
             code, out2 = run_cli(common + ["--overrides-file", override_path, "--out", str(Path(d) / "r2.json")])
             self.assertEqual(out2["data"]["requests"][0]["questions"]["addressed"]["instructions"], "from bead")
             self.assertNotEqual(entry["questions_sha256"], out2["data"]["results"][0]["questions_sha256"])
-            self.assertEqual(entry["questions_sha256"], jj.questions_digest(ok(jj.merge_overrides(base, a["question_overrides"]["plan"]))["questions"]))
+            self.assertEqual(entry["questions_sha256"], jj.decidr_client.questions_digest(ok(jj.merge_overrides(base, a["question_overrides"]["plan"]))["questions"]))
             # a bead override that renames a question without updating roles aborts before anything is sent
             bad_path = write(d, "bad.json", {"ANC-001": {"roles": {"compliance": "nope"}}})
             code, out3 = run_cli(common + ["--overrides-file", bad_path])
@@ -1366,12 +1453,22 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertTrue(Path(out["data"]["run_path"]).is_file())
 
     def test_malformed_fixture_answer_is_response_invalid(self):
-        bad = plan_answers()
-        bad["relevant"]["probabilities"]["yes"] = 0.1
-        fixture = write(self.d.name, "answers.json", {"*": bad})
-        code, out = self.judge("--anchor", "ANC-001", "--answers-file", fixture)
-        self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual(out["data"]["results"][0]["error"]["code"], "JEV.RESPONSE_INVALID")
+        cases = {
+            "answer IDs": lambda answers: answers.update({"unexpected": answers.pop("relevant")}),
+            "answer type": lambda answers: answers["relevant"].update({"type": "noul"}),
+            "non-finite probability": lambda answers: answers["relevant"]["probabilities"].update({"yes": float("nan")}),
+            "out-of-range probability": lambda answers: answers["relevant"]["probabilities"].update({"yes": 1.1}),
+            "non-finite confidence": lambda answers: answers["relevant"].update({"confidence": float("nan")}),
+            "out-of-range confidence": lambda answers: answers["relevant"].update({"confidence": 1.1}),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                bad = plan_answers()
+                mutate(bad)
+                fixture = write(self.d.name, f"answers-{label.replace(' ', '-')}.json", {"*": bad})
+                code, out = self.judge("--anchor", "ANC-001", "--answers-file", fixture)
+                self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RESPONSE_INVALID"))
+                self.assertEqual(out["data"]["results"][0]["error"]["code"], "DECIDR.RESPONSE_INVALID")
 
     def test_explicit_anchor_must_be_locked_unless_included(self):
         fixture = write(self.d.name, "answers.json", {"*": plan_answers()})
@@ -1403,7 +1500,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(run["requests"][0]["state"]["item"]["id"], "ex-42")
         self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})  # 0.9.0: triage questions follow a failed cell, never the gate request
         self.assertEqual(run["totals"]["requests"], 2)
-        self.assertEqual(run["totals"]["bytes"], sum(len(jj.encode_body(b)) for b in run["requests"]))
+        self.assertEqual(run["totals"]["bytes"], sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in run["requests"]))
         self.assertEqual(run["totals"]["max_request_bytes"], 24000)
         self.assertTrue(Path(run["run_path"]).is_file() and Path(run["path"]).parent == Path(self.run_dir))
         self.assertIsNone(run["results"][0]["verdict"])
@@ -1451,20 +1548,21 @@ class JudgeFixtureTests(unittest.TestCase):
 class FailClosedTests(unittest.TestCase):
     def test_missing_key_and_missing_consent(self):
         with tempfile.TemporaryDirectory() as d:
-            transport = Transport()
+            transport = Transport(http(401))  # the controlled wheel reports its typed missing-key error
             j = Judged(d, transport, env_values={})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"}, consent=False,
                        extra_args=["--repository-root", unset_repo()])
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "POLICY.REMOTE_JUDGE_DISABLED"))
             self.assertEqual(transport.bodies, [])  # nothing left the machine
+            transport = Transport()
             j = Judged(d, transport, env_values={"TYPESAFE_API_KEY": "sk-test"})
             self.assertEqual((j.code, j.result["verdict"]), (0, "satisfied"))
             self.assertEqual(len(transport.bodies), 1)
 
     def test_key_format_checked_and_never_echoed(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "sk-bad\nkey"})
+            j = Judged(d, Transport(http(401)), env_values={"TYPESAFE_API_KEY": "sk-bad\nkey"})
             self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
             self.assertNotIn("sk-bad", json.dumps(j.out))
             j = Judged(d, Transport(), env_values={"TYPESAFE_API_KEY": "  sk-ok  "})
@@ -1490,11 +1588,10 @@ class FailClosedTests(unittest.TestCase):
 
 def run_installed(script, argv, cwd, home=None):
     """Run an installed copy of jev_judge.py as an agent does (a process, from ``cwd``); (exit code, JSON)."""
-    import subprocess
     environment = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
     if home is not None:
         environment["HOME"] = environment["USERPROFILE"] = str(home)  # expanduser("~") on POSIX / Windows
-    proc = subprocess.run([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
+    proc = run_test_child([sys.executable, str(script), *argv], cwd=str(cwd), env=environment,
                           capture_output=True, text=True, encoding="utf-8")
     try:
         return proc.returncode, json.loads(proc.stdout)
@@ -1636,7 +1733,7 @@ class TransportPolicyTests(unittest.TestCase):
     def test_overflow_once_then_success_halves_the_item(self):
         text = "y" * 6000
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(422, "max_tokens_exceeded"), gate="dev")
+            t = Transport(context_overflow(), gate="dev")
             j = Judged(d, t, item_text=text, gate="dev")
         self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (0, "satisfied", 2))
         self.assertTrue(j.result["item_shortened"])
@@ -1650,15 +1747,17 @@ class TransportPolicyTests(unittest.TestCase):
 
     def test_overflow_down_to_the_floor_records_context_exceeded(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(*[http(422, "max_tokens_exceeded")] * 10, gate="dev")
+            t = Transport(*[context_overflow()] * 10, gate="dev")
             j = Judged(d, t, item_text="y" * 5000, extra_args=["--min-item-chars", "2000"], gate="dev")
         self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"]), (2, False, "error"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
         self.assertIn("Shorten the evidence", j.result["error"]["suggested_action"])
+        self.assertIn(context_overflow().message, j.result["error"]["message"])
         self.assertEqual(j.result["attempts"], 3)  # 5000, 2500, 2000 (floor), then give up
         self.assertEqual([len(jj.item_core(b["state"]["item"]["text"])) for b in t.bodies], [5000, 2500, 2000])
         self.assertTrue(j.result["item_shortened"])
         self.assertEqual(j.result["item_chars_sent"], 2000 + len(jj.TRUNCATION_MARKER))
+        self.assertEqual(j.result["request_bytes"], len(json.dumps(t.bodies[-1], allow_nan=False).encode("utf-8")))
         self.assertEqual((j.out["success"], j.out["error"]["code"]), (False, "JEV.CONTEXT_EXCEEDED"))  # 0.8.3: the envelope is the error
 
     def test_preflight_cap_shortens_before_the_first_call(self):
@@ -1666,7 +1765,7 @@ class TransportPolicyTests(unittest.TestCase):
             t = Transport(gate="dev")
             j = Judged(d, t, item_text="z" * 20000, extra_args=["--max-request-bytes", "8000"], gate="dev")
         self.assertEqual((j.code, j.result["attempts"], j.result["item_shortened"]), (0, 1, True))
-        self.assertLessEqual(len(jj.encode_body(t.bodies[0])), 8000)
+        self.assertLessEqual(len(json.dumps(t.bodies[0], allow_nan=False).encode("utf-8")), 8000)
         self.assertLessEqual(j.result["request_bytes"], 8000)
         self.assertLess(j.result["item_chars_sent"], 20000)
 
@@ -1684,38 +1783,39 @@ class TransportPolicyTests(unittest.TestCase):
 
     def test_rate_limited_twice_then_success(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(429, retry_after=3.5), http(429))
+            t = Transport(http(429, retry_after=3.5, attempts=5))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (0, "satisfied", 3))
-        self.assertEqual(j.sleeps, [3.5, 2.0])
-        self.assertEqual(len(t.bodies), 3)
+        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (2, "error", 5))
+        self.assertEqual(j.sleeps, [])
+        self.assertEqual(len(t.bodies), 1)
+        self.assertEqual(j.result["error"]["code"], "DECIDR.RATE_LIMITED")
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(http(529), jj.JudgeError("JEV.NETWORK", "down", recoverable=True)))
-        self.assertEqual((j.result["attempts"], j.sleeps), (3, [1.0, 2.0]))
+            j = Judged(d, Transport(http(529, attempts=5)))
+        self.assertEqual((j.result["attempts"], j.sleeps), (5, []))
 
     def test_three_failures_record_an_error_verdict(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(529), http(529), http(529), http(529))
+            t = Transport(http(529, attempts=5))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 3))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("JEV.OVERLOADED", "JEV.OVERLOADED"))
+        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["attempts"]), (2, False, "error", 5))  # attempts are reported by the wheel
+        self.assertEqual((j.out["error"]["code"], j.result["error"]["code"]), ("DECIDR.OVERLOADED", "DECIDR.OVERLOADED"))
         self.assertTrue(j.result["error"]["recoverable"])
-        self.assertEqual(len(t.bodies), 3)
-        self.assertEqual(j.sleeps, [1.0, 2.0])
+        self.assertEqual(len(t.bodies), 1)
+        self.assertEqual(j.sleeps, [])
         self.assertEqual(j.run["summary"]["errors"], ["ANC-001"])
         self.assertFalse(j.run["summary"]["pass"])
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(http(503), http(503), http(503)))
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.HTTP", 3))
+            j = Judged(d, Transport(http(503, attempts=5)))
+        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "DECIDR.OVERLOADED", 5))
 
     def test_invalid_response_is_retried_like_a_transport_failure(self):
         good = {"model": "jev-1.13.0", "answers": plan_answers()}
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport({"answers": {}}, {"answers": plan_answers() | {"extra": answer("yes")}}, good))
-        self.assertEqual((j.result["verdict"], j.result["attempts"], j.sleeps), ("satisfied", 3, [1.0, 2.0]))
+            j = Judged(d, Transport({"answers": {}}))
+        self.assertEqual((j.result["verdict"], j.result["attempts"], j.sleeps), ("error", 1, []))
         with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport({"answers": {}}, {"answers": {}}, {"answers": {}}))
-        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "JEV.RESPONSE_INVALID", 3))
+            j = Judged(d, Transport({"answers": {}}))
+        self.assertEqual((j.code, j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), (2, "error", "DECIDR.RESPONSE_INVALID", 1))
 
     def test_credential_and_validation_errors_are_not_retried(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1725,19 +1825,19 @@ class TransportPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(422, "questions.addressed.criteria must be an object"))
             j = Judged(d, t)
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "JEV.VALIDATION"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"], j.sleeps), ("error", "JEV.VALIDATION", 1, []))
+        self.assertEqual((j.code, j.out["error"]["code"]), (2, "DECIDR.VALIDATION"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
+        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"], j.sleeps), ("error", "DECIDR.VALIDATION", 1, []))
         self.assertIn("questions.addressed.criteria", j.result["error"]["message"])
 
     def test_one_anchor_failing_does_not_lose_the_others(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(529), http(529), http(529))  # first anchor exhausts; second anchor gets the default
+            t = Transport(http(529, attempts=5))  # one anchor fails; the next is still judged
             j = Judged(d, t, anchors=[anchor(), anchor("ANC-002")])
             on_disk = json.loads(Path(j.run["run_path"]).read_text(encoding="utf-8"))
         verdicts = {r["anchor_id"]: r["verdict"] for r in j.run["results"]}
         self.assertEqual(verdicts, {"ANC-001": "error", "ANC-002": "satisfied"})
         # 0.8.3: the command exits 2, and the run file on disk still keeps the answered anchor
-        self.assertEqual((j.code, j.out["error"]["code"], j.out["data"]["failures"][0]["id"]), (2, "JEV.OVERLOADED", "ANC-001"))
+        self.assertEqual((j.code, j.out["error"]["code"], j.out["data"]["failures"][0]["id"]), (2, "DECIDR.OVERLOADED", "ANC-001"))
         self.assertEqual({r["anchor_id"]: r["verdict"] for r in on_disk["results"]}, verdicts)
         self.assertEqual([r["verdict"] for r in j.run["results"]], ["satisfied", "error"])  # severity order: error sorts last
 
@@ -1846,7 +1946,7 @@ class PlanSizeTests(unittest.TestCase):
             j = Judged(d, Transport(), item_text=text, extra_args=["--max-request-bytes", "4000", "--dry-run"])
         self.assertEqual(j.code, 0, j.out)
         request = j.run["requests"][0]
-        self.assertLessEqual(len(jj.encode_body(request)), 4000)
+        self.assertLessEqual(len(json.dumps(request, allow_nan=False).encode("utf-8")), 4000)
         self.assertEqual(request["state"]["item"]["text"], jj.reduce_code(text, 8, {0})[0])
         self.assertIn("self.groups.iter()", request["state"]["item"]["text"])
         self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 1, "lines": 401})
@@ -1937,7 +2037,7 @@ class PlanSizeTests(unittest.TestCase):
 
     def test_plan_gate_context_overflow_is_too_large_not_halved(self):
         with tempfile.TemporaryDirectory() as d:
-            t = Transport(http(422, "max_tokens_exceeded"))
+            t = Transport(context_overflow())
             j = Judged(d, t, item_text="y" * 6000)
         self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["error"]["code"]), (2, False, "error", "PLAN.TOO_LARGE"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
         self.assertEqual(j.out["error"]["code"], "PLAN.TOO_LARGE")
@@ -2127,16 +2227,16 @@ class CheckFixturesTests(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
 
     def test_live_check_uses_the_policy_and_opt_in(self):
-        with env():
+        with env(), consented():
             code, out = self.check("--id", "ANC-001")
         self.assertEqual(out["error"]["code"], "AUTH.CREDENTIALS")
-        t = Transport(http(429), {"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
+        t = Transport({"model": "jev", "answers": plan_answers()}, {"model": "jev", "answers": plan_answers(comp="no")},
                       {"model": "jev", "answers": plan_answers(conf="yes")})
-        with live(), mock.patch.object(jj, "call_jev", t), mock.patch.object(jj, "_sleep", lambda s: None):
+        with live(), stub_client(t):
             code, out = run_cli(["check-fixtures", "--anchors", self.anchors, "--gate", "plan", "--id", "ANC-001"])
         self.assertEqual(code, 0)
         self.assertEqual([c["verdict"] for c in out["data"]["checks"]], ["satisfied", "not_addressed", "contradicted"])
-        self.assertEqual(len(t.bodies), 4)
+        self.assertEqual(len(t.bodies), 3)
 
 
 class RetireUpdateTests(unittest.TestCase):
@@ -2312,7 +2412,7 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
         if with_quote:
             r["quote"] = QUOTE if r["source_type"] == "ANC" else r["statement"]
         if r["verdict"] == "error":
-            r["error"] = {"code": "JEV.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
+            r["error"] = {"code": "DECIDR.OVERLOADED", "message": "Jev HTTP 529; response body withheld", "recoverable": True, "suggested_action": "Retry"}
     failing = [a for a, v in verdicts.items() if v in jj.FAILING]
     run = {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-{created_at}-{item}", "gate": gate, "created_at": created_at,
            "anchors_path": "anchors.json", "plan": "phase-a",
@@ -2360,7 +2460,7 @@ class ReportTests(unittest.TestCase):
             # a register anchor whose quote differs from its statement shows both
             self.assertIn('Anchor: The CLI layer only parses arguments and prints JSON. ADR-0007 (ADR register) says: "The CLI stays thin." The directive was followed and evidenced.', md)
             self.assertIn("> **sprint-2 · ANC-020 · error**", md)
-            self.assertIn(">   Error JEV.OVERLOADED: Jev HTTP 529; response body withheld", md)
+            self.assertIn(">   Error DECIDR.OVERLOADED: Jev HTTP 529; response body withheld", md)
             self.assertEqual(code, 0)
 
     def test_all_passing_message_and_bad_inputs(self):
@@ -2593,8 +2693,8 @@ class ErrorHandlingTests(unittest.TestCase):
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), flag)
             self.assertIn(f"argument {flag}: invalid", out["error"]["message"])
         self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD, jj.DEFAULT_MAX_ITEM_CHARS, jj.DEFAULT_MAX_CODE_LINES),
-                         ("jev-latest", 0.6, 24000, 8))
-        self.assertEqual(jj.JEV_URL, "https://api.typesafe.ai/v1/systemone")
+                         ("jev", 0.6, 24000, 8))
+        self.assertFalse(hasattr(jj, "JEV_URL"))
         self.assertFalse(hasattr(jj, "parse_env_number") or hasattr(jj, "_env_number"))
 
     def test_exit_codes(self):

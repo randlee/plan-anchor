@@ -6,7 +6,7 @@ The file name sorts after test_anchor_tracker (see test_jev_judge_exclude for wh
 """
 import json
 from pathlib import Path
-import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -33,10 +33,10 @@ class ByQuestions(Transport):
     def default(self):
         return None
 
-    def __call__(self, body, api_key, timeout):
+    def __call__(self, body, timeout):
         gate = {"model": "jev-1.13.0", "answers": json.loads(json.dumps(self.gate_answers))}  # a fresh answer per call, as on the wire
         self.script = [gate if "relevant" in body["questions"] else triage_answers()]
-        return super().__call__(body, api_key, timeout)
+        return super().__call__(body, timeout)
 
 
 def repo_with_triage(d, *questions):
@@ -97,7 +97,7 @@ class TriageDefaultTests(unittest.TestCase):
 
     def test_a_failed_triage_request_costs_the_cell_nothing(self):
         with tempfile.TemporaryDirectory() as d:
-            bad = jj.JudgeError("JEV.HTTP", "boom", recoverable=False)
+            bad = jj.ClientError("DECIDR.ERROR", "boom", retryable=False)
             t = Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad)
             j = Judged(d, t)
             self.assertEqual((j.code, j.result["verdict"]), (0, "not_addressed"), j.out)
@@ -205,10 +205,10 @@ class TriageReportTests(unittest.TestCase):
 
     def test_a_failed_triage_request_is_reported_with_its_error(self):
         with tempfile.TemporaryDirectory() as d:
-            bad = jj.JudgeError("JEV.HTTP", "boom", recoverable=False)
+            bad = jj.ClientError("DECIDR.ERROR", "boom", retryable=False)
             j = Judged(d, Transport({"model": "jev-1.13.0", "answers": plan_answers(comp="no")}, bad))
             md = self.report(j)
-            self.assertIn(">   Triage error JEV.HTTP:", md)
+            self.assertIn(">   Triage error DECIDR.ERROR:", md)
             self.assertNotIn(">   Triage:", md)
 
     def test_fixture_triage_answers_are_reported(self):
@@ -245,7 +245,7 @@ class TriageDocumentedBehaviourTests(unittest.TestCase):
     """What `judge --help` and triage/README say you can do is what judge does."""
 
     def test_help_states_intent_default_and_how_to_change(self):
-        out = subprocess.run([sys.executable, jj.__file__, "judge", "--help"], capture_output=True, text=True, check=True).stdout
+        out = run_test_child([sys.executable, jj.__file__, "judge", "--help"], capture_output=True, text=True, check=True).stdout
         flat = squeeze(out)
         for needle in sorted(TRIAGE_IDS) + [
             "onbydefault", "neverchangeaverdict", ".sc/plan-anchor/triage/<gate>-questions.jsonl", "neveroverwritten",

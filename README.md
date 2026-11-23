@@ -45,8 +45,10 @@ Codex: `codex plugin marketplace add randlee/plan-anchor`, then open `/plugins` 
 Then ask the agent to install plan-anchor, or run the `plan-anchor-installer` skill. It reports the installed and available versions, asks once for any setting the folder does not record yet (the tracker, and whether plan text may be sent to TypeSafe), and runs:
 
 ```bash
-uv run "${CLAUDE_PLUGIN_ROOT}/install.py" --dest <folder> --tracker br|bd --allow-remote-judge|--no-remote-judge [--target claude,codex,cursor]
+uv run "${CLAUDE_PLUGIN_ROOT}/install.py" --dest <folder> --tracker br|bd [--init-br] --allow-remote-judge|--no-remote-judge [--target claude,codex,cursor]
 ```
+
+For a fresh git repository without `.beads/`, use `--tracker br --init-br` so the installer runs `br init` at the repository root. Omit `--init-br` for an existing tracker or a parent-folder install. There is no bd bootstrap flag: `--tracker bd` requires an existing Dolt-backed `.beads/`.
 
 From a checkout of this repository the same command is `uv run plugins/sc-plan-anchor/install.py ...`; `--status --dest <folder>` reports the versions without writing.
 
@@ -55,13 +57,17 @@ From a checkout of this repository the same command is `uv run plugins/sc-plan-a
 - **Targets.** Without `--target` the install covers every harness the folder uses: the targets in the lock, every existing `.<target>/skills/plan-anchoring/`, and every `.claude/`, `.codex/` or `.cursor/` directory present (`claude` when there is none). `--target` only adds a harness, never removes one, so an upgrade upgrades every harness. `data.target_reasons` gives each target's reason; `--status` lists `missing_targets`, harness directories with no install.
 - **Upgrade.** Rerun the installer (or the skill) for the folder. It replaces only the files recorded in `<folder>/.sc/plan-anchor/install-lock.json`, removes files the new version no longer ships, and refuses to overwrite modified or foreign files without `--overwrite`. `--tracker` with the other value switches trackers: it re-renders the text and updates the settings file, and does not migrate issue data. A SessionStart hook prints one line when the nearest install is older than the plugin; it writes nothing and uses no network. Claude Code runs it; Codex and Cursor plugin hook discovery is untested.
 
+**Uninstall.** Remove the paths in `.sc/plan-anchor/install-lock.json`'s `files` map for every harness (`.claude/`, `.codex/`, `.cursor/`), then the lock itself. Keep `.sc/plan-anchor/settings.yaml` if you want to retain your settings, or remove it by choice. The installer seeds `.sc/plan-anchor/triage/README.md`, `plan-questions.jsonl` and `rules.json` once; these are user-owned and outside the lock. Keep them, or remove the `triage/` directory if you no longer want them. Remove `__pycache__` under the removed skill directories and folders left empty, including `.sc/plan-anchor/` when empty; keep unrelated harness files. The installed reference has the removal details.
+
 Details: the installed `references/installation-and-troubleshooting.md` (source `plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/references/installation-and-troubleshooting.md.j2`).
 
 Hermes distribution is likewise deferred; it has no marketplace manifest and this package has not been landed in its registry.
 
 | Need | For | Notes |
 | --- | --- | --- |
-| `python3` 3.9+ | everything | The scripts are standard-library only, except `anchor_tracker.py` and `plan_anchor_settings.py` (and `jev_judge.py` reading the settings file before a live call) |
+| `python3` 3.11+ | everything | Scripts are standard-library only except `anchor_tracker.py` and `plan_anchor_settings.py` (PyYAML) and live `jev_judge.py` calls (`sc-decidr`) |
+| `sc-compose` CLI 1.8.0+ | tuning and report rendering | Install the [release binary](https://github.com/randlee/sc-compose/releases) with the commands in the installed reference; the PyPI wheel does not install this command |
+| `sc-decidr` wheel | live Jev calls | Install the exact `SC_DECIDR_VERSION` recorded in the installed `scripts/decidr_client.py` from [PyPI](https://pypi.org/project/sc-decidr/) (`python3 -m pip install "sc-decidr==<SC_DECIDR_VERSION>"`); pip selects the platform wheel, and offline commands do not import it |
 | PyYAML 5.1+ | anchor tracker selection, live Jev calls | `python3 -m pip install pyyaml`; reads `.sc/plan-anchor/settings.yaml` |
 | `br` ([beads_rust](https://github.com/Dicklesworthstone/beads_rust)) 0.7.x, or `bd` ([beads](https://github.com/steveyegge/beads)) 1.x with an existing Dolt-backed `.beads/` | the bead tree and reading beads | `anchor_tracker.py resolve` selects one (see installation-and-troubleshooting); agents use it read-only; the skill creates anchor beads and posts comments from the main session |
 | `TYPESAFE_API_KEY` or a platform credential | the Jev-backed workflow | The environment key wins; a local interactive host may otherwise use the documented macOS Keychain, Windows Credential Manager, or Linux Secret Service entry. Cloud and remote agents use platform secrets; never commit a key. |
@@ -98,7 +104,7 @@ If either is missing, the scripts fail closed (`AUTH.CREDENTIALS` or `POLICY.REM
 **Runtime the worker must provide.**
 
 - A checkout that includes the vendored install above (gates walk up from the working directory, stopping before the home directory, to the nearest `<D>/.claude|.codex|.cursor/skills/plan-anchoring/scripts/jev_judge.py` whose `<D>/.sc/plan-anchor/install-lock.json` lists that script; a hand-copied, lock-less, `.agents/`, global or plugin-cache copy fails with `VALIDATION.PATH`).
-- `python3` 3.9+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
+- `python3` 3.11+, `jq`, PyYAML 5.1+, and the anchor tracker CLI named in settings (`br` or `bd`).
 - Outbound HTTPS to the Jev endpoint (see the installed `references/jev-api.md`).
 
 **Operational notes.**
@@ -190,19 +196,27 @@ plugins/sc-plan-anchor/
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
-Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. Transient API failures get three attempts with backoff before an anchor is marked `error`; credential and consent failures abort immediately and are never retried.
+Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
+
 
 ## Development
 
+Install the CLI from the Need table, then the test dependencies CI uses:
+
 ```bash
+SC_DECIDR_VERSION=$(sed -n 's/^sc_decidr_pin: //p' \
+  plugins/sc-plan-anchor/install/templates/skills/plan-anchoring/scripts/decidr_client.py.j2)
+python3 -m pip install "jsonschema>=4,<5" "pyyaml>=5.1" "sc-compose>=1.8.0,<2" "sc-decidr==$SC_DECIDR_VERSION"
 python3 -m unittest discover -s tests/sc-plan-anchor -v
 ```
+
+The development install reads `sc_decidr_pin` from the client template, the same source used by the dependency-floor CI installer. The dependency-floor CI job also runs without PyYAML and with `pyyaml==5.1`; the installer job requires the sc-compose Python wheel as well as its separate CLI.
 
 Maintainer tests live outside the marketplace plugin so plugin consumers do not
 redistribute or inherit this repository's test suite. They use fixture answers
 and a stub transport; they cover ID allocation, gating, overrides, retries and
 context shortening, response validation, report format, coverage and diffs,
-not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.9
+not Jev's judgment. CI runs them on Linux, macOS and Windows with Python 3.11
 and the latest 3.x, once against the br render of the scripts and once against the bd render
 (CONTRIBUTING.md). The scripts are templates, so a smoke run installs first (it needs the
 sc-compose wheel) and then runs the installed copy with no key (exits 0 with `data.summary.pass: false`,
@@ -235,3 +249,10 @@ The offline suite runs on Linux, macOS and Windows in CI. The repository is a Cl
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Installed-wheel integration
+
+[The manual integration workflow](docs/integration.md) runs plan-anchor's real
+judge, batch-order and auth/redaction cases against an installed sc-decidr wheel
+and generates per-platform XHTML panels and linked run pages under `site/reports/`.
+The integration process commits and pushes the generated reports.

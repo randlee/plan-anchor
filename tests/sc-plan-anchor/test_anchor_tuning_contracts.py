@@ -5,6 +5,7 @@ import importlib.util
 import re
 import shutil
 import subprocess
+from child_support import run_test_child
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,7 +64,7 @@ class AnchorTuningContractTests(unittest.TestCase):
             else:
                 variables_path = PLAN / "templates" / variables
             output = Path(td) / "rendered.md"
-            subprocess.run(
+            run_test_child(
                 [
                     binary,
                     "render",

@@ -175,21 +175,21 @@ sequenceDiagram
 
     loop for each locked or promoted anchor not excluding this item
         S->>S: build state {anchor, item}; plan: fit whole/reduce code or refuse; structural at plan: deterministic_only, no request<br/>dev: item already cut to 24,000 chars; halve to ≤64,000 bytes
-        loop up to 3 attempts
-            S->>J: POST /v1/systemone {model, state, questions}
-            alt 200 and response validates
-                J-->>S: answers {choice, probabilities, confidence}
-                S->>S: decide() → verdict, min_confidence
-            else context window exceeded
-                J-->>S: max_tokens_exceeded
-                S->>S: plan: cell error PLAN.TOO_LARGE<br/>dev: halve evidence (keep head, mark truncation), retry; below 2,000 chars → JEV.CONTEXT_EXCEEDED
-            else 429 / 529 / 5xx / network / invalid response
-                J-->>S: transient failure
-                S->>S: wait Retry-After or 1 s, then 2 s, next attempt<br/>after 3 attempts → cell error (JEV.*)
-            else 401
-                J-->>S: unauthorized
-                S-->>Ag: abort run, AUTH.CREDENTIALS (never retried)
-            end
+        S->>C: call shared client once {model, state, questions}
+        C->>J: apply wheel policy and call provider
+        alt response succeeds and validates
+            J-->>C: response
+            C-->>S: typed result
+            S->>S: decide() → verdict, min_confidence
+        else context window exceeded
+            C-->>S: typed context error
+            S->>S: plan: cell error PLAN.TOO_LARGE<br/>dev: halve evidence (keep head, mark truncation), make another logical client call; below 2,000 chars → JEV.CONTEXT_EXCEEDED
+        else provider or transport failure
+            C-->>S: typed error with wheel attempt metadata
+            S->>S: record the error; continue to other anchors
+        else authentication failure
+            C-->>S: typed auth error (body withheld)
+            S-->>Ag: abort run, AUTH.CREDENTIALS
         end
         S->>S: within 0.10 of the threshold: send the identical request again; disagreement → underspecified (unstable)
         S->>S: record answers, attempts, item_chars_sent, questions_sha256
@@ -212,8 +212,8 @@ Policy summary:
 | Jev reports the context window exceeded | Planning: `PLAN.TOO_LARGE` for that cell; development: halve evidence and retry, stopping below 2,000 characters with `JEV.CONTEXT_EXCEEDED`; either way the run exits 2 | script, per anchor |
 | An answer within 0.10 of the threshold | Send the identical request once more; disagreement is `underspecified` with `unstable`; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 | script, per anchor |
 | Interrupt | `CANCELED` envelope, exit 130 | script |
-| 429, 529, 5xx, timeout, network error, malformed response | At least two more attempts (three total) with `Retry-After` or 1 s then 2 s backoff; then `verdict: error` for that anchor, the other anchors are still judged, and the run exits 2 with the first failure's code and `data.failures` | script, per anchor |
-| 401, or `allow_remote_judge` absent or `false` (`POLICY.REMOTE_JUDGE_DISABLED`) | Abort the whole run immediately with exit 2; never retried; never bypassed by an agent | script pre-flight |
+| Provider or transport failure | The shared client classifies and retries; plan-anchor records the typed failure and wheel attempt count, then continues with other anchors | shared client, per request |
+| 401, or `allow_remote_judge` absent or `false` (`POLICY.REMOTE_JUDGE_DISABLED`) | Abort the whole run immediately with exit 2; authentication is never retried; consent is checked before the client call | client and script pre-flight |
 | Anchor's `exclude` names the item | No Jev request; the cell is `excluded` with its reason and passes | script, per anchor |
 | Agent sees `success: false` | Return the script's error object in the fenced envelope; no second judge call | agent |
 | Skill sees a failed bead among several | Report it in the aggregation summary; do not drop it or silently re-run | skill |

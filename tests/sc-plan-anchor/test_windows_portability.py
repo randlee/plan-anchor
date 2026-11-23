@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -137,7 +138,7 @@ class NoHomeDirectoryTests(Scratch):
         self.assertIsNotNone(paths.global_location(home / ".claude" / "x", home))
 
     def test_settings_show_runs(self):
-        subprocess.run(["git", "init", "-q", str(self.tmp)], check=True)
+        run_test_child(["git", "init", "-q", str(self.tmp)], check=True)
         out = io.StringIO()
         with no_home(), contextlib.redirect_stdout(out):
             code = settings_mod.main(["show", "--repository-root", str(self.tmp)])
@@ -203,8 +204,8 @@ class Utf8OutputTests(Scratch):
     }
 
     def run_cp1252(self, argv, **kw):
-        proc = subprocess.run([sys.executable, *map(str, argv)], cwd=str(self.tmp), capture_output=True,
-                              env=child_env(PYTHONIOENCODING="cp1252"), timeout=120, **kw)
+        proc = run_test_child([sys.executable, *map(str, argv)], cwd=str(self.tmp), capture_output=True,
+                              env=child_env(PYTHONIOENCODING="cp1252"), timeout=60, **kw)
         stdout = proc.stdout.decode("utf-8")  # strict: a cp1252 byte such as 0xb7 raises here
         stderr = proc.stderr.decode("utf-8")
         return proc.returncode, stdout, stderr
@@ -253,7 +254,7 @@ class Utf8OutputTests(Scratch):
     def test_settings_message_with_a_non_ascii_path_is_utf8(self):
         root = self.tmp / f"r{DOT}po"
         root.mkdir()
-        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        run_test_child(["git", "init", "-q", str(root)], check=True)
         code, out, err = self.run_cp1252([SCRIPTS / "plan_anchor_settings.py", "show", "--repository-root", root])
         self.assertEqual(err, "")
         envelope = json.loads(out)

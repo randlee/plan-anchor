@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plan-anchor integration report</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 16px system-ui, sans-serif; line-height: 1.5; max-width: 72rem; margin: 2rem auto; padding: 0 1rem; }
+    iframe { width: 100%; height: 36rem; border: 1px solid #94a3b8; background: white; }
+    section { margin: 2rem 0; }
+  </style>
+</head>
+<body>
+  <nav><a href="index.html">Back</a></nav>
+  <main>
+    <h1>Plan-anchor integration report</h1>
+    <section>
+      <h2><a href="20261118-1-integration/macos.xhtml">macos.xhtml</a></h2>
+      <iframe title="macos.xhtml" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+  &lt;meta charset=&quot;UTF-8&quot; /&gt;
+  &lt;title&gt;sc-agent integration: macos&lt;/title&gt;
+  &lt;style type=&quot;text/css&quot;&gt;
+    body { font-family: -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; margin: 0; padding: 16px; color: #1f2937; background: #ffffff; }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    h3 { margin: 0; padding-bottom: 8px; border-bottom: 2px solid #2563eb; color: #1f2937; flex: 1; }
+    .meta { color: #64748b; font-size: 14px; margin-bottom: 12px; }
+    .actions { display: flex; gap: 8px; }
+    .icon-button { width: 30px; height: 30px; border-radius: 999px; border: 1px solid #cbd5e1; background: #ffffff; color: #334155; font-size: 14px; cursor: pointer; }
+    .source-tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-weight: 700; background: #eff6ff; color: #1e40af; }
+    .scratchpad { margin-top: 12px; padding: 12px; border-left: 4px solid #3b82f6; background: #eff6ff; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f3f4f6; }
+    pre { background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow-x: auto; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div class=&quot;head&quot;&gt;
+    &lt;h3&gt;sc-agent integration: macos&lt;/h3&gt;
+    &lt;div class=&quot;actions&quot;&gt;
+      &lt;button class=&quot;icon-button&quot; title=&quot;Copy JSON&quot; data-copy-text=&#x27;{&amp;quot;run_id&amp;quot;: &amp;quot;20261118-1-integration&amp;quot;, &amp;quot;platform&amp;quot;: &amp;quot;macos&amp;quot;, &amp;quot;source_revision&amp;quot;: &amp;quot;06714811325bedfb168c2313f44f291c46f693cb&amp;quot;, &amp;quot;wheel_revision&amp;quot;: &amp;quot;prerelease/v0.2.8@f1a192dd76d8c3c4e1dd11c0df4a36ee9fcbf56e&amp;quot;, &amp;quot;mode&amp;quot;: &amp;quot;live&amp;quot;, &amp;quot;cases&amp;quot;: [{&amp;quot;case&amp;quot;: &amp;quot;test_judge_writes_real_run_artifact&amp;quot;, &amp;quot;status&amp;quot;: &amp;quot;PASS&amp;quot;, &amp;quot;detail&amp;quot;: &amp;quot;assertions passed&amp;quot;, &amp;quot;provider&amp;quot;: &amp;quot;typesafe&amp;quot;, &amp;quot;model&amp;quot;: &amp;quot;jev-latest&amp;quot;, &amp;quot;mode&amp;quot;: &amp;quot;live&amp;quot;, &amp;quot;result&amp;quot;: &amp;quot;real judge artifact; verdict=satisfied&amp;quot;}, {&amp;quot;case&amp;quot;: &amp;quot;test_batch_preserves_correlation_and_durable_log&amp;quot;, &amp;quot;status&amp;quot;: &amp;quot;PASS&amp;quot;, &amp;quot;detail&amp;quot;: &amp;quot;assertions passed&amp;quot;, &amp;quot;provider&amp;quot;: &amp;quot;typesafe&amp;quot;, &amp;quot;model&amp;quot;: &amp;quot;jev-latest&amp;quot;, &amp;quot;mode&amp;quot;: &amp;quot;live&amp;quot;, &amp;quot;result&amp;quot;: &amp;quot;three real results; complete correlation; echoed completion order equals durable JSONL&amp;quot;}, {&amp;quot;case&amp;quot;: &amp;quot;test_invalid_key_maps_auth_and_withholds_body&amp;quot;, &amp;quot;status&amp;quot;: &amp;quot;PASS&amp;quot;, &amp;quot;detail&amp;quot;: &amp;quot;assertions passed&amp;quot;, &amp;quot;provider&amp;quot;: &amp;quot;typesafe&amp;quot;, &amp;quot;model&amp;quot;: &amp;quot;jev-latest&amp;quot;, &amp;quot;mode&amp;quot;: &amp;quot;live&amp;quot;, &amp;quot;result&amp;quot;: &amp;quot;HTTP401 maps to AUTH.CREDENTIALS; body withheld; key redacted&amp;quot;}]}&#x27;&gt;{}&lt;/button&gt;
+      &lt;button class=&quot;icon-button&quot; title=&quot;Copy Context&quot; data-copy-text=&#x27;macos 20261118-1-integration&#x27;&gt;⎘&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+  &lt;p class=&quot;meta&quot;&gt;
+    &lt;span class=&quot;source-tag&quot;&gt;pytest / live&lt;/span&gt;
+  &lt;/p&gt;
+  &lt;p&gt;&lt;strong&gt;run_id&lt;/strong&gt;: 20261118-1-integration&lt;/p&gt;
+  &lt;p&gt;&lt;strong&gt;platform&lt;/strong&gt;: macos&lt;/p&gt;
+  &lt;p&gt;&lt;strong&gt;source_revision&lt;/strong&gt;: 06714811325bedfb168c2313f44f291c46f693cb&lt;/p&gt;
+  &lt;p&gt;&lt;strong&gt;wheel_revision&lt;/strong&gt;: prerelease/v0.2.8@f1a192dd76d8c3c4e1dd11c0df4a36ee9fcbf56e&lt;/p&gt;
+  &lt;p&gt;&lt;strong&gt;mode&lt;/strong&gt;: live&lt;/p&gt;
+  &lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Case&lt;/th&gt;&lt;th&gt;Provider&lt;/th&gt;&lt;th&gt;Model&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Observed&lt;/th&gt;&lt;th&gt;Detail&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+    &lt;tr&gt;&lt;td&gt;test_judge_writes_real_run_artifact&lt;/td&gt;&lt;td&gt;typesafe&lt;/td&gt;&lt;td&gt;jev-latest&lt;/td&gt;&lt;td&gt;PASS&lt;/td&gt;&lt;td&gt;real judge artifact; verdict=satisfied&lt;/td&gt;&lt;td&gt;assertions passed&lt;/td&gt;&lt;/tr&gt;
+    &lt;tr&gt;&lt;td&gt;test_batch_preserves_correlation_and_durable_log&lt;/td&gt;&lt;td&gt;typesafe&lt;/td&gt;&lt;td&gt;jev-latest&lt;/td&gt;&lt;td&gt;PASS&lt;/td&gt;&lt;td&gt;three real results; complete correlation; echoed completion order equals durable JSONL&lt;/td&gt;&lt;td&gt;assertions passed&lt;/td&gt;&lt;/tr&gt;
+    &lt;tr&gt;&lt;td&gt;test_invalid_key_maps_auth_and_withholds_body&lt;/td&gt;&lt;td&gt;typesafe&lt;/td&gt;&lt;td&gt;jev-latest&lt;/td&gt;&lt;td&gt;PASS&lt;/td&gt;&lt;td&gt;HTTP401 maps to AUTH.CREDENTIALS; body withheld; key redacted&lt;/td&gt;&lt;td&gt;assertions passed&lt;/td&gt;&lt;/tr&gt;
+  &lt;/tbody&gt;&lt;/table&gt;
+  &lt;script type=&quot;text/javascript&quot;&gt;
+    document.addEventListener(&quot;click&quot;, async function (event) {
+      const button = event.target.closest(&quot;[data-copy-text]&quot;);
+      if (!button) return;
+      const text = button.getAttribute(&quot;data-copy-text&quot;) || &quot;&quot;;
+      try {
+        await navigator.clipboard.writeText(text);
+        button.setAttribute(&quot;title&quot;, &quot;Copied&quot;);
+      } catch (err) {
+        button.setAttribute(&quot;title&quot;, &quot;Copy failed&quot;);
+      }
+    });
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe>
+    </section>
+  </main>
+</body>
+</html>

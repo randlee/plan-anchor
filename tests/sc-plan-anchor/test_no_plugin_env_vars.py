@@ -2,8 +2,9 @@
 
 The six retired PLAN_ANCHOR_* variables (JEV_MODEL, JEV_URL, CONFIDENCE_THRESHOLD,
 MAX_ITEM_CHARS, MAX_CODE_LINES, CONFIRM_NEAR) are planted with wild values and
-must change nothing: not the dry-run output, not the live request, not the URL.
+must change nothing: not the dry-run output or the live request to the shared client.
 """
+from jev_test_support import wheel_line, context_overflow_line
 import contextlib
 import importlib.util
 import io
@@ -12,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -71,20 +73,6 @@ def load_judge(name, environment):
     return module
 
 
-class FakeResponse:
-    def __init__(self, raw):
-        self.raw = raw
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self, n=-1):
-        return self.raw[:n] if n >= 0 else self.raw
-
-
 def choice(value, p):
     rest = round((1 - p) / 2, 4)
     return {"type": "choice", "choice": value, "confidence": p,
@@ -95,7 +83,7 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
     def dry_run(self, environment):
         with tempfile.TemporaryDirectory() as d:
             workspace(d)
-            proc = subprocess.run([sys.executable, str(JUDGE_SCRIPT), *JUDGE, "--dry-run"], cwd=d, env=environment,
+            proc = run_test_child([sys.executable, str(JUDGE_SCRIPT), *JUDGE, "--dry-run"], cwd=d, env=environment,
                                   capture_output=True, text=True, encoding="utf-8")
             runs = {p.name.split("-ex-")[-1]: json.loads(p.read_text(encoding="utf-8"))
                     for p in sorted((Path(d) / "runs").glob("*.json"))}
@@ -107,28 +95,35 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(baseline[0], 0, baseline)
         self.assertEqual(planted, baseline)
         data = planted[1]["data"]
-        self.assertEqual((data["model_requested"], data["threshold"]), ("jev-latest", 0.6))
+        self.assertEqual((data["model_requested"], data["threshold"]), ("jev", 0.6))
         self.assertIsNone(data["results"][0]["verdict"])
         self.assertTrue(planted[2], "dry run wrote no run file")
 
     def live(self, module, environment):
         answers = {"relevant": choice("yes", 0.9), "addressed": choice("yes", 0.65), "contradicted": choice("no", 0.9)}
-        reply = json.dumps({"model": "jev-1.13.0", "answers": answers}).encode("utf-8")
         buf = io.StringIO()
+        requests = []
+
+        def send(request, **kwargs):
+            requests.append((json.loads(request), kwargs))
+            return wheel_line({"response": {"model": "jev-1.13.0", "answers": answers}})
+
         with tempfile.TemporaryDirectory() as d:
             workspace(d)
             cwd = os.getcwd()
             os.chdir(d)
             try:
                 with mock.patch.dict(os.environ, dict(environment, TYPESAFE_API_KEY="sk-test-0001"), clear=True), \
-                        mock.patch.object(module.urllib.request, "urlopen", side_effect=lambda *a, **k: FakeResponse(reply)) as opened, \
-                        mock.patch.object(module, "remote_judge_consent", return_value=module.Ok(None)), \
-                        mock.patch.object(module, "_sleep", lambda _s: None), contextlib.redirect_stdout(buf):
+                        mock.patch("sc_agent.send", side_effect=send), \
+                        mock.patch("sc_agent.Cancel", return_value=object()), \
+                        mock.patch.object(module.decidr_client, "remote_preflight", return_value={"ok": True, "value": None}), \
+                        contextlib.redirect_stdout(buf):
                     code = module.main(list(JUDGE))
             finally:
                 os.chdir(cwd)
-        requests = [(call.args[0].full_url, json.loads(call.args[0].data)) for call in opened.call_args_list]
-        return code, scrub(json.loads(buf.getvalue())), requests
+        stable_requests = [(body, {key: value for key, value in options.items() if key != "cancel"})
+                           for body, options in requests]
+        return code, scrub(json.loads(buf.getvalue())), stable_requests
 
     def test_live_request_url_and_behaviour_are_unchanged(self):
         baseline = self.live(load_judge("jev_judge_clean", clean_env()), clean_env())
@@ -137,8 +132,9 @@ class RetiredVariablesHaveNoEffect(unittest.TestCase):
         self.assertEqual(planted, baseline)
         code, out, requests = planted
         self.assertEqual(code, 0, out)
-        self.assertEqual({url for url, _ in requests}, {"https://api.typesafe.ai/v1/systemone"})
-        self.assertEqual({body["model"] for _, body in requests}, {"jev-latest"})
+        self.assertEqual({body["model"] for body, _ in requests}, {"jev"})
+        self.assertTrue(all("keyring_service" not in options and "keyring_account" not in options
+                            for _, options in requests))
         result = out["data"]["results"][0]
         # 0.65 is within 0.10 of the default 0.6: confirmation stays on (CONFIRM_NEAR=0 ignored), the item
         # is sent (MAX_ITEM_CHARS=5 ignored) and the verdict uses 0.6 (THRESHOLD=0.01 ignored).

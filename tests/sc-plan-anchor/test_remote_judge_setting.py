@@ -18,13 +18,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
 from test_jev_judge import (  # noqa: F401 - shared helpers
-    QUOTE, SKILL, STATEMENT, Judged, Transport, anchor, answer, env, jj, plan_answers, record, run_cli, write,
+    QUOTE, SKILL, STATEMENT, Judged, Transport, anchor, answer, env, jj, plan_answers, record, run_cli, stub_client, write,
 )
 import plan_anchor_settings as settings_mod  # noqa: E402 - test_jev_judge put scripts/ on sys.path
 import anchor_tracker as tracker_mod  # noqa: E402
@@ -41,9 +42,9 @@ HEADER = ("# .sc/plan-anchor/settings.yaml\n"
           "# Repository settings for the sc-plan-anchor plugin; commit this file, never put secrets in it.\n"
           "schema_version: 1\n")
 REMOTE_COMMENT = "# allow_remote_judge: may plan text be sent to TypeSafe (Jev) for judging? Only the user decides it.\n"
-ABSENT_ACTION = ("Ask the user once whether plan text may be sent to TypeSafe (Jev) for judging, record the answer with "
+ABSENT_ACTION = ("Ask the user once whether this text may be sent to TypeSafe (Jev), record the answer with "
                  "`python3 scripts/plan_anchor_settings.py set allow_remote_judge true|false`, and commit "
-                 ".sc/plan-anchor/settings.yaml. Never infer consent from existing run files or past runs. "
+                 ".sc/plan-anchor/settings.yaml. Never infer consent from prior runs. "
                  "Use --dry-run to inspect the request instead.")
 AGENT_RULE = ("Never write `allow_remote_judge`; only the user decides it. "
               "On `POLICY.REMOTE_JUDGE_DISABLED`, return it unchanged.")
@@ -73,20 +74,47 @@ class Repo:
         self.settings.write_text(text, encoding="utf-8")
 
     def answer(self, value):
-        self.write(f"schema_version: 1\nallow_remote_judge: {value}\n")
+        self.write(f"schema_version: 1\nanchor_tracker: {TEST_TRACKER}\nallow_remote_judge: {value}\n")
         return self
 
 
 def judged(test, repo, env_values=None, transport=None, extra=()):
     transport = transport if transport is not None else Transport()
     d = tempfile.mkdtemp(dir=str(repo.root))
-    j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
-               extra_args=["--repository-root", str(repo.root), *extra])
+    with contextlib.chdir(repo.root):
+        j = Judged(d, transport, consent=False, env_values=dict(KEY) if env_values is None else env_values,
+                   extra_args=["--repository-root", str(repo.root), *extra])
     return j, transport
 
 
 def yaml_test(fn):
     return unittest.skipUnless(HAS_YAML, NO_YAML)(fn)
+
+
+class SettingsGitTimeoutTests(unittest.TestCase):
+    def test_rev_parse_timeout_returns_typed_failure_without_fallback(self):
+        repo = Repo(self)
+        timeout = subprocess.TimeoutExpired(["git", "rev-parse"], 30)
+        with mock.patch.object(settings_mod.subprocess, "run", side_effect=timeout) as run:
+            result = settings_mod.find_repo_root(repo.root)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "REPO.NOT_FOUND")
+        self.assertIn("git rev-parse did not finish within 30 s", result.error.message)
+        self.assertTrue(result.error.action)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_check_ignore_timeout_returns_a_diagnostic(self):
+        repo = Repo(self)
+        timeout = subprocess.TimeoutExpired(["git", "check-ignore"], 30)
+        with mock.patch.object(settings_mod.subprocess, "run", side_effect=timeout) as run:
+            result = settings_mod.git_ignored(repo.root, ".sc/plan-anchor/settings.yaml")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "git check-ignore did not finish within 30 s")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
 
 class LiveCallConsentTests(unittest.TestCase):
@@ -101,26 +129,26 @@ class LiveCallConsentTests(unittest.TestCase):
         repo = Repo(self).answer("true")
         sub = repo.root / "doc" / "plan"
         sub.mkdir(parents=True)
-        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
             self.assertTrue(settings_mod.remote_judge_consent(settings_mod.find_repo_root(sub).value).value)
         j, t = judged(self, repo, extra=["--repository-root", str(sub)])  # the later flag wins
         self.assertEqual((j.code, len(t.bodies)), (0, 1))
 
     @yaml_test
-    def test_false_is_refused(self):
+    def test_send_with_false_consent_is_refused_before_transport(self):
         repo = Repo(self).answer("false")
         j, t = judged(self, repo)
         self.assertEqual((j.code, j.out["error"]["code"], t.bodies), (2, "POLICY.REMOTE_JUDGE_DISABLED", []))
         self.assertIn("sets allow_remote_judge: false", j.out["error"]["message"])
-        self.assertIn("only the user changes it", j.out["error"]["suggested_action"])
+        self.assertIn("only the user changes this setting", j.out["error"]["suggested_action"])
 
-    def test_absent_file_is_refused_with_the_ask_once_action(self):
+    def test_send_without_recorded_consent_is_refused_before_transport(self):
         repo = Repo(self)
         j, t = judged(self, repo)
         self.assertEqual(j.code, 2)
         self.assertEqual(j.out, {"success": False, "data": None, "error": {
             "code": "POLICY.REMOTE_JUDGE_DISABLED",
-            "message": "Sending plan text to TypeSafe is disabled. The anchor statement and the item text would leave this "
+            "message": "Sending text to TypeSafe is disabled. The anchor statement and the item text would leave this "
                        "machine. .sc/plan-anchor/settings.yaml does not set allow_remote_judge.",
             "recoverable": False, "suggested_action": ABSENT_ACTION}})
         self.assertEqual(t.bodies, [])
@@ -160,14 +188,14 @@ class LiveCallConsentTests(unittest.TestCase):
         }
         t = Transport()
         for name, argv in cases.items():
-            with self.subTest(name), env(**KEY), mock.patch.object(jj, "call_jev", t):
+            with self.subTest(name), env(**KEY), stub_client(t):
                 code, out = run_cli([*argv, "--allow-remote"])
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "VALIDATION.INPUT"))
             self.assertIn("unrecognized arguments: --allow-remote", out["error"]["message"])
         self.assertEqual(t.bodies, [])
 
     def test_usage_error_through_the_script_is_json_on_stdout(self):
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--allow-remote"],
+        proc = run_test_child([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--allow-remote"],
                               capture_output=True, text=True, encoding="utf-8",
                               env={k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"})
         self.assertEqual((proc.returncode, proc.stderr), (2, ""))
@@ -213,7 +241,7 @@ class LiveCallConsentTests(unittest.TestCase):
         for value, code, shown, error in cases:
             with self.subTest(value=value):
                 repo = Repo(self).answer(value)
-                proc = subprocess.run([sys.executable, str(SETTINGS_SCRIPT), "show", "--repository-root", str(repo.root)],
+                proc = run_test_child([sys.executable, str(SETTINGS_SCRIPT), "show", "--repository-root", str(repo.root)],
                                       capture_output=True, text=True, encoding="utf-8",
                                       env={k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"})
                 self.assertEqual(proc.returncode, code, proc.stdout + proc.stderr)
@@ -238,15 +266,15 @@ class LiveCallConsentTests(unittest.TestCase):
 
     def test_outside_a_repository_is_a_typed_error(self):
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+            with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
                 outcome = settings_mod.find_repo_root(Path(d))
             if outcome.ok:
                 self.skipTest("the temporary directory is inside a repository here")
             t = Transport()
             anchors = write(d, "anchors.json", record(anchor()))
             item = write(d, "item.txt", "Sprint 2 copies the legacy runtime crates.")
-            with env(**KEY), mock.patch.object(jj, "call_jev", t), \
-                    mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+            with env(**KEY), stub_client(t), \
+                    mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
                 code, out = run_cli(["judge", "--anchors", anchors, "--gate", "plan", "--all", "--item-id", "x",
                                      "--item-file", item, "--repository-root", d])
             self.assertEqual((code, out["error"]["code"], t.bodies), (2, "REPO.NOT_FOUND", []))
@@ -266,7 +294,7 @@ class LiveCallConsentTests(unittest.TestCase):
         }
         t = Transport()
         for name, argv in cases.items():
-            with self.subTest(name), env(**KEY), mock.patch.object(jj, "call_jev", t):
+            with self.subTest(name), env(**KEY), stub_client(t):
                 code, out = run_cli([*argv, "--repository-root", root])
             self.assertEqual((code, out["error"]["code"], out["error"]["suggested_action"]),
                              (2, "POLICY.REMOTE_JUDGE_DISABLED", ABSENT_ACTION))
@@ -356,8 +384,8 @@ class SetCommandTests(unittest.TestCase):
 
     def test_the_script_runs_end_to_end(self):
         repo = Repo(self)
-        subprocess.run(["git", "init", "-q", str(repo.root)], check=False, capture_output=True)
-        proc = subprocess.run([sys.executable, str(SETTINGS_SCRIPT), "set", "allow_remote_judge", "true",
+        run_test_child(["git", "init", "-q", str(repo.root)], check=False, capture_output=True)
+        proc = run_test_child([sys.executable, str(SETTINGS_SCRIPT), "set", "allow_remote_judge", "true",
                                "--repository-root", str(repo.root)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertTrue(json.loads(proc.stdout)["data"]["written"])
@@ -368,7 +396,7 @@ class SetCommandTests(unittest.TestCase):
         if TEST_TRACKER == "bd":  # a bd install needs a Dolt-backed .beads/
             (repo.root / ".beads").mkdir()
             (repo.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
-        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
             outcome = tracker_mod.write(repo.root, which=lambda name: f"/fake/bin/{name}", run=lambda *a, **k: None)
         self.assertTrue(outcome.ok, getattr(outcome, "error", None))
         self.assertEqual(repo.settings.read_text(encoding="utf-8"),

@@ -81,9 +81,17 @@ This install is rendered for `{{ tracker }}`; both gates read anchor and questio
 
 Rerun the installer for the install folder with the other `--tracker` value. It checks the request against disk with the rules above, re-renders every installed copy (all targets in the lock file) for that tracker, and updates `anchor_tracker` in `.sc/plan-anchor/settings.yaml`. Switching does not migrate issue data: anchors, question beads and reports already in the old tracker stay there; recreate the anchor tree in the new one (`references/bead-layout.md`) and update the bead IDs in `anchors.json` with `set-beads`. The switched folder is byte-for-byte what a fresh install with that `--tracker` writes into an empty folder, the lock and settings files included, in either direction. Commit the settings file, the lock file and the re-rendered files together.
 
+## Uninstall
+
+Open `<folder>/.sc/plan-anchor/install-lock.json`. Its `files` map lists the files this install wrote for every harness: `.<harness>/skills/plan-anchoring/` and `.<harness>/agents/anchor-*.md` for `claude`, `codex` and `cursor`. Review any edits you want to keep, then remove the listed files and the lock itself. Do not remove unrelated files in a harness folder.
+
+Remove `__pycache__` directories within the removed skill trees, then folders left empty.
+
+Settings are your choice: keep `<folder>/.sc/plan-anchor/settings.yaml` to retain the tracker and consent settings, or remove it. The installer seeds `.sc/plan-anchor/triage/README.md`, `plan-questions.jsonl` and `rules.json` once. These defaults are user-owned and outside the lock: keep them, or remove the `triage/` directory if you no longer want them. Remove `.sc/plan-anchor/` only when it is empty. Tracker data and user-owned overrides are not installer-owned files; keep them unless you separately choose to remove them.
+
 ## Install the CLIs
 
-**python3** (3.9 or newer; the scripts are standard-library only, except `anchor_tracker.py`, which needs PyYAML)
+**python3** (3.11 or newer; PyYAML supports tracker/settings lookup, and live Jev calls also need the sc-decidr wheel in this interpreter; offline commands do not import that wheel)
 
 - macOS: `brew install python` or the Xcode command line tools' `/usr/bin/python3`
 - Linux: `apt install python3` / `dnf install python3`
@@ -92,6 +100,10 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 **PyYAML** (5.1 or newer; read only by `anchor_tracker.py` for `.sc/plan-anchor/settings.yaml`)
 
 - `python3 -m pip install pyyaml` (into the interpreter the skill runs). Without it `anchor_tracker.py` returns `DEPENDENCY.PYYAML` and exits 2; it never falls back to defaults.
+
+**sc-decidr** (only for live Jev calls; use the version recorded as `SC_DECIDR_VERSION` in the installed `scripts/decidr_client.py`, rendered from the wheel itself. Install that version's wheel for this platform and interpreter from [PyPI](https://pypi.org/project/sc-decidr/) (`python3 -m pip install "sc-decidr==<SC_DECIDR_VERSION>"`).)
+
+- Check with `python3 -c 'import sc_agent'`. Without the wheel, live calls return `DEPENDENCY.SC_DECIDR`; dry runs and fixture-answer commands remain available.
 {% if tracker != "bd" %}
 
 **br (beads_rust)**
@@ -112,18 +124,35 @@ Rerun the installer for the install folder with the other `--tracker` value. It 
 
 **sc-compose** (1.8.0 or newer)
 
-- Install it from the Synaptic Canvas `sc-compose` release or team package
-  source, then confirm `sc-compose --version` reports at least 1.8.0.
+The Python wheel supplies bindings, not the CLI. Use the GitHub release binary (CI uses release 1.8.0). On macOS or Linux, run this in a directory where you want to keep the extracted CLI; choose your release target below:
+
+| Machine | target |
+| --- | --- |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| macOS Intel | `x86_64-apple-darwin` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` |
+
+```bash
+target=aarch64-apple-darwin
+bundle="sc-compose_1.8.0_${target}"
+curl --fail --location "https://github.com/randlee/sc-compose/releases/download/v1.8.0/${bundle}.tar.gz" --output "${bundle}.tar.gz"
+tar -xzf "${bundle}.tar.gz"
+export PATH="$(pwd)/${bundle}/bin:$PATH"
+sc-compose --version
+```
+
+Keep that `bin` directory on PATH in future shells. On Windows, install the CLI with `winget install --id randlee.sc-compose --exact`, then run `sc-compose --version` in a new shell. The version must be at least 1.8.0.
 - The skill uses strict checked-in Jinja2 templates for every anchor-tuning
   request/result. Do not continue with hand-built JSON when this CLI is absent.
 
 **TypeSafe API key**
 
-The live judge looks for the key in this order: `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection.
+The live judge uses sc-decidr's shared credential lookup: repository `.env`, then `TYPESAFE_API_KEY` in the process environment, then the platform credential store. An invalid environment value fails closed; it does not silently select another credential. The platform entry is local-interactive convenience only—cloud, CI, and remote agents should use their platform secret injection. The platform entry uses service `TYPESAFE_API_KEY` and the current OS account. Older plan-anchor installs may have stored the key under service `plan-anchor` / account `typesafe-api-key`; move it to the shared default entry or use `.env` / process environment, because plan-anchor no longer reads the legacy location.
 
-- macOS: Keychain generic-password item with service `plan-anchor` and account `typesafe-api-key`.
-- Windows: Credential Manager generic credential with target `plan-anchor:typesafe-api-key`.
-- Linux: Secret Service item returned by `secret-tool lookup service plan-anchor account typesafe-api-key`. Create it without putting the key on a command line with `secret-tool store --label="plan-anchor TypeSafe API key" service plan-anchor account typesafe-api-key` and enter the value on standard input.
+- macOS: Keychain generic-password item with service `TYPESAFE_API_KEY` and the current account.
+- Windows: Credential Manager generic credential with target `TYPESAFE_API_KEY` and the current account.
+- Linux: Secret Service item returned by `secret-tool lookup service TYPESAFE_API_KEY account "$USER"`.
 
 - Create a key at typesafe.ai. Read it silently so it does not appear in the command line, shell history, or terminal output, then export it in the shell that launches Claude Code or Codex:
   ```bash
@@ -157,7 +186,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 
 | Tool | Minimum | Why |
 | --- | --- | --- |
-| python3 | 3.9 | tested floor; standard library only, except `anchor_tracker.py` |
+| python3 | 3.11 | tested floor; standard library only, except `anchor_tracker.py` |
 | PyYAML | 5.1 | `SafeLoader`-based strict reading of `.sc/plan-anchor/settings.yaml`; CI tests 5.1 and the latest release |
 {% if tracker != "bd" %}
 | br | 0.7.x | `init`, `show --json`, `sync --flush-only`; tested with 0.7.4 |
@@ -203,9 +232,9 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 - `QUESTIONS.ROLES`: a question override renamed a question ID. Keep the default IDs.
 - `ANCHOR.NOT_LOCKED`: `--anchor` named a proposed or retired anchor. Lock it, or use `--all`.
 - `JEV.CONTEXT_EXCEEDED`: the item could not be shortened below 2,000 characters and still fit. Shorten the evidence account; at the development gate drop the test section first.
-- `JEV.RESPONSE_INVALID` repeatedly: TypeSafe changed the response shape or a proxy is mangling it. Check for a proxy between you and `api.typesafe.ai`.
+- `DECIDR.RESPONSE_INVALID` repeatedly: sc-decidr rejected the provider response shape. Check for a proxy between you and `api.typesafe.ai`, and confirm the installed wheel matches the generated client version.
 - `VALIDATION.ANCHORS` from `judge`: run `validate` and fix the listed problems; the usual cause is a hand edit. Use `update`, `retire` and `promote`.
-- `JEV.RATE_LIMITED` under parallel gates: cap concurrency at 3 beads; the script already retries three times with backoff.
+- `DECIDR.RATE_LIMITED` under parallel gates: reduce concurrency; the shared client reports its observed attempts.
 - Dates in reports show as "undated": `stated_at` is not an ISO date. Use `YYYY-MM-DD`.
 {% if tracker != "br" %}
 - `bd comment --body-file`: does not exist; use `--file` (or `--stdin`).
@@ -215,6 +244,7 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 {% if tracker != "bd" %}
 - `TRACKER.INIT_FAILED`: `br init` exited non-zero (its exit code and stderr are in `data`) or created no workspace.
 {% endif %}
+- Settings Git commands have a 30-second bound. `REPO.NOT_FOUND` with a `git rev-parse` timeout means discovery could not finish; check Git and retry. A `git check-ignore` timeout is returned as a settings diagnostic so you can check ignore rules manually.
 - `SETTINGS.UNKNOWN_KEY`, `SETTINGS.SCHEMA_VERSION`, `SETTINGS.INVALID_TRACKER`, `SETTINGS.INVALID_PLAN_DIR`, `SETTINGS.MALFORMED`: fix `.sc/plan-anchor/settings.yaml` to the form above.
 - `BEADS.METADATA_INVALID`: `.beads/metadata.json` is not a readable JSON object; repair it before selection can run.
 - Installer `INSTALL.DEST_GLOBAL`: `--dest` named the home directory, a global harness directory or a plugin cache; pass a repository or a parent folder of repositories.

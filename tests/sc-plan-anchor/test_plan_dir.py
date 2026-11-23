@@ -103,7 +103,7 @@ class PlanDirSettingTests(unittest.TestCase):
         if TEST_TRACKER == "bd":  # a bd install needs a Dolt-backed .beads/
             (repo.root / ".beads").mkdir()
             (repo.root / ".beads" / "metadata.json").write_text('{"backend": "dolt"}', encoding="utf-8")
-        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: None):
+        with mock.patch.object(settings_mod, "_git_toplevel", lambda start: settings_mod.Ok(None)):
             outcome = tracker_mod.write(repo.root, which=lambda name: f"/fake/bin/{name}", run=lambda *a, **k: None)
         self.assertTrue(outcome.ok, getattr(outcome, "error", None))
         text = repo.settings.read_text(encoding="utf-8")

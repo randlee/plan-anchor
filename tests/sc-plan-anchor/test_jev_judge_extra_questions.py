@@ -107,9 +107,9 @@ class ExtraQuestionTests(unittest.TestCase):
             partial = dict(plan_answers())
             del partial["addressed"]
             code, out = run_cli(common + ["--answers-file", write(d, "a3.json", {"*": partial})])
-            self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))
+            self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RESPONSE_INVALID"))
             code, out = run_cli(common + ["--answers-file", write(d, "a4.json", {"*": dict(plan_answers(), ownz=answer("no"))})])
-            self.assertEqual((code, out["error"]["code"]), (2, "JEV.RESPONSE_INVALID"))
+            self.assertEqual((code, out["error"]["code"]), (2, "DECIDR.RESPONSE_INVALID"))
             code, out = run_cli(common + ["--answers-file", write(d, "a2.json", {"*": dict(plan_answers(), owns=answer("no"))})])
             self.assertEqual(code, 0, out)
             self.assertEqual(out["data"]["results"][0]["verdict"], "satisfied")

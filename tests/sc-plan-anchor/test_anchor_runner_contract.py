@@ -3,11 +3,11 @@ import json
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
+from child_support import run_test_child
 from layout_support import SCRIPTS
 
 
@@ -78,7 +78,7 @@ class RunnerContractTests(unittest.TestCase):
             "aborted_by": None,
             "data": {} if success else None,
             "error": None if success else {
-                "code": "JEV.TIMEOUT",
+                "code": "DECIDR.NETWORK",
                 "message": "request timed out",
                 "recoverable": True,
                 "suggested_action": "retry once",
@@ -200,7 +200,7 @@ class RunnerContractTests(unittest.TestCase):
                 finished_at_ms=25,
                 outcome="timeout",
                 source_sha256="a" * 64,
-                error_code="JEV.TIMEOUT",
+                error_code="DECIDR.NETWORK",
             ))
             rendered = json.dumps(attestation)
             self.assertNotIn("sk-canary", rendered)
@@ -218,7 +218,7 @@ class RunnerContractTests(unittest.TestCase):
         self.assertIsNotNone(binary, "sc-compose is required for contract rendering")
         with tempfile.TemporaryDirectory() as td:
             output = Path(td) / "invocation.md"
-            subprocess.run(
+            run_test_child(
                 [
                     binary,
                     "render",

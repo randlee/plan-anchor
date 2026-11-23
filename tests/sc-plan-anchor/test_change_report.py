@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from child_support import run_test_child
 import sys
 import tempfile
 import unittest
@@ -203,7 +204,7 @@ class Project:
         env = dict(os.environ)
         if env_date:
             env.update(GIT_AUTHOR_DATE=env_date, GIT_COMMITTER_DATE=env_date)
-        return subprocess.run(["git", *argv], cwd=self.root, capture_output=True, text=True, check=True, env=env).stdout
+        return run_test_child(["git", *argv], cwd=self.root, capture_output=True, text=True, check=True, env=env).stdout
 
     def runner(self, argv, cwd):
         self.calls.append(argv)

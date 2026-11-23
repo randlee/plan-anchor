@@ -37,7 +37,7 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 
 ```json
 {
-  "model": "jev-latest",
+  "model": "jev",
   "state": {
     "anchor": {"id": "ANC-012", "statement": "...", "scope": "..."},
     "item": {"id": "ex-42", "title": "...", "text": "..."}
@@ -70,7 +70,7 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 }
 ```
 
-`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). The script validates every response before gating: answer IDs equal the question IDs, each `choice` is a criteria option, `confidence` and every probability lie in [0, 1], and probabilities sum to 1 within rounding. Anything else is `JEV.RESPONSE_INVALID`, retried as transient. The response read is bounded at 1 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
+`probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). sc-decidr parses provider responses into typed answers and returns its typed error for malformed responses. The response read is bounded at 8 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
 
 ## Size, context window, and shortening
 
@@ -79,23 +79,22 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 - **Development gate:** before the first call the script shortens the evidence account (keeping the head, appending a truncation marker) until the serialised request is under `--max-request-bytes` (default 64,000 bytes at this gate; measured-behaviour.md). If Jev still answers a 4xx reporting the token limit, the script halves the account and retries, down to `--min-item-chars` (default 2,000). Below that the anchor is `verdict: error` with `JEV.CONTEXT_EXCEEDED`.
 - Each result records `item_chars_sent`, `item_shortened`, `request_bytes`; the run's `summary.shortened` lists affected anchors.
 
-## Attempt policy
+## Provider retries and attempts
 
 Per anchor, per request:
 
 | Situation | Behaviour |
 | --- | --- |
-| 429, 529, any 5xx, timeout, network error, invalid response | Up to 3 attempts. Delay before the second: `Retry-After` if present (capped at 30 s), else 1 s; before the third: 2 s. Then `verdict: error` with the last code; other anchors continue |
-| 422 token limit | Shorten and retry as above (counts toward the 3 attempts) |
-| 422 other | Not retried; `JEV.VALIDATION` with up to 300 characters of the body, which names the bad field |
-| 401 | Not retried; the whole run aborts with `AUTH.CREDENTIALS` (body withheld) |
-| Missing key, or `allow_remote_judge` not `true` | Checked before any request; the run aborts |
+| Provider response, timeout, network or response error | The shared sc-decidr client applies its retry policy and status classification. Plan-anchor makes one client call, records the wheel's `attempts` on typed failures, then continues with other anchors unless the error is authentication |
+| Context window exceeded | Planning refuses the oversized item; development halves evidence and makes another logical client call down to 2,000 characters |
+| Authentication error | The wheel aborts the run with `AUTH.CREDENTIALS`; the response body is withheld |
+| Missing key, or `allow_remote_judge` not `true` | Credentials are resolved by the wheel after plan-anchor checks consent; the run aborts before provider data is sent |
 
-Agents and the skill never add a retry loop around the script. `attempts` is recorded on every result. Questions in one request are answered independently and in parallel: one round trip per anchor.
+Agents and plan-anchor never add provider retry loops around the client. Typed failures record the attempt count reported by the wheel. A successful response does not include an attempt count in the sc-decidr result contract, so plan-anchor records one successful logical client call. Questions in one request are answered independently and in parallel: one logical client call per anchor.
 
 ## Models
 
-`jev-latest` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) with `--model jev-1.13.0`.
+`jev` moves with releases. Once thresholds are tuned, pin the version the response reported (`model_answered` in the run file) with `--model jev-1.14.0`.
 
 ## Error codes
 
@@ -104,11 +103,15 @@ Agents and the skill never add a retry loop around the script. `attempts` is rec
 | `AUTH.CREDENTIALS` | pre-flight, 401 | Key missing, malformed, or rejected. Not retried |
 | `POLICY.REMOTE_JUDGE_DISABLED` | pre-flight | `allow_remote_judge` is `false` or absent. Absent: ask the user once, record it with `plan_anchor_settings.py set`, commit. `false`: only the user changes it. `--dry-run` works either way |
 | `DEPENDENCY.PYYAML`, `SETTINGS.*`, `REPO.NOT_FOUND` | pre-flight | The settings file could not be read; fix what the error names. Never a silent default |
-| `JEV.RATE_LIMITED`, `JEV.OVERLOADED`, `JEV.HTTP`, `JEV.NETWORK` | transport | Transient; retried 3 times, then the command exits 2 (the cell is `error` in the partial run) |
-| `JEV.RESPONSE_INVALID` | validation | Malformed or oversized response; retried, then the command exits 2 (the cell is `error` in the partial run) |
+| `DEPENDENCY.SETTINGS` | consent pre-flight | The consumer settings module could not be imported; check the installation and Python environment |
+| `DECIDR.RATE_LIMITED`, `DECIDR.OVERLOADED`, `DECIDR.NETWORK` | sc-decidr transport | The shared client reports the failure and observed attempt count; plan-anchor does not resend it |
+| `DECIDR.RESPONSE_INVALID` | sc-decidr response parsing | Malformed provider result or answer; plan-anchor does not resend it |
+| `DECIDR.CONFIG`, `DECIDR.LOG`, `DECIDR.ERROR` | sc-decidr | Configuration, logging or other client failure; follow the message and suggested action |
+| `DECIDR.INVALID_RESULT`, `DECIDR.INVALID_OPTION` | shared client | Invalid wheel result or unsupported client option; check the installed wheel and call options |
+| `CANCELED` | shared client / interrupt | The operation was canceled; follow the message and suggested action before retrying |
 | `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
 | `PLAN.TOO_LARGE` | planning-gate pre-flight or 422 | The bead does not fit one request after code reduction; triage per `plan-size-and-shape.md`. Never trim or raise the cap to pass |
-| `JEV.VALIDATION` | 422 other | Request rejected; usually a malformed override |
+| `DECIDR.VALIDATION` | 422 other | Request rejected; usually a malformed override |
 | `VALIDATION.ANCHORS`, `VALIDATION.INPUT` | record / arguments | Fix `anchors.json` (`validate`) or the flags |
 | `QUESTIONS.ROLES` | question set | An override renamed a question ID; keep the default IDs |
 | `ANCHOR.UNKNOWN`, `ANCHOR.NONE`, `ANCHOR.NOT_LOCKED` | record | Wrong ID; nothing locked; `--anchor` named a proposed or retired anchor (`--include-unlocked` is for fixtures only) |
@@ -167,11 +170,11 @@ Two layers and a logged stream. Nothing in them writes to the tracker: reading t
 
 | Subcommand | Input | Output |
 | --- | --- | --- |
-| `batch` (low layer, tracker-neutral) | JSONL request lines on stdin or `--input <file>` (one parser for both), each `{"item": {id, title, text}, "anchor": {id, statement, scope, kind}, "questions": [{candidate_id, questions, roles?}, ...]}` (`assets/schemas/jev-batch-request.schema.json`) | One JSONL result line per (item, candidate, repeat) on stdout, written as soon as that line and every line before it have an answer, never held for the end; each carries `request_id` (`<prefix>/<item>/<anchor>/<candidate>/r<n>`), `run_id`, `request_sha256`, `answers` with probabilities, `verdict` at `--threshold`, `leaning` at 0, `retry_count` and `attempts` (`assets/schemas/jev-batch-result.schema.json`) |
+| `batch` (low layer, tracker-neutral) | JSONL request lines on stdin or `--input <file>` (one parser for both), each `{"item": {id, title, text}, "anchor": {id, statement, scope, kind}, "questions": [{candidate_id, questions, roles?}, ...]}` (`assets/schemas/jev-batch-request.schema.json`) | One JSONL result line per (item, candidate, repeat) on stdout and in the log; live results are written as calls complete, so their order is completion order; deterministic fixture results follow request order. Consumers correlate results by `request_id` and item, anchor, candidate and repeat. Each carries `run_id`, `request_sha256`, `answers` with probabilities, `verdict` at `--threshold`, `leaning` at 0, `retry_count` and `attempts` (`assets/schemas/jev-batch-result.schema.json`) |
 | `bead-batch` (high layer, bead adapter) | `--anchors`, `--gate`, `--anchor`, `--item <bead>` (repeatable); the question bead is the anchor's `beads.<gate>_questions`, and `--candidates` adds each open child bead as a candidate (closed children are skipped) | The same request lines (`--emit` prints them and calls nothing), else piped in-process through `batch`; it only reads beads |
 | `tournament` | `--request` (the tune request), `--oracle` (`tune-oracle.schema.json`), `--candidates` (`tune-candidates.schema.json`), `--out` | Builds oracle case x bundle request lines, runs them through `batch` into `<out>/results.jsonl`, scores the stream and writes `<out>/result_vars.json` for `anchor-tuning-result.md.j2`. `--results` rescores an existing stream; `--dry-run` writes `requests.dry-run.jsonl` |
 
-Every result line is also teed, unchanged, to an append-only log, flushed after every line: `batch` and `bead-batch` write `<anchors dir>/anchor-runs/tournament-<run>.jsonl` (`--run-dir`, `--run-name`; default name a UTC timestamp), so the log exists even when the caller consumes stdout; the tournament's log is `<out>/results.jsonl`. At most 4 calls run at once (`--max-workers`, 1 to 4). A failed call is retried once (recorded in `retry_count` and `attempts`); `AUTH.CREDENTIALS` and `POLICY.*` stop the remaining calls. Every request line is validated, and every request size checked against `--max-request-bytes`, before the first call. A live run needs a key and `allow_remote_judge: true` (`--repository-root`); `--dry-run` and `--answers-file` (keys `<item>/<candidate>/r<n>`, `<item>/<candidate>`, `<candidate>`, `*`; a list gives successive attempts; `{"__error__": "<code>"}` simulates a failure) never contact Jev.
+Every result line is also teed, unchanged, to an append-only log, flushed after every line: `batch` and `bead-batch` write `<anchors dir>/anchor-runs/tournament-<run>.jsonl` (`--run-dir`, `--run-name`; default name a UTC timestamp), so the log exists even when the caller consumes stdout; the tournament's log is `<out>/results.jsonl`. At most 4 calls run at once (`--max-workers`, 1 to 4). The shared client owns provider retries; plan-anchor makes one client call per logical request and does not resubmit a failed call. Attempt counts are recorded in `retry_count` and `attempts`; `AUTH.CREDENTIALS` and `POLICY.*` stop the remaining calls. Every request line is validated, and every request size checked against `--max-request-bytes`, before the first call. A live run needs a key and `allow_remote_judge: true` (`--repository-root`); `--dry-run` and `--answers-file` (keys `<item>/<candidate>/r<n>`, `<item>/<candidate>`, `<candidate>`, `*`; fixture lists are not retried, and the current fixture path selects their first entry; `{"__error__": "<code>"}` simulates a failure) never contact Jev.
 
 `lint` and `shape` are deterministic and never contact Jev. `lint` with neither `--id` nor `--all` lints every non-retired anchor.
 
@@ -179,7 +182,7 @@ Every result line is also teed, unchanged, to an append-only log, flushed after 
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--model` | `jev-latest` | Model alias or pinned version |
+| `--model` | `jev` | Model alias or pinned version |
 | `--threshold` | 0.6 | Confidence gate (`verdict-gating.md`) |
 | `--questions` | `assets/questions/<gate>.json` | Alternative question-set file |
 | `--overrides-file` | none | Per-anchor overrides read from the question beads |
