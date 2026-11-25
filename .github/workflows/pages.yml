@@ -37,5 +37,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      # deploy-pages intermittently reports "Found 0 artifact(s)" immediately
+      # after a successful upload (observed 2 of 4 runs). A single guarded retry
+      # absorbs it; the second step is authoritative.
+      - uses: actions/deploy-pages@v4
+        id: deployment_attempt
+        continue-on-error: true
+      - name: Settle artifact visibility
+        run: sleep 10
       - uses: actions/deploy-pages@v4
         id: deployment
