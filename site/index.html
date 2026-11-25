@@ -5,14 +5,46 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>plan-anchor</title>
   <style>
-    body { font: 16px system-ui, sans-serif; line-height: 1.5; max-width: 52rem; margin: 3rem auto; padding: 0 1rem; }
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0 auto; max-width: 46rem; padding: 2.5rem 1.25rem; color: #1b1b1f; }
+    h1 { font-size: 1.7rem; margin: 0 0 .3rem; }
+    p.sub { color: #55565e; margin: 0 0 1.5rem; font-size: 1.05rem; }
+    h2 { font-size: .95rem; margin: 2.2rem 0 .6rem; text-transform: uppercase;
+          letter-spacing: .06em; color: #55565e; }
+    ul { padding-left: 1.1rem; }
+    li { margin: .35rem 0; }
+    a { color: #0b5fff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { background: #f2f2f5; padding: .1rem .3rem; border-radius: 3px; font-size: .9em; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+              gap: .9rem; padding: 0; list-style: none; }
+    .cards li { border: 1px solid #e6e6ea; border-radius: 8px; padding: .8rem .9rem; margin: 0; }
+    .cards b { display: block; margin-bottom: .15rem; }
+    .cards span { color: #55565e; font-size: .9rem; }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e6e6ea;
+              color: #6b6b74; font-size: .85rem; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>plan-anchor</h1>
-    <p>Keep plans and delivered work aligned with user-approved anchors.</p>
-    <p><a href="reports/index.html">Integration reports</a></p>
-  </main>
+<main>
+  <h1>plan-anchor</h1>
+  <p class="sub">Keeps plans, and the code built from them, anchored to what you actually said while planning.</p>
+  <p>Facts you state are captured verbatim as numbered <b>anchors</b>, turned
+  into typed questions for the Jev decision model, and enforced mechanically at
+  two gates: once against the plan, once against the delivered work. When
+  something drifts, the report quotes your own words back.</p>
+
+  <h2>Navigate</h2>
+  <ul class="cards">
+    <li><a href="announcements/index.html"><b>Announcements</b><span>What changed, newest first</span></a></li>
+    <li><a href="reports/index.html"><b>Reports</b><span>Date-stamped run reports</span></a></li>
+    <li><a href="diagrams/index.html"><b>Diagrams</b><span>Architecture and flow, as HTML</span></a></li>
+  </ul>
+  <h2>Source</h2>
+  <p><a href="https://github.com/randlee/plan-anchor">randlee/plan-anchor</a></p>
+  <footer>Static site published from <code>site/</code> on <code>main</code>.
+  Index pages are regenerated at deploy time by <code>scripts/build-site.py</code>.</footer>
+
+</main>
 </body>
 </html>
