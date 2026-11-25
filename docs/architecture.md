@@ -277,7 +277,7 @@ plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
 ## ADR-011 Fast-model stand-ins for tuning
 
-Status: planned; becomes accepted when sprint j-3 merges into plan-anchor's
+Status: planned; becomes accepted when sprint j-5 merges into plan-anchor's
 integrate/phase-j. Date: 2026-10-17; amended 2026-11-24 (phase j ruling).
 
 Context: Jev returns choices and confidence but no reason, so a failing cell
@@ -574,7 +574,7 @@ luna sends fail closed only on a key the wheel cannot resolve. This repository r
 
 ## ADR-017 Jev queries are recorded once, in sc-agent's session log
 
-Status: planned (phase j); becomes accepted when sprint j-3 merges into
+Status: planned (phase j); becomes accepted when sprint j-5 merges into
 plan-anchor's integrate/phase-j. Date: 2026-11-24; amended at phase j plan
 review, 2026-11-24.
 
@@ -610,8 +610,10 @@ batch, `on_result`. Readers get answers by
 log's files. Redaction calls the generated client, which uses the wheel's
 provider-key list. `judge` writes `<run_id>.json` and `check-fixtures` writes one
 record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
-`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; it passes
-only the alias and the wheel resolves the provider.
+`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; the `Run`
+holds the default model, a per-call override is the wheel's typed model value
+(`sc_agent.model("haiku")`), no call passes a provider, and the wheel resolves
+the provider.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
