@@ -277,8 +277,11 @@ plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
 ## ADR-011 Fast-model stand-ins for tuning
 
-Status: planned; becomes accepted when sprint j-5 merges into plan-anchor's
-integrate/phase-j. Date: 2026-10-17; amended 2026-11-24 (phase j ruling).
+Status: retired (phase j plan review, 2026-11-24; never built). Owner ruling
+(phase j plan review, 2026-11-24): stand-ins are removed; the caller runs jev
+or haiku or luna or laya or decider, one model per command, and fan-out across
+models is the caller's job (REQ-087). Date: 2026-10-17; amended 2026-11-24.
+The text below is kept as history.
 
 Context: Jev returns choices and confidence but no reason, so a failing cell
 cannot be asked why. Predicted (counterfactual) answers from models proved
@@ -288,9 +291,7 @@ session in an empty temp dir; every query now goes through sc-agent (ADR-017).
 Decision: `judge --stand-ins` sends the identical Jev request with model
 `haiku` and with model `luna` (profiles configured under
 `fast_agents.profiles` in settings), after the Jev send, one batch per
-stand-in model over the cells, through the judge command's sc-agent `Run`
-(lead ruling at phase j plan review, 2026-11-24, pending owner confirmation:
-sequential, so that no test depends on timing). Each stand-in query gets its own sc-agent
+stand-in model over the cells, through the judge command's sc-agent `Run`. Each stand-in query gets its own sc-agent
 session row and run link. Answers are checked before use by sc-decidr's
 shared typed response decoder; malformed answers produce
 `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared client fixture
@@ -309,7 +310,7 @@ exit 2 with a typed error envelope (ADR-007). Source:
 `design/anchor-tuning-stand-ins.md` (draft; predates this amendment).
 
 Consequences: Tuning gains an explanation channel without a second verdict.
-Settings validation must accept `fast_agents`; it rejects the key now. Only
+Settings validation keeps rejecting `fast_agents`. Only
 `diff` exists; `--stand-ins`, `follow-up`, `fast_agents` and the tuning-loop
 prompt are not built, and `follow-up` also waits on randlee/sc-agent#428.
 REQ-020, REQ-043 to REQ-046.
@@ -615,15 +616,15 @@ batch, `on_result`. Readers get answers by
 log's files. Redaction calls the generated client, which uses the wheel's
 provider-key list. `judge` writes `<run_id>.json` and `check-fixtures` writes one
 record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
-`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; the `Run`
-holds the default model, a per-call override is the wheel's typed model value
-(`run.model("haiku")`), no call passes a provider, and the wheel resolves
-the provider.
+`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; `--model <selector>`
+passes the caller's selector unchanged to the command's one `Run`, which holds
+that one model; plan-anchor names no model in code, no call passes a model or
+a provider, and the wheel resolves the provider (owner ruling, phase j plan
+review, 2026-11-24).
 
 Lead rulings at phase j plan review, 2026-11-24: result lines have no
 plan-anchor record beside them (`request_id` encodes the ids); an
-`--answers-file` run opens no `Run` and writes no run file. Pending owner
-confirmation: the `run.model(...)` spelling.
+`--answers-file` run opens no `Run` and writes no run file.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
