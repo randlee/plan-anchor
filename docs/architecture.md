@@ -168,6 +168,9 @@ Amended 2026-10-18 (0.8.3): a Jev call without an answer is exit 2, refusals
 and no-ops are exit 0, and every CLI exits 130 with a `CANCELED` envelope.
 Amended 2026-11-24 (phase j plan review, lead ruling): an `--answers-file`
 (fixture) run writes no run file and opens no sc-agent `Run`.
+Amended 2026-11-24 (phase j plan review, lead ruling): a failed `Run`
+creation writes no run file and exits 2; `run_main` and `utf8_stdio()` come
+from the rendered decidr client.
 
 Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
 meant "ran, negative answer", so a caller could not tell a failing gate from a
@@ -198,18 +201,19 @@ result: when any `judge` or `check-fixtures` cell, `dedupe --jev` pair or
 and HTTP errors, an invalid response, a context overflow or per-cell
 `PLAN.TOO_LARGE`, a failed confirmation, a missing or malformed fixture entry),
 the error takes the first failure's code, `data` keeps the partial work (on a
-live run the run file is still written and `data.run_path` names it) and
+live run whose `Run` was created, the run file is still written and `data.run_path` names it) and
 `data.failures` lists each item without an answer. An `--answers-file`
-(fixture) run writes no run file and opens no sc-agent `Run`. `add --rubric`
+(fixture) run writes no run file and opens no sc-agent `Run`. A failed `Run`
+creation (the wheel refuses to open the `Run`) writes no run file and exits 2. `add --rubric`
 records nothing even with `--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
 130 on interrupt with a `CANCELED` envelope (`recoverable: true`;
-`result.run_main`). No command exits 1. The repository's
+the rendered decidr client's `run_main`). No command exits 1. The repository's
 CI scripts (`check_version_sync.py` drift, a missing `--base` ref or a
 malformed manifest, `gen_install_data.py --check` staleness, a failing git
 command or a corrupt `legacy-owned.json`, any `install_sc_compose_ci.py`
 failure) also exit 2 with a message, never a traceback, since their job is to
 fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
-stdin, stdout and stderr to UTF-8 at entry (`result.utf8_stdio()`), on every
+stdin, stdout and stderr to UTF-8 at entry (the rendered decidr client's `utf8_stdio()`), on every
 platform. Agent launches report a typed failure reason; a gate agent that
 cannot show a question bead stops with `TRACKER.SHOW_FAILED` (0.8.3).
 
@@ -631,7 +635,9 @@ review, 2026-11-24).
 
 Lead rulings at phase j plan review, 2026-11-24: result lines have no
 plan-anchor record beside them (`request_id` encodes the ids); an
-`--answers-file` run opens no `Run` and writes no run file.
+`--answers-file` run opens no `Run` and writes no run file; a failed `Run`
+creation (the wheel refuses to open the `Run`) writes no run file and the
+command exits 2.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
