@@ -63,8 +63,8 @@ Verified: `test_jev_judge.py::DecideTests` (all rows, including `test_row1_not_a
 Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. Status: shipped.
 Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_runs_ignored`, `DiffTests`.
 
-**REQ-011** The shared sc-decidr client shall own provider retries and status classification. Plan-anchor shall make one client call per logical request and shall not resend provider failures; it shall record the wheel-reported attempt count on typed failures, abort on authentication failure, and continue judging other anchors after a non-authentication failure.
-Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018. Status: shipped.
+**REQ-011** The shared sc-decidr client shall own provider retries and status classification. Plan-anchor shall make one client call per logical request and shall not resend provider failures; it shall abort on authentication failure and continue judging other anchors after a non-authentication failure. A failed send has its own sc-agent session row that holds the error and the attempt count. Plan-anchor shall record that send's `session_id` with the typed failure and shall not copy the attempt count.
+Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018; OPERATOR (phase j ruling, 2026-11-24). Status: shipped for retries, classification, abort and continue; planned for the failed send's `session_id` in place of the attempt count (phase j; today the wheel-reported attempt count is recorded on typed failures).
 Verified: `test_jev_judge.py::TransportPolicyTests`.
 
 **REQ-012** Every Jev answer shall be checked before use by sc-decidr's shared typed response decoder for live replies and the shared client fixture validator for fixture replies. The check requires exactly the requested answer IDs, a type matching each question, and finite probabilities and confidence values in the range 0 through 1. Invalid replies are `DECIDR.RESPONSE_INVALID`.
@@ -81,21 +81,21 @@ Verified: `test_jev_judge.py::ReportTests.test_line_format_quotes_the_statement`
 
 ## Data leaving the machine and configuration
 
-**REQ-015** Live Jev calls shall fail closed without a TypeSafe API key and a recorded `allow_remote_judge: true` (REQ-065), and send nothing in that case.
-Source: PRD "Jev data handling"; `design/architecture-and-call-graphs.md` §6. Status: shipped.
+**REQ-015** Live Jev calls shall fail closed without a resolved credential for the selected model's provider (REQ-087) or without a recorded `allow_remote_judge: true` (REQ-065), and send nothing in that case.
+Source: PRD "Jev data handling"; `design/architecture-and-call-graphs.md` §6; OPERATOR (phase j ruling, 2026-11-24). Status: shipped for the TypeSafe credential; planned for the `haiku` and `luna` provider credentials (phase j).
 Verified: `test_jev_judge.py::FailClosedTests.test_missing_key_and_missing_consent` (asserts zero transport calls).
 
 **REQ-016** `--dry-run` and `--answers-file` execution shall make zero network calls.
 Source: INTENT "Success"; retired ANC-006 (requirement retained). Status: shipped.
 Verified: `test_remote_judge_setting.py::LiveCallConsentTests.test_dry_run_and_fixture_answers_need_no_setting`, `test_jev_judge_exclude.py::JudgeExclusionTests.test_dry_run_writes_no_request_for_an_excluded_cell` (both assert the transport stub received no body), `test_jev_judge.py::FailClosedTests.test_fixture_and_dry_run_need_neither`.
 
-**REQ-017** Script output shall redact the exact TypeSafe API-key value and bearer tokens from every emitted value and never write them to a run file.
-Source: ANC-012. Status: shipped; run files are redacted since 0.8.3 (`save_json`; before, only stdout was).
+**REQ-017** Script output shall redact the exact values of `TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and bearer tokens, from every emitted value and never write them to a run file.
+Source: ANC-012; OPERATOR (phase j ruling, 2026-11-24). Status: shipped for `TYPESAFE_API_KEY` and bearer tokens; run files are redacted since 0.8.3 (`save_json`; before, only stdout was). Planned for the three provider keys (phase j; today `redact_sensitive` in `jev_judge.py.j2` reads only `TYPESAFE_API_KEY`).
 Verified: `test_jev_judge.py::FailClosedTests.test_every_emitted_value_redacts_the_live_key_and_bearer_tokens`, `FailClosedTests.test_key_format_checked_and_never_echoed`, `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 Verified: `test_jev_failures.py::RunFileRedaction.test_a_key_in_the_item_title_never_reaches_a_fixture_run_file`, `RunFileRedaction.test_a_key_in_the_item_text_never_reaches_a_dry_run_file` (a canary key in `TYPESAFE_API_KEY` and a bearer token, fed through `--item-title` and `--item-file`, are absent from the run file). Partial: a live run's file is not read (it is written by the same `save_json`).
 
-**REQ-018** Plan-anchor shall resolve the TypeSafe API key from `TYPESAFE_API_KEY` first and, only when it is absent, from the documented platform credential store; it shall not read other environment variables as runtime configuration.
-Source: ANC-005; OPERATOR. Status: shipped (met since 0.7.3; credential-store fallback added in 0.8.6).
+**REQ-018** Plan-anchor shall resolve the TypeSafe API key from `TYPESAFE_API_KEY` first and, only when it is absent, from the documented platform credential store; it shall not read other environment variables as runtime configuration. It shall read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `OPENROUTER_API_KEY` only to redact their values (REQ-017).
+Source: ANC-005; OPERATOR; OPERATOR (phase j ruling, 2026-11-24). Status: shipped (met since 0.7.3; credential-store fallback added in 0.8.6); planned for reading the three provider keys for redaction (phase j; `test_only_typesafe_key_is_read_from_the_environment` will need those three names).
 Verified: `test_jev_judge.py::CredentialLookupTests`, `test_no_plugin_env_vars.py::ShippedTreeNamesNoRetiredVariable.test_only_typesafe_key_is_read_from_the_environment`, `ShippedTreeNamesNoRetiredVariable.test_no_plan_anchor_prefix_in_shipped_files`, `RetiredVariablesHaveNoEffect.test_dry_run_output_and_requests_are_unchanged`, `RetiredVariablesHaveNoEffect.test_live_request_url_and_behaviour_are_unchanged`. Note: the remote-judge opt-in moved to settings in 0.7.1 (REQ-065) and the other six `PLAN_ANCHOR_*` variables were removed in 0.7.3; their values are defaults with CLI flags. The only other variables read are `USER`, as the default for `add --stated-by` (provenance, not configuration), and the home directory (`HOME`, `USERPROFILE` or `HOMEDRIVE`+`HOMEPATH` through `os.path.expanduser`), which only ends the nearest-install and settings walks and names the global locations (REQ-068, REQ-073).
 
 **REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys (`schema_version`, `anchor_tracker`, `allow_remote_judge`, `plan_dir` (REQ-082)), committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
@@ -204,16 +204,16 @@ Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.t
 Source: ANC-028, ANC-029, ANC-030. Status: shipped.
 Verified: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_triage_request_and_result_render_validate_relationally`.
 
-**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request to fast stand-in models (Claude `haiku`, Codex `luna`) in parallel with Jev, one session per cell per model in an empty temp dir with no tools, check each answer before use with sc-decidr's shared typed response decoder (exact answer IDs, matching answer types, and finite probabilities and confidence in the range 0 through 1; malformed replies are `DECIDR.RESPONSE_INVALID`), and record it beside the Jev answer without changing gating.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md`. Status: planned.
+**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request through sc-agent `send` with model `haiku` and with model `luna`, in parallel with Jev, one send per cell per stand-in model, passing the judge run's `run_id`, so that each stand-in query gets its own sc-agent session row and its own run link. Each stand-in answer shall be checked before use with sc-decidr's shared typed response decoder (exact answer IDs, matching answer types, and finite probabilities and confidence in the range 0 through 1; malformed replies are `DECIDR.RESPONSE_INVALID`). The run file shall record each stand-in query's `session_id` beside the Jev result for that cell and shall not copy the stand-in's answers. A stand-in send that intentionally repeats a request already sent to the same model shall pass `cache=False`. Stand-in results shall not change gating.
+Source: OPERATOR; `design/anchor-tuning-stand-ins.md`; OPERATOR (phase j ruling, 2026-11-24). Status: planned (never built; the earlier design ran each stand-in as a harness CLI session in an empty temp dir).
 Verified: none.
 
-**REQ-044** `follow-up --run --cell --profile --question` shall resume the session of the stand-in that gave the answer and append the turn to the run's transcript file.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md`. Status: planned.
+**REQ-044** `follow-up --run --cell --profile --question` shall resume, through sc-agent, the stand-in session whose `session_id` the run file records for that cell and profile, and shall append the follow-up query's `session_id` to the run's transcript file instead of the reply text. Resuming a `haiku` or `luna` session is not available until randlee/sc-agent#428 lands, so `follow-up` cannot be built before then.
+Source: OPERATOR; `design/anchor-tuning-stand-ins.md`; OPERATOR (phase j ruling, 2026-11-24). Status: planned; future work blocked on randlee/sc-agent#428.
 Verified: none.
 
-**REQ-045** The stand-in tuning loop shall treat stand-in output as advisory and divergence as signal, keep the tuner neutral, always run the follow-up turns without asking permission, and make one small plan edit per iteration followed by a re-run.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "The loop". Status: planned.
+**REQ-045** The stand-in tuning loop shall treat stand-in output as advisory and divergence as signal, keep the tuner neutral, and make one small plan edit per iteration followed by a re-run. Once `follow-up` is available (REQ-044, after randlee/sc-agent#428), the loop shall always run the follow-up turns without asking permission.
+Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "The loop"; OPERATOR (phase j ruling, 2026-11-24). Status: planned; the follow-up turns wait on randlee/sc-agent#428.
 Verified: none.
 
 **REQ-046** Each tuning plan edit shall be its own commit, recorded in a notes table row (change, reason, run IDs, before/after failing cells) and compared with `jev_judge.py diff`; there shall be no ledger CLI.
@@ -386,14 +386,18 @@ Verified: `test_plan_dir.py` (all), `test_install.py::InstallTests.test_rerun_an
 Source: OPERATOR (phase j session-log ruling, 2026-11-24); REQ-016. Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
 Verified: none.
 
-**REQ-084** Each `check-fixtures` invocation shall mint one ULID `run_id`. It shall write one record per (`run_id`, item), where the item is one fixture sentence, named `<run_id>-<item>.json` with the item id sanitised for a file name.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today each fixture sentence gets its own `gate-stamp-item` run id).
+**REQ-084** Each invocation of `judge`, `check-fixtures`, `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch` or `tournament` shall mint one ULID `run_id` and use it as the `run_id` of every record and result line the invocation writes. `judge` shall name its run file `<run_id>.json`. `check-fixtures` shall write one record per (`run_id`, item), where the item is one fixture sentence, named `<run_id>-<item>.json` with the item id sanitised for a file name.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24). Status: planned (phase j; today `judge` run ids are `<gate>-<stamp>-<item>` and each fixture sentence gets its own `gate-stamp-item` run id).
 Verified: none.
 
-**REQ-085** When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, so that each repeat is its own Jev call with its own `session_id`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j).
+**REQ-085** When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j; today `_rubric_judgement` in `jev_judge.py.j2` re-asks with the cache on).
 Verified: none.
 
 **REQ-086** Each result line that `batch`, `bead-batch` and `tournament` write to stdout, `anchor-runs/tournament-<run>.jsonl` and `<out>/results.jsonl` shall be the shared `jev-batch-result/2` line with only its generic fields. Plan-anchor's own fields for a line (`anchor_id`, `candidate_id` and the repeat) shall be kept in plan-anchor's own record, which carries the line's `run_id` and `session_id`. The tournament's ranking in `<out>/result_vars.json` shall reference the `session_id`s it scored. `tournament --results` shall read the answers it rescores from the sc-agent session log by `session_id`.
 Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today the lines are `plan-anchor/jev-batch-result/1` and carry `answers`, `retry_count` and `attempts`).
+Verified: none.
+
+**REQ-087** `judge`, `check-fixtures`, `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch` and `tournament` shall accept `--model haiku` and `--model luna` and send each query through sc-agent with that model. With `--model haiku` or `--model luna`, a live call shall be sent when the model's provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `OPENROUTER_API_KEY`) is set, including when no `TYPESAFE_API_KEY` is set, and shall not be refused with `AUTH.CREDENTIALS` for the missing TypeSafe key.
+Source: OPERATOR (phase j ruling, 2026-11-24). Status: planned (phase j).
 Verified: none.

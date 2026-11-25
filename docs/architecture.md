@@ -274,30 +274,39 @@ plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
 ## ADR-011 Fast-model stand-ins for tuning
 
-Status: planned. Date: 2026-10-17.
+Status: planned. Date: 2026-10-17; amended 2026-11-24 (phase j ruling).
 
 Context: Jev returns choices and confidence but no reason, so a failing cell
 cannot be asked why. Predicted (counterfactual) answers from models proved
-unreliable.
+unreliable. The first design, never built, ran each stand-in as a harness CLI
+session in an empty temp dir; every query now goes through sc-agent (ADR-017).
 
-Decision: `judge --stand-ins` sends the identical Jev request to fast models
-(Claude `haiku`, Codex `luna`) configured under `fast_agents.profiles` in
-settings, one session per cell per model with no tools in an empty temp dir,
-checked before use by sc-decidr's shared typed response decoder; malformed
-answers produce `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared
-client fixture validator. Stand-in output is advisory and never gates;
-divergence from Jev is a signal that the question and the text are misaligned.
-`follow-up` resumes the session of the model that answered. The tuner stays
-neutral, always runs the follow-up turns, makes one small edit (usually the
-sprint's `Prerequisites` or `Additional context`) and re-runs. The ledger is
-one commit per edit, a notes table row per iteration and `jev_judge.py diff`;
-no ledger CLI. A stand-in launch failure is an error: exit 2 with a typed
-error envelope (ADR-007). Source: `design/anchor-tuning-stand-ins.md` (draft).
+Decision: `judge --stand-ins` sends the identical Jev request through sc-agent
+`send` with model `haiku` and with model `luna` (profiles configured under
+`fast_agents.profiles` in settings), one send per cell per stand-in model,
+passing the judge run's `run_id`. Each stand-in query gets its own sc-agent
+session row and run link. Answers are checked before use by sc-decidr's
+shared typed response decoder; malformed answers produce
+`DECIDR.RESPONSE_INVALID`. Fixture answers use the shared client fixture
+validator. The run file records each stand-in's `session_id` beside the Jev
+result and copies no stand-in answer. A stand-in send that intentionally
+repeats a request already sent to the same model passes `cache=False`.
+Stand-in output is advisory and never gates; divergence from Jev is a signal
+that the question and the text are misaligned. `follow-up` resumes the
+stand-in's sc-agent session; resume is future work (randlee/sc-agent#428), and
+`follow-up` is not available until #428 lands. The tuner stays neutral, runs
+the follow-up turns without asking once they are available, makes one small
+edit (usually the sprint's `Prerequisites` or `Additional context`) and
+re-runs. The ledger is one commit per edit, a notes table row per iteration
+and `jev_judge.py diff`; no ledger CLI. A stand-in send failure is an error:
+exit 2 with a typed error envelope (ADR-007). Source:
+`design/anchor-tuning-stand-ins.md` (draft; predates this amendment).
 
 Consequences: Tuning gains an explanation channel without a second verdict.
 Settings validation must accept `fast_agents`; it rejects the key now. Only
 `diff` exists; `--stand-ins`, `follow-up`, `fast_agents` and the tuning-loop
-prompt are not built. REQ-020, REQ-043 to REQ-046.
+prompt are not built, and `follow-up` also waits on randlee/sc-agent#428.
+REQ-020, REQ-043 to REQ-046.
 
 ## ADR-012 Anchor exclusions as a plain skip
 
@@ -339,8 +348,10 @@ decision call passes `keyring_service=None` and `keyring_account=None` through
 the generated client, selecting the shared default TypeSafe keyring entry
 (service `TYPESAFE_API_KEY`, account the current OS user; REQ-SAG-0401). The
 plugin does not query the platform credential store. The plugin reads
-`TYPESAFE_API_KEY` only to redact it from emitted values and run files
-(REQ-017), never to resolve or pass a credential. Since 0.7.3 the
+`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and
+`OPENROUTER_API_KEY` only to redact them from emitted values and run files
+(REQ-017; the three provider keys from phase j), never to resolve or pass a
+credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
 CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
@@ -566,14 +577,18 @@ committed `anchor-runs/` folder.
 Decision: Plan-anchor's records hold only what it derives (verdicts, leaning,
 rankings) and its own ids (`anchor_id`, `candidate_id`, repeat), and reference
 the `session_id` of each query they used. They never copy the composed request body, Jev's
-answers, `model_answered` or attempt counts. Result lines are the shared
-`jev-batch-result/2` line. An intentional identical resend (the near-threshold
-confirmation, and tournament and `batch` repeats) passes `cache=False`. A dry run
-shows the would-send requests and writes nothing under `anchor-runs/` and no
-log event. `check-fixtures` mints one ULID `run_id` per invocation and writes
-one record per (`run_id`, item) as `<run_id>-<item>.json`.
+answers, `model_answered` or attempt counts; a failed send is referenced by
+its `session_id`, whose row holds the error and the attempts. Result lines are
+the shared `jev-batch-result/2` line. An intentional identical resend (the
+near-threshold confirmation, the second and third `rubric` confirmations, and
+tournament and `batch` repeats) passes `cache=False`. A dry run shows the
+would-send requests and writes nothing under `anchor-runs/` and no log event.
+Every command that sends Jev queries, `judge` included, mints one ULID `run_id`
+per invocation; `judge` writes `<run_id>.json` and `check-fixtures` writes one
+record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
+`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
 when the cache holds the answer. Coverage and diffs no longer meet dry-run
-files. REQ-013, REQ-038, REQ-076, REQ-083 to REQ-086.
+files. REQ-011, REQ-013, REQ-038, REQ-076, REQ-083 to REQ-087.
