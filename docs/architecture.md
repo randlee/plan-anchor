@@ -135,9 +135,12 @@ Decision: Standard library only on Python 3.11+, except PyYAML for settings
 (`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily, and the
 `sc-decidr` wheel for live Jev calls. The wheel version is recorded in the
 generated `decidr_client.py` header and the installation instructions in
-[README.md](../README.md). The client lazily imports `sc_agent`; offline paths
-remain standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
-The wheel owns provider retries, credential lookup and status classification;
+[README.md](../README.md). The client lazily imports `sc_agent` for a live call, for reading sc-agent
+session rows and for the wheel's provider-key list used by redaction (amended
+at phase j plan review, 2026-11-24); every other path remains
+standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
+The wheel owns provider selection, provider retries, credential lookup, run
+ids and status classification;
 `jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and the shared `ClientError {code, message, action, data}`. Exceptions are
@@ -274,17 +277,18 @@ plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
 ## ADR-011 Fast-model stand-ins for tuning
 
-Status: planned. Date: 2026-10-17; amended 2026-11-24 (phase j ruling).
+Status: planned; becomes accepted when sprint j-3 merges into plan-anchor's
+integrate/phase-j. Date: 2026-10-17; amended 2026-11-24 (phase j ruling).
 
 Context: Jev returns choices and confidence but no reason, so a failing cell
 cannot be asked why. Predicted (counterfactual) answers from models proved
 unreliable. The first design, never built, ran each stand-in as a harness CLI
 session in an empty temp dir; every query now goes through sc-agent (ADR-017).
 
-Decision: `judge --stand-ins` sends the identical Jev request through sc-agent
-`send` with model `haiku` and with model `luna` (profiles configured under
-`fast_agents.profiles` in settings), one send per cell per stand-in model,
-passing the judge run's `run_id`. Each stand-in query gets its own sc-agent
+Decision: `judge --stand-ins` sends the identical Jev request with model
+`haiku` and with model `luna` (profiles configured under
+`fast_agents.profiles` in settings), in parallel with Jev, one send per cell
+per stand-in model, through the judge command's sc-agent `Run` (`run.send`). Each stand-in query gets its own sc-agent
 session row and run link. Answers are checked before use by sc-decidr's
 shared typed response decoder; malformed answers produce
 `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared client fixture
@@ -327,7 +331,8 @@ unchanged. An anchor excluded everywhere is still uncovered. REQ-006.
 
 ## ADR-013 Repository settings convention
 
-Status: accepted (amended for 0.12.1). Date: 2026-10-17.
+Status: accepted (amended for 0.12.1; amended at phase j plan review,
+2026-11-24). Date: 2026-10-17.
 
 Context: Behavior varied by machine and environment variable; the skill needs
 one committed place for per-repository choices.
@@ -341,16 +346,17 @@ git-ignored" (`set` reports `settings_ignored_by_git`).
 
 Consequences: A typo never falls back to a default. The keys are
 `schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
-`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-082); the
+`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-088); the
 nearest file at or above the repository wins whole (ADR-015).
-The `sc-decidr` wheel owns credential lookup and precedence. Every live
-decision call passes `keyring_service=None` and `keyring_account=None` through
-the generated client, selecting the shared default TypeSafe keyring entry
-(service `TYPESAFE_API_KEY`, account the current OS user; REQ-SAG-0401). The
-plugin does not query the platform credential store. The plugin reads
-`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and
-`OPENROUTER_API_KEY` only to redact them from emitted values and run files
-(REQ-017; the three provider keys from phase j), never to resolve or pass a
+The `sc-decidr` wheel owns provider selection, credential lookup and
+precedence. Every live decision call passes only the model alias and no
+keyring override (`keyring_service=None`, `keyring_account=None`) through the
+generated client; the wheel resolves the model's provider and selects that
+provider's key and keyring entry (for TypeSafe, service `TYPESAFE_API_KEY`,
+account the current OS user; REQ-SAG-0401). The plugin does not query the
+platform credential store and reads no provider key; the generated client's
+redaction reads the values of the wheel's provider-key list to redact them
+from emitted values and run files (REQ-017), never to resolve or pass a
 credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
@@ -360,7 +366,7 @@ endpoint has no override), `USER` is read only as the default for
 `add --stated-by`, and the home directory (`HOME`, `USERPROFILE`) only ends
 the install and settings walks and names the global locations. `install.py` writes `anchor_tracker` and
 `allow_remote_judge`, keeps `plan_dir`, and keeps `install-lock.json` beside
-the settings. REQ-018, REQ-019, REQ-082.
+the settings. REQ-018, REQ-019, REQ-088.
 
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
@@ -536,7 +542,8 @@ REQ-059 to REQ-064, REQ-067 to REQ-072, REQ-074, REQ-080; ANC-032 to ANC-036.
 
 ## ADR-016 Remote-judge consent is a committed setting
 
-Status: accepted (built in 0.7.1; was planned). Date: 2026-10-17.
+Status: accepted (built in 0.7.1; was planned; amended at phase j plan
+review, 2026-11-24). Date: 2026-10-17.
 
 Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it was
 the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
@@ -544,9 +551,12 @@ the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
 ANC-005.
 
 Decision: Consent is `allow_remote_judge: true|false` in the committed
-`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). Only `true` lets
-a live Jev call through (`judge`, `check-fixtures`, `dedupe --jev`, `rubric`,
-`add --rubric`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
+`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). It is consent to
+send to TypeSafe (Jev) only (owner ruling, 2026-11-24): a send with
+`--model haiku` or `--model luna` needs no consent. Only `true` lets a live
+TypeSafe send through (from any sending command: `judge`, `check-fixtures`,
+`dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch`,
+`tournament`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
 (exit 2, nothing sent), and the absent case's action says to ask the user once
 and record the answer with `plan_anchor_settings.py set allow_remote_judge
 true|false`. A non-bool is `SETTINGS.INVALID_REMOTE_JUDGE` (YAML 1.1 `yes`
@@ -558,12 +568,15 @@ keeps the recorded value. The environment variable is ignored and
 `--allow-remote` is a `VALIDATION.INPUT` usage error.
 
 Consequences: Consent is per repository (or per parent folder) and visible in
-review. Fail-closed behavior (REQ-015) is unchanged. This repository records
+review. Fail-closed behavior (REQ-015) applies to TypeSafe sends; haiku and
+luna sends fail closed only on a key the wheel cannot resolve. This repository records
 `allow_remote_judge: true`. REQ-018, REQ-065, REQ-066.
 
 ## ADR-017 Jev queries are recorded once, in sc-agent's session log
 
-Status: planned (phase j). Date: 2026-11-24.
+Status: planned (phase j); becomes accepted when sprint j-3 merges into
+plan-anchor's integrate/phase-j. Date: 2026-11-24; amended at phase j plan
+review, 2026-11-24.
 
 Context: Every Jev query from every tool goes through sc-agent `send` or
 `send_batch` and gets one session-log row keyed by its ULID `session_id`
@@ -583,10 +596,22 @@ the shared `jev-batch-result/2` line. An intentional identical resend (the
 near-threshold confirmation, the second and third `rubric` confirmations, and
 tournament and `batch` repeats) passes `cache=False`. A dry run shows the
 would-send requests and writes nothing under `anchor-runs/` and no log event.
-Every command that sends Jev queries, `judge` included, mints one ULID `run_id`
-per invocation; `judge` writes `<run_id>.json` and `check-fixtures` writes one
+Every command that sends Jev queries, `judge` included, opens one sc-agent
+`Run` per invocation (`with sc_agent.Run(tool=..., tool_version=...) as run:`),
+makes every send through it (`run.send`, `run.send_batch`, one cache policy
+per call) and uses `run.run_id`, the ULID the wheel mints, for its records and
+file names; plan-anchor never mints an id. The `Run` owns the logger,
+cancellation (`run.cancel()`), configuration resolution (project, config
+directory, workers, timeout) and the test seams, which are injected when the
+`Run` is created; a call passes only its request or requests, the model or
+agent role when they vary, `cache=False` for an intentional resend and, for a
+batch, `on_result`. Readers get answers by
+`session_id` from the wheel's session-row reader and never parse the session
+log's files. Redaction calls the generated client, which uses the wheel's
+provider-key list. `judge` writes `<run_id>.json` and `check-fixtures` writes one
 record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
-`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set.
+`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; it passes
+only the alias and the wheel resolves the provider.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
