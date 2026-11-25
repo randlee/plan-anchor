@@ -162,9 +162,12 @@ REQ-047, REQ-048, REQ-052.
 
 ## ADR-007 CLI contract: JSON envelope; exit 0 when it ran, 2 when it could not
 
-Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3). Date: 2026-10-17.
+Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3;
+amended at phase j plan review, 2026-11-24). Date: 2026-10-17.
 Amended 2026-10-18 (0.8.3): a Jev call without an answer is exit 2, refusals
 and no-ops are exit 0, and every CLI exits 130 with a `CANCELED` envelope.
+Amended 2026-11-24 (phase j plan review, lead ruling): an `--answers-file`
+(fixture) run writes no run file and opens no sc-agent `Run`.
 
 Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
 meant "ran, negative answer", so a caller could not tell a failing gate from a
@@ -194,10 +197,11 @@ result: when any `judge` or `check-fixtures` cell, `dedupe --jev` pair or
 `rubric`/`add --rubric` candidate has no answer after the retries (transport
 and HTTP errors, an invalid response, a context overflow or per-cell
 `PLAN.TOO_LARGE`, a failed confirmation, a missing or malformed fixture entry),
-the error takes the first failure's code, `data` keeps the partial work (the
-run file is still written; `data.run_path` names it) and `data.failures` lists
-each item without an answer; `add --rubric` records nothing even with
-`--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
+the error takes the first failure's code, `data` keeps the partial work (on a
+live run the run file is still written and `data.run_path` names it) and
+`data.failures` lists each item without an answer. An `--answers-file`
+(fixture) run writes no run file and opens no sc-agent `Run`. `add --rubric`
+records nothing even with `--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
 130 on interrupt with a `CANCELED` envelope (`recoverable: true`;
 `result.run_main`). No command exits 1. The repository's
 CI scripts (`check_version_sync.py` drift, a missing `--base` ref or a
@@ -363,9 +367,12 @@ from emitted values and run files (REQ-017), never to resolve or pass a
 credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
-CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
+CLI flags (`--threshold`, `--max-item-chars`, `--max-code-lines`,
 `--no-confirm`, with `--confirm-near-threshold` stating the default; the Jev
-endpoint has no override), `USER` is read only as the default for
+endpoint has no override). The default model is not checked in: the caller
+picks `--model`, and with no `--model` a command passes no model, so the
+sc-decidr wheel's default applies (`jev`, set by sc-agent configuration key
+`model`; ADR-SAG-0020). `USER` is read only as the default for
 `add --stated-by`, and the home directory (`HOME`, `USERPROFILE`) only ends
 the install and settings walks and names the global locations. `install.py` writes `anchor_tracker` and
 `allow_remote_judge`, keeps `plan_dir`, and keeps `install-lock.json` beside
@@ -580,9 +587,9 @@ luna sends fail closed only on a key the wheel cannot resolve. This repository r
 
 ## ADR-017 Jev queries are recorded once, in sc-agent's session log
 
-Status: planned (phase j); becomes accepted when sprint j-5 merges into
-plan-anchor's integrate/phase-j. Date: 2026-11-24; amended at phase j plan
-review, 2026-11-24.
+Status: accepted at phase j plan review, 2026-11-24; binding on sprint j-4,
+which builds it when it merges into plan-anchor's integrate/phase-j.
+Date: 2026-11-24; amended at phase j plan review, 2026-11-24.
 
 Context: Every Jev query from every tool goes through sc-agent `send` or
 `send_batch` and gets one session-log row keyed by its ULID `session_id`

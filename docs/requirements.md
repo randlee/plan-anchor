@@ -244,8 +244,8 @@ Verified (0.8.3): `test_jev_failures.py::JudgeAndCheckFixtures` and `DedupeAndRu
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures"; OPERATOR (phase j plan-review ruling, 2026-11-24). Status: shipped for runner contract failures. The stand-in send clause is retired (OPERATOR, phase j plan-review ruling, 2026-11-24: stand-ins are removed).
 Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 
-**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel recorded in `.github/workflows/tests.yml`.
-Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
+**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel recorded in `scripts/install_sc_decidr_ci.py`.
+Source: OPERATOR; `.github/workflows/tests.yml`; LEAD (phase j plan review, 2026-11-24) (the workflows hold no version literal; they run `scripts/install_sc_decidr_ci.py`). Status: shipped.
 Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml`; `test_install_sc_decidr_ci.py::DecidrWheelInstallerTests.test_supported_runners_download_and_install_the_same_pinned_wheel` and `test_release_and_wheel_versions_follow_client_template`. The matrix itself is the workflow.
 
 ## Documentation and packaging
