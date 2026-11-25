@@ -72,8 +72,9 @@ roles gate: a `prohibition` ignores compliance, and a `structural` anchor is
 not sent to Jev at the planning gate (`deterministic_only`, passing) and is
 gated as a directive at the development gate. A live answer within 0.10 of the
 threshold is asked again and must agree, else the cell is `underspecified`
-(`unstable`); `--no-confirm` turns this off. Full order in §4 of the
-data-model document.
+(`unstable`); `--no-confirm` turns this off. The re-ask is sent with
+`cache=False`, so it is a new Jev call and not a result-cache hit (ADR-017).
+Full order in §4 of the data-model document.
 
 Consequences: Cells near 0.6 on unrelated sprints can fail as
 `underspecified`; ADR-012 adds an explicit exclusion for that case rather than
@@ -257,10 +258,13 @@ Context: A planner that tunes its own questions tunes them toward a pass.
 Decision: A dedicated `anchor-tuning` subagent of the planner, launched
 concurrently after the first draft and INTENT/ANC capture, treats approved
 INTENT and ANC as its only authority, freezes an oracle before seeing Jev
-answers, calls Jev directly and in parallel over a candidate pool larger than
-production, and seals a smaller production set. It tests on temporary plan
-copies only and never edits authoritative sources. It may recommend
-clarity-only INTENT/ANC changes; the user approves each. Disputed review
+answers, judges a candidate pool larger than production in parallel, and
+seals a smaller production set. Its Jev queries go only through
+`jev_judge.py tournament`, which sends each one through sc-agent `send`, so
+every query has a row in the sc-agent session log (ADR-017); the tuner never
+calls Jev another way. It tests on temporary plan copies only and never
+edits authoritative sources. It may recommend clarity-only INTENT/ANC changes;
+the user approves each. Disputed review
 failures reach it only through a checked-in `sc-compose` template, and it
 returns exactly `plan_violation` or `question_defect`. No desired verdict is
 an input; `anchor_tuning_contract.py` rejects one.
@@ -545,3 +549,31 @@ keeps the recorded value. The environment variable is ignored and
 Consequences: Consent is per repository (or per parent folder) and visible in
 review. Fail-closed behavior (REQ-015) is unchanged. This repository records
 `allow_remote_judge: true`. REQ-018, REQ-065, REQ-066.
+
+## ADR-017 Jev queries are recorded once, in sc-agent's session log
+
+Status: planned (phase j). Date: 2026-11-24.
+
+Context: Every Jev query from every tool goes through sc-agent `send` or
+`send_batch` and gets one session-log row keyed by its ULID `session_id`
+(owner ruling, 2026-11-24). Run files, result lines and the tournament log
+copied the answers, `model_answered` and attempt counts that the row already
+holds. sc-agent's result cache, on by default, returns an earlier row's result
+for an identical request and model without calling Jev, which would make a
+confirmation or a repeat measure nothing. Dry runs wrote run files into the
+committed `anchor-runs/` folder.
+
+Decision: Plan-anchor's records hold only what it derives (verdicts, leaning,
+rankings) and its own ids (`anchor_id`, `candidate_id`, repeat), and reference
+the `session_id` of each query they used. They never copy the composed request body, Jev's
+answers, `model_answered` or attempt counts. Result lines are the shared
+`jev-batch-result/2` line. An intentional identical resend (the near-threshold
+confirmation, and tournament and `batch` repeats) passes `cache=False`. A dry run
+shows the would-send requests and writes nothing under `anchor-runs/` and no
+log event. `check-fixtures` mints one ULID `run_id` per invocation and writes
+one record per (`run_id`, item) as `<run_id>-<item>.json`.
+
+Consequences: Reading an answer, or rescoring a tournament with `--results`,
+needs the sc-agent session log. A confirmation or repeat costs a Jev call even
+when the cache holds the answer. Coverage and diffs no longer meet dry-run
+files. REQ-013, REQ-038, REQ-076, REQ-083 to REQ-086.

@@ -71,8 +71,8 @@ Verified: `test_jev_judge.py::TransportPolicyTests`.
 Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
 Verified: `test_jev_judge.py::JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid` (shared client fixture validation; runs in the sc-plan-anchor CI suite).
 
-**REQ-013** Each run shall be written to its own run file that copies the statement, quote and provenance it judged.
-Source: `design/data-model-and-gating.md` §1–2. Status: shipped.
+**REQ-013** Each run shall be written to its own run file that copies the statement, quote and provenance it judged. Each anchor result in a run file shall carry plan-anchor's own `anchor_id` and the `session_id` of every Jev query that produced it (two when the request was confirmed, REQ-076). A run file shall not contain Jev's answers, `model_answered` or `attempts`; they are read from the sc-agent session row with that `session_id`. A result answered from `--answers-file` carries no `session_id`.
+Source: `design/data-model-and-gating.md` §1–2; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped for the copied statement, quote and provenance; planned for `session_id` in place of the answers, `model_answered` and `attempts` (phase j).
 Verified: partial: `test_jev_judge.py::QuoteTests.test_run_results_carry_the_quote` (statement and quote in stdout `data`; `stated_by`, `stated_at` and `context` and the run file itself are not checked), `JudgeFixtureTests.test_run_file_names_are_sanitised_and_never_collide`.
 
 **REQ-014** A failing report shall name the anchor and show its statement next to the user's verbatim quote.
@@ -184,9 +184,9 @@ Verified: none.
 Source: ANC-010, ANC-031. Status: shipped.
 Verified: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_v2_tune_result_renders_and_validates` (rejects `runtime.desired_verdict`).
 
-**REQ-038** `anchor-tuning` shall run as a dedicated Opus/Sol (Cursor: Grok at high effort) subagent of the planner that calls Jev directly and in parallel over a candidate pool larger than production, ranks it and seals a smaller production set.
-Source: ANC-020, ANC-026, ANC-027. Status: shipped.
-Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_harness_prompts_keep_tournament_and_production_separate` (models and tournament/production split), `test_v2_tune_result_renders_and_validates`. Parallel direct calls are prompt instructions with no test.
+**REQ-038** `anchor-tuning` shall run as a dedicated Opus/Sol (Cursor: Grok at high effort) subagent of the planner that judges a candidate pool larger than production in parallel, ranks it and seals a smaller production set. The tuner's Jev queries shall go only through `jev_judge.py tournament`, which sends each one through sc-agent `send` so that it gets a row in the sc-agent session log; the tuner shall not call Jev any other way.
+Source: ANC-020, ANC-026, ANC-027; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped (the tournament sends through the sc-decidr client).
+Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_harness_prompts_keep_tournament_and_production_separate` (models and tournament/production split), `test_v2_tune_result_renders_and_validates`. That the tuner sends only through `tournament` is a prompt instruction with no test; that each query gets a session row is not tested here.
 
 **REQ-039** `anchor-tuning` shall test candidates only on temporary plan copies with diagnostic additions and removals and shall not modify authoritative plan sources.
 Source: ANC-021, ANC-022. Status: shipped.
@@ -352,8 +352,8 @@ Verified: `test_install.py::RealInstallTests.test_switching_trackers_equals_a_fr
 Source: CHANGELOG 0.3.0. Status: shipped.
 Verified: `test_jev_judge.py::KindTests.test_add_update_validate_kind`, `KindTests.test_prohibition_gating_ignores_compliance`, `KindTests.test_structural_skips_jev_at_the_plan_gate_only`, `KindTests.test_prohibition_via_record_and_fixture`.
 
-**REQ-076** When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and the second answers; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`.
-Source: CHANGELOG 0.3.0, 0.7.3. Status: shipped.
+**REQ-076** When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`, so that the second send is a new Jev call with its own session row and not a result-cache hit: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`.
+Source: CHANGELOG 0.3.0, 0.7.3; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped; planned for `cache=False` and both `session_id`s in place of the second answers (phase j).
 Verified: partial: `test_jev_judge.py::ConfirmTests` (all, through `judge`); the `check-fixtures` path is not tested.
 
 **REQ-077** The development gate shall cut the item to `--max-item-chars` (24,000 characters) with a truncation marker (`item.truncated`), then halve it, keeping the head, until each request is under `--max-request-bytes` (64,000) or after a Jev context overflow, stopping below `--min-item-chars` (2,000) with `JEV.CONTEXT_EXCEEDED`. At the planning gate `--max-item-chars` is a budget the item must fit after code reduction (REQ-008), never a cut.
@@ -379,3 +379,21 @@ Verified: none.
 **REQ-082** The anchor record (`intent.md`, `anchors.json`, `anchors.md`, `anchor-runs/`) shall live in the current phase's plan folder, `docs/plans/phase-<current>/` with the phase id written out, named by `plan_dir` in `.sc/plan-anchor/settings.yaml`. `plan_anchor_settings.py set plan_dir` records it and `show` reports it; a value that is absolute, has an empty, `.` or `..` part, a backslash or a `<placeholder>` is `SETTINGS.INVALID_PLAN_DIR` in the file and `VALIDATION.INPUT` on `set`; the installer and `anchor_tracker.py write` keep it. The skill sets `A="$P/anchors.json"` from it and asks the user when it is unset; no shipped file names a literal folder. A new record's `plan` and `intent_ref` default to the folder holding `--anchors` and `intent.md` beside it.
 Source: OPERATOR (issue #58, 0.8.6). Status: shipped.
 Verified: `test_plan_dir.py` (all), `test_install.py::InstallTests.test_rerun_and_switch_keep_the_plan_dir`, `InstallTests.test_a_placeholder_plan_dir_is_refused`, `RenderingTests.test_installer_settings_match_the_installed_settings_script`. Whether an agent asks the user when `plan_dir` is unset is prompt text and untested.
+
+## Session log and run records (phase j)
+
+**REQ-083** A `--dry-run` of `judge`, `check-fixtures`, `batch`, `bead-batch` or `tournament` shall only check that its input composes into valid requests and show the would-send requests on stdout, or in the file named by `--out`. A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); REQ-016. Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
+Verified: none.
+
+**REQ-084** Each `check-fixtures` invocation shall mint one ULID `run_id`. It shall write one record per (`run_id`, item), where the item is one fixture sentence, named `<run_id>-<item>.json` with the item id sanitised for a file name.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today each fixture sentence gets its own `gate-stamp-item` run id).
+Verified: none.
+
+**REQ-085** When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, so that each repeat is its own Jev call with its own `session_id`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j).
+Verified: none.
+
+**REQ-086** Each result line that `batch`, `bead-batch` and `tournament` write to stdout, `anchor-runs/tournament-<run>.jsonl` and `<out>/results.jsonl` shall be the shared `jev-batch-result/2` line with only its generic fields. Plan-anchor's own fields for a line (`anchor_id`, `candidate_id` and the repeat) shall be kept in plan-anchor's own record, which carries the line's `run_id` and `session_id`. The tournament's ranking in `<out>/result_vars.json` shall reference the `session_id`s it scored. `tournament --results` shall read the answers it rescores from the sc-agent session log by `session_id`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today the lines are `plan-anchor/jev-batch-result/1` and carry `answers`, `retry_count` and `attempts`).
+Verified: none.
