@@ -1,5 +1,8 @@
 # Anchor tuning with fast-agent stand-ins (design draft)
 
+> **Retired (phase j plan review, 2026-11-24; never built).** OPERATOR ruling 2026-11-24: stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job. Retired records: REQ-020, REQ-043, REQ-044, REQ-045, the stand-in clause of REQ-051, and ADR-011. This document is kept for history only.
+
+
 Status: draft. Anchor exclusions and the `Result` conversion are built
 (0.7.0); stand-ins, `follow-up`, `fast_agents` and the tuning prompt are not
 built at 0.8.3 (ADR-011), and the settings schema still rejects a
