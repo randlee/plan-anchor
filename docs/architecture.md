@@ -287,8 +287,10 @@ session in an empty temp dir; every query now goes through sc-agent (ADR-017).
 
 Decision: `judge --stand-ins` sends the identical Jev request with model
 `haiku` and with model `luna` (profiles configured under
-`fast_agents.profiles` in settings), in parallel with Jev, one send per cell
-per stand-in model, through the judge command's sc-agent `Run` (`run.send`). Each stand-in query gets its own sc-agent
+`fast_agents.profiles` in settings), after the Jev send, one batch per
+stand-in model over the cells, through the judge command's sc-agent `Run`
+(lead ruling at phase j plan review, 2026-11-24, pending owner confirmation:
+sequential, so that no test depends on timing). Each stand-in query gets its own sc-agent
 session row and run link. Answers are checked before use by sc-decidr's
 shared typed response decoder; malformed answers produce
 `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared client fixture
@@ -552,8 +554,11 @@ ANC-005.
 
 Decision: Consent is `allow_remote_judge: true|false` in the committed
 `.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). It is consent to
-send to TypeSafe (Jev) only (owner ruling, 2026-11-24): a send with
-`--model haiku` or `--model luna` needs no consent. Only `true` lets a live
+send to TypeSafe (Jev) only (owner ruling, 2026-11-24): a send whose model the
+wheel resolves to any other provider, such as `--model haiku` or
+`--model luna`, needs no consent. The generated client's gate compares the
+resolved model's provider with the wheel's TypeSafe constant; plan-anchor's own
+`remote_preflight` checks are removed. Only `true` lets a live
 TypeSafe send through (from any sending command: `judge`, `check-fixtures`,
 `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch`,
 `tournament`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
@@ -597,9 +602,9 @@ near-threshold confirmation, the second and third `rubric` confirmations, and
 tournament and `batch` repeats) passes `cache=False`. A dry run shows the
 would-send requests and writes nothing under `anchor-runs/` and no log event.
 Every command that sends Jev queries, `judge` included, opens one sc-agent
-`Run` per invocation (`with sc_agent.Run(tool=..., tool_version=...) as run:`),
-makes every send through it (`run.send`, `run.send_batch`, one cache policy
-per call) and uses `run.run_id`, the ULID the wheel mints, for its records and
+`Run` per invocation through the generated client (`with open_run(...) as
+run:`), makes every send through it with the client's functions (one cache
+policy per call) and uses `run.run_id`, the ULID the wheel mints, for its records and
 file names; plan-anchor never mints an id. The `Run` owns the logger,
 cancellation (`run.cancel()`), configuration resolution (project, config
 directory, workers, timeout) and the test seams, which are injected when the
@@ -612,8 +617,13 @@ provider-key list. `judge` writes `<run_id>.json` and `check-fixtures` writes on
 record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
 `--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; the `Run`
 holds the default model, a per-call override is the wheel's typed model value
-(`sc_agent.model("haiku")`), no call passes a provider, and the wheel resolves
+(`run.model("haiku")`), no call passes a provider, and the wheel resolves
 the provider.
+
+Lead rulings at phase j plan review, 2026-11-24: result lines have no
+plan-anchor record beside them (`request_id` encodes the ids); an
+`--answers-file` run opens no `Run` and writes no run file. Pending owner
+confirmation: the `run.model(...)` spelling.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. A confirmation or repeat costs a Jev call even
