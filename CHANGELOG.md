@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1 — 2026-11-25
+
+- Re-render the plan-anchor client from sc-decidr 0.4.1 (Jev requests use `jev-latest`) and update its pinned wheel version.
+
 ## 0.13.0 — 2026-11-23
 
 - Re-render the plan-anchor client from sc-decidr 0.4.0 and update its pinned wheel version.
