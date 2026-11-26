@@ -353,6 +353,7 @@ class BatchSettings(NamedTuple):
     threshold: float
     timeout: float
     max_workers: int
+    max_request_bytes: int
     dry_run: bool
 
 
@@ -479,8 +480,9 @@ def _valid_fixture_answer(answer: object, question: object) -> bool:
             return False
 
 
-def batch_settings(args: Any, prefix: str, *, check_threshold: Callable[[Any], Any]) -> Record:
-    """Common batch settings; the consumer supplies its threshold rule. Requests have no size cap."""
+def batch_settings(args: Any, prefix: str, *, check_threshold: Callable[[Any], Any],
+                   request_cap: Callable[[str, Any], Any]) -> Record:
+    """Common batch settings; the consumer supplies its threshold and request-cap rules."""
     gate, repeat = getattr(args, "gate", "plan"), getattr(args, "repeat", 1)
     if repeat < 1:
         return _failed(ClientError("VALIDATION.INPUT", "--repeat must be at least 1"))
@@ -491,8 +493,11 @@ def batch_settings(args: Any, prefix: str, *, check_threshold: Callable[[Any], A
     threshold = check_threshold(getattr(args, "threshold", 0.6))
     if not threshold.ok:
         return _failed(from_tool_error(threshold.error))
+    cap = request_cap(gate, getattr(args, "max_request_bytes", None))
+    if not cap.ok:
+        return _failed(from_tool_error(cap.error))
     return {"ok": True, "value": BatchSettings(gate, args.model, repeat, prefix, threshold.value, args.timeout,
-                                               args.max_workers, bool(args.dry_run))}
+                                               args.max_workers, cap.value, bool(args.dry_run))}
 
 
 def result_line(

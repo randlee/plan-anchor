@@ -124,6 +124,8 @@ DEFAULT_MODEL = "jev"
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_MAX_CODE_LINES = 8  # shape: fenced blocks longer than this count toward chars_after_reduction
 CODE_REDACTION_MARKER = "<redacted: {dropped} of {total} code lines are in the plan but were not sent to Jev>"
+DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a planted contradiction 28k deep scored 0.46 vs 0.79 near the top)
+DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
 HERE = pathlib.Path(__file__).resolve().parent
 QUESTIONS_DIR = HERE.parent / "assets" / "questions"
@@ -2392,6 +2394,14 @@ def check_threshold(value: float, name: str = "--threshold") -> Result[float, Cl
     return Ok(value)
 
 
+def batch_request_cap(gate: str, requested: Optional[int]) -> Result[int, ClientError]:
+    if requested is None:
+        return Ok(DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        return fail("VALIDATION.INPUT", "--max-request-bytes must be a positive integer")
+    return Ok(requested)
+
+
 def cmd_dedupe(args) -> Result[dict, ClientError]:
     loaded = load_record(args.anchors)
     if isinstance(loaded, Err):
@@ -3317,7 +3327,8 @@ def batch_log_path(run_dir: str, run_name: str) -> Result[pathlib.Path, ClientEr
 
 def run_low_layer(args, lines: list) -> Result[Any, ClientError]:
     """The shared CLI path for `batch` and `bead-batch`: validate, consent, stream, log. Stdout carries only result lines."""
-    _checked = decidr_client.batch_settings(args, args.request_prefix, check_threshold=check_threshold)
+    _checked = decidr_client.batch_settings(args, args.request_prefix, check_threshold=check_threshold,
+                                                request_cap=batch_request_cap)
     if not _checked["ok"]:
         return Err(_checked["error"])
     settings = _checked["value"]
@@ -4231,8 +4242,9 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
     request_lines = [{"item": {"id": c.case_id, "title": c.item["title"], "text": c.item["text"]}, "anchor": anchor,
                       "questions": [{"candidate_id": b.bundle_id, "questions": b.questions, "roles": roles} for b in bundles]}
                      for c in oracle.cases]
+    max_bytes = DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV
     settings = decidr_client.BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
-                             args.timeout, args.max_workers, bool(args.dry_run))
+                             args.timeout, args.max_workers, max_bytes, bool(args.dry_run))
     jobs = []
     for number, line in enumerate(request_lines, start=1):
         got = batch_jobs(line, number, settings, roles)
