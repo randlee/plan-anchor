@@ -65,7 +65,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = SKILL_DIR / "templates"
 DRIFT_SCHEMA = "plan-anchoring/drift-review/1"
 REPORT_SCHEMA = "plan-anchoring/change-report/1"
-TRACE_SCHEMA = "plan-anchoring/trace/1"
+TRACE_SCHEMA = "plan-anchoring/trace/2"
 TRACE_QUESTION_ORDER = ("relates", "serves", "exceeds", "conflicts")
 TRACE_DETAIL = ("exceeds", "conflicts")
 SEVERITIES = ("material", "minor")
@@ -686,19 +686,61 @@ def trace_problems(doc: Any) -> List[str]:
     return out
 
 
+TRACE_ANCHOR_FIELDS = ("id", "statement", "quote", "kind", "scope", "deterministic_check", "fixtures", "stated_by", "stated_at",
+                       "status", "version", "source_type", "source_ref", "context")
+
+
+def flat_rows(value: Any, path: str = "") -> List[dict]:
+    """A JSON value as (field path, value) rows, empty values left out; display only, the copy JSON keeps everything."""
+    if isinstance(value, dict):
+        return [row for k, v in value.items() for row in flat_rows(v, f"{path}.{k}" if path else str(k))]
+    if isinstance(value, list):
+        return [row for i, v in enumerate(value, start=1) for row in flat_rows(v, f"{path}[{i}]")]
+    if value is None or value == "":
+        return []
+    return [{"field": path, "value": str(value)}]
+
+
+def obligation_vars(record: dict) -> dict:
+    """The record's obligation statements exactly as Raptor serves them, or Raptor's note that it serves none."""
+    ob = record.get("obligations") or {}
+    items = [{"modal": str(x.get("modal") or ""), "text": str(x.get("text") or "")} if isinstance(x, dict) else {"modal": "", "text": str(x)}
+             for x in (ob.get("statements") or [])]
+    return {"obligations": items, "obligations_field": ob.get("field") or "", "obligations_note": ob.get("note") or ""}
+
+
+def short_repo(record: dict) -> str:
+    return str(record.get("repository", "")).replace("urn:raptor:repo:", "")
+
+
+def trace_record_vars(record: dict) -> dict:
+    diags = [f"{d.get('file', '')}:{d.get('line', '')} {d.get('rule', '')}: {d.get('message', '')}" for d in record.get("diagnostics") or []]
+    return dict(obligation_vars(record), dom=dom_id("rec", record["id"]), record=record["id"], kind=str(record.get("kind", "")),
+                repo=short_repo(record), index=str(record.get("index", "")), rows=flat_rows(record.get("raptor")), diagnostics=diags,
+                copy_json=json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def trace_anchor_vars(anchor: dict) -> dict:
+    rows = [{"field": k, "value": json.dumps(anchor[k], ensure_ascii=False) if isinstance(anchor[k], (dict, list)) else str(anchor[k])}
+            for k in TRACE_ANCHOR_FIELDS if anchor.get(k) not in (None, "")]
+    return {"dom": dom_id("anc", anchor["id"]), "anchor": anchor["id"], "rows": rows,
+            "copy_json": json.dumps(anchor, indent=2, sort_keys=True, ensure_ascii=False)}
+
+
 def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
     note = c.get("annotation") or {}
-    musts = record.get("must_statements", {}).get("sentences", [])
+    ob = obligation_vars(record)
     p_yes = [{"question": q, "p": f"{c['p_yes'][q]:.2f}"} for q in TRACE_QUESTION_ORDER if q in c["p_yes"]]
-    lines = [f"{c['record']} ({record.get('repo', '')}) x {c['anchor']}: {c['class']}",
+    lines = [f"{c['record']} ({short_repo(record)}) x {c['anchor']}: {c['class']}",
              f"Anchor: {anchor['statement']}", f"Owner quote: {anchor['quote']}", f"Scope: {anchor['scope']}",
              "Jev P(yes): " + ", ".join(f"{r['question']} {r['p']}" for r in p_yes)]
     if note:
         lines += [f"Clause: {x}" for x in note.get("clauses", [])]
         lines += [f"What ({note.get('provenance_label', '')}): {note.get('what', '')}", f"Remedy: {note.get('remedy', '')}"]
-    return {"dom": dom_id("cell", f"{c['record']}-{c['anchor']}"), "record": c["record"], "repo": record.get("repo", ""),
+    lines += [f"Obligation (Raptor): {o['modal']} {o['text']}".replace("  ", " ") for o in ob["obligations"]] or [f"Obligations: {ob['obligations_note']}"]
+    return {**ob, "dom": dom_id("cell", f"{c['record']}-{c['anchor']}"), "record": c["record"], "repo": short_repo(record),
             "anchor": c["anchor"], "cls": c["class"], "statement": anchor["statement"], "quote": anchor["quote"],
-            "scope": anchor["scope"], "musts": musts, "p_yes": p_yes, "detail": c["class"] in TRACE_DETAIL,
+            "scope": anchor["scope"], "p_yes": p_yes, "detail": c["class"] in TRACE_DETAIL,
             "annotated": bool(note), "clauses": note.get("clauses", []), "what": note.get("what", ""),
             "remedy": note.get("remedy", ""), "disputed": bool(note.get("jev_disputed")),
             "provenance_label": note.get("provenance_label", ""),
@@ -733,8 +775,20 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     sections, panel_paths, grid = [], [], []
     with tempfile.TemporaryDirectory(prefix="trace-report-") as tmp:
         scratch = Path(tmp)
-        for r in sorted(t["records"], key=lambda r: (r.get("repo", ""), natural(r["id"]))):
-            row = {"id": r["id"], "repo": r.get("repo", ""), "cells": []}
+        for r in t["records"]:
+            text = render(binary.value, "trace-record-panel.xhtml.j2", trace_record_vars(r), panels_dir / f"{name}-{dom_id('rec', r['id'])}.xhtml", scratch, run)
+            if isinstance(text, Err):
+                return text
+            sections.append(text.value)
+            panel_paths.append((panels_dir / f"{name}-{dom_id('rec', r['id'])}.xhtml").as_posix())
+        for a in t["anchors"]:
+            text = render(binary.value, "trace-anchor-panel.xhtml.j2", trace_anchor_vars(a), panels_dir / f"{name}-{dom_id('anc', a['id'])}.xhtml", scratch, run)
+            if isinstance(text, Err):
+                return text
+            sections.append(text.value)
+            panel_paths.append((panels_dir / f"{name}-{dom_id('anc', a['id'])}.xhtml").as_posix())
+        for r in sorted(t["records"], key=lambda r: (short_repo(r), natural(r["id"]))):
+            row = {"id": r["id"], "repo": short_repo(r), "dom": dom_id("rec", r["id"]), "cells": []}
             for a in t["anchors"]:
                 c = cells.get((r["id"], a["id"]), {"class": "none"})
                 dom = ""
@@ -759,19 +813,22 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                     {"label": "Thresholds", "value": ", ".join(f"{k} {v}" for k, v in th.items())},
                     {"label": "Questions digest", "value": str(t.get("questions_digest", ""))},
                     {"label": "Sessions", "value": str(len(t.get("session_ids", [])))},
+                    {"label": "Records read through", "value": "Raptor " + str((t.get("raptor") or {}).get("revision") or "(saved index)")},
+                    {"label": "Raptor indexes", "value": ", ".join(f"{x.get('repository')} ({x.get('index')})" for x in t.get("repositories", [])) or "-"},
+                    {"label": "Requested ids Raptor did not serve", "value": "; ".join(f"{x['id']}: {x['reason']}" for x in t.get("not_served", [])) or "-"},
                     {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"},
                     {"label": "Trace file", "value": str(args.trace)}]
         shell = {"title": args.title or f"Records x anchors ({len(t['records'])} x {len(t['anchors'])})",
                  "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what/remedy text in red and yellow panels is written by a reviewer agent, not Jev.",
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                 "anchor_cols": [{"id": a["id"], "statement": a["statement"]} for a in t["anchors"]],
+                 "anchor_cols": [{"id": a["id"], "statement": a["statement"], "dom": dom_id("anc", a["id"])} for a in t["anchors"]],
                  "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
                  "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False)}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
-    return Ok({"html": page.as_posix(), "panels": panel_paths, "cells": len(panel_paths),
+    return Ok({"html": page.as_posix(), "panels": panel_paths, "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"])})
 
 

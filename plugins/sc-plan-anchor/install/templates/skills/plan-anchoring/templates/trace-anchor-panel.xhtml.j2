@@ -1,0 +1,25 @@
+---
+metadata:
+  name: trace-anchor-panel
+  description: One whole locked anchor of the plan-anchoring trace report, as a copyable XHTML panel.
+required_variables:
+  - dom
+  - anchor
+  - rows
+  - copy_json
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section trace-panel anchor-panel" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>{{ anchor | e }}</h2>
+    <div class="section-actions" role="group" aria-label="Copy anchor">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+    </div>
+  </div>
+  <table class="anchor-fields">
+    <tbody>
+{% for row in rows %}
+      <tr><th scope="row">{{ row.field | e }}</th><td>{{ row.value | e }}</td></tr>
+{% endfor %}
+    </tbody>
+  </table>
+</section>

@@ -1,0 +1,53 @@
+---
+metadata:
+  name: trace-record-panel
+  description: One whole REQ, NFR or ADR record of the plan-anchoring trace report, as Raptor serves it, as a copyable XHTML panel.
+required_variables:
+  - dom
+  - record
+  - kind
+  - repo
+  - index
+  - rows
+  - obligations
+  - diagnostics
+  - copy_json
+defaults:
+  obligations_field: ""
+  obligations_note: ""
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section trace-panel record-panel" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>{{ record | e }} <span class="small">{{ kind | e }}{% if repo %}, {{ repo | e }}{% endif %}</span></h2>
+    <div class="section-actions" role="group" aria-label="Copy record">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+    </div>
+  </div>
+  <p class="small">The record as Raptor serves it (index {{ index | e }}); nothing here is parsed from Markdown.</p>
+  <h3>Obligation statements <span class="small">(from Raptor{% if obligations_field %}, {{ obligations_field | e }}{% endif %})</span></h3>
+{% if obligations %}
+  <ul class="obligations">
+{% for o in obligations %}
+    <li>{% if o.modal %}<strong>{{ o.modal | e }}</strong> {% endif %}{{ o.text | e }}</li>
+{% endfor %}
+  </ul>
+{% else %}
+  <p class="small">{{ obligations_note | e }}</p>
+{% endif %}
+{% if diagnostics %}
+  <h3>Raptor import diagnostics</h3>
+  <ul class="diagnostics">
+{% for d in diagnostics %}
+    <li>{{ d | e }}</li>
+{% endfor %}
+  </ul>
+{% endif %}
+  <h3>Record</h3>
+  <table class="record-fields">
+    <tbody>
+{% for row in rows %}
+      <tr><th scope="row"><code>{{ row.field | e }}</code></th><td>{{ row.value | e }}</td></tr>
+{% endfor %}
+    </tbody>
+  </table>
+</section>

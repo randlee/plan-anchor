@@ -11,7 +11,7 @@ required_variables:
   - statement
   - quote
   - scope
-  - musts
+  - obligations
   - p_yes
   - copy_json
   - context_text
@@ -23,6 +23,8 @@ defaults:
   remedy: ""
   disputed: false
   provenance_label: ""
+  obligations_field: ""
+  obligations_note: ""
 ---
 <section xmlns="http://www.w3.org/1999/xhtml" class="section trace-panel c-{{ cls | e }}" id="{{ dom | e }}">
   <div class="section-head">
@@ -52,15 +54,15 @@ defaults:
   <p class="small">No reviewer annotation for this cell.</p>
 {% endif %}
 {% endif %}
-  <h3>Record MUST statements <span class="small">(extracted by regex)</span></h3>
-{% if musts %}
-  <ul class="musts">
-{% for m in musts %}
-    <li>{{ m | e }}</li>
+  <h3>Obligation statements <span class="small">(from Raptor{% if obligations_field %}, {{ obligations_field | e }}{% endif %})</span></h3>
+{% if obligations %}
+  <ul class="obligations">
+{% for o in obligations %}
+    <li>{% if o.modal %}<strong>{{ o.modal | e }}</strong> {% endif %}{{ o.text | e }}</li>
 {% endfor %}
   </ul>
 {% else %}
-  <p class="small">None extracted.</p>
+  <p class="small">{{ obligations_note | e }}</p>
 {% endif %}
   <table class="p-yes">
     <thead><tr><th scope="col">Question</th><th scope="col">Jev P(yes)</th></tr></thead>

@@ -67,6 +67,9 @@ defaults:
     table.grid td { width: 18px; height: 16px; padding: 0; }
     table.grid td.cell { cursor: pointer; }
     table.grid td.cell:hover, table.grid td.sel { outline: 2px solid var(--fg); }
+    table.grid th.hdr { cursor: pointer; }
+    table.grid th.hdr:hover { text-decoration: underline; }
+    table.grid th.sel { background: var(--ch-bg); font-weight: 700; }
     table.grid th.rec { white-space: nowrap; font-weight: 400; }
     table.grid th.anc { writing-mode: vertical-rl; font-weight: 400; }
     .c-serves { background: #2e7d32; } .c-related { background: #90caf9; } .c-exceeds { background: #f9a825; }
@@ -86,7 +89,7 @@ defaults:
     <p class="subtitle">{{ subtitle | e }}</p>
 {% endif %}
     <p class="generated-at">Generated: {{ generated_at | e }}</p>
-    <p class="legend"><span class="c-serves">serves</span><span class="c-related">related</span><span class="c-exceeds">exceeds</span><span class="c-conflicts">conflicts</span><span class="c-none">none</span> Click a coloured cell.</p>
+    <p class="legend"><span class="c-serves">serves</span><span class="c-related">related</span><span class="c-exceeds">exceeds</span><span class="c-conflicts">conflicts</span><span class="c-none">none</span> Click a coloured cell, a record (row) or an anchor (column).</p>
   </header>
 
   <div class="trace">
@@ -94,12 +97,12 @@ defaults:
       <table class="grid">
         <thead><tr><th scope="col"></th>
 {% for a in anchor_cols %}
-          <th scope="col" class="anc" title="{{ a.statement | e }}">{{ a.id | e }}</th>
+          <th scope="col" class="anc hdr" data-panel="{{ a.dom | e }}" title="{{ a.statement | e }}">{{ a.id | e }}</th>
 {% endfor %}
         </tr></thead>
         <tbody>
 {% for row in grid_rows %}
-          <tr><th scope="row" class="rec">{% if row.repo %}{{ row.repo | e }}: {% endif %}{{ row.id | e }}</th>
+          <tr><th scope="row" class="rec hdr" data-panel="{{ row.dom | e }}">{% if row.repo %}{{ row.repo | e }}: {% endif %}{{ row.id | e }}</th>
 {% for c in row.cells %}
             <td class="c-{{ c.cls | e }}{% if c.dom %} cell{% endif %}"{% if c.dom %} data-panel="{{ c.dom | e }}"{% endif %} title="{{ row.id | e }} x {{ c.anchor | e }}: {{ c.cls | e }}"></td>
 {% endfor %}
@@ -109,7 +112,7 @@ defaults:
       </table>
     </div>
     <div id="side">
-      <p class="small" id="side-hint">Click a coloured cell to see its panel.</p>
+      <p class="small" id="side-hint">Click a coloured cell, a record or an anchor to see its panel.</p>
 {% for section in sections %}
 {{ section | safe }}
 {% endfor %}
@@ -155,9 +158,9 @@ defaults:
         root.setAttribute("data-theme", dark ? "light" : "dark");
         return;
       }
-      var cell = event.target.closest("td[data-panel]");
+      var cell = event.target.closest("[data-panel]");
       if (cell) {
-        document.querySelectorAll("td.sel").forEach(function (x) { x.classList.remove("sel"); });
+        document.querySelectorAll("table.grid .sel").forEach(function (x) { x.classList.remove("sel"); });
         document.querySelectorAll("#side .trace-panel.shown").forEach(function (x) { x.classList.remove("shown"); });
         cell.classList.add("sel");
         var panel = document.getElementById(cell.getAttribute("data-panel"));

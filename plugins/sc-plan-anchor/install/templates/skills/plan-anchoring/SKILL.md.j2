@@ -57,7 +57,19 @@ for p in "/opt/homebrew/bin/sc-compose" "$HOME/.local/bin/sc-compose" "/usr/loca
 done
 ```
 
-If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolve`. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and `allow_remote_judge: true` (`references/jev-api.md`). Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
+If found off PATH, `export PATH="<dir>:$PATH"` for the session and rerun `resolve`.
+
+**Only for record operations** (`jev_judge.py trace`, which reads REQ, NFR and ADR records): also verify Raptor, which is the only reader of those records. Skip this check for every other operation; nothing else needs Raptor.
+
+```bash
+RAPTOR="${RAPTOR:-raptor}"   # a Raptor checkout with its .venv; pass it to trace as --raptor "$RAPTOR"
+test -x "$RAPTOR/.venv/bin/python" && test -f "$RAPTOR/scripts/extract.py" && git -C "$RAPTOR" rev-parse HEAD
+for p in "$HOME/github/raptor" "$HOME/raptor" "$HOME/.local/share/raptor"; do
+  [ -x "$p/.venv/bin/python" ] && [ -f "$p/scripts/extract.py" ] && echo "Found at: $p" && break
+done
+```
+
+Without Raptor, `trace` returns `DEPENDENCY.RAPTOR` (exit 2) with the install command; read `references/installation-and-troubleshooting.md` (Raptor) and stop record work. Never read the record Markdown another way. If anything is missing, read `references/installation-and-troubleshooting.md`. This skill requires Jev: capture runs the live rubric and question tuning and both gates make live judgments, so the normal workflow requires the API key and `allow_remote_judge: true` (`references/jev-api.md`). Offline `--dry-run`, fixture-answer tests, lint, shape, rendering, and record maintenance remain available for development, but they are not a substitute for the Jev-backed workflow.
 
 Then resolve the script once. It sits next to this file:
 

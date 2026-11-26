@@ -2,8 +2,8 @@
 
 ## 0.13.2 — 2026-11-26
 
-- Add `jev_judge.py trace`: judge REQ/ADR/NFR records against locked anchors with four Jev questions per cell, classify each cell (serves, related, exceeds, conflicts, none) in the script, and write `trace-<UTC>.json` with MUST/SHALL extraction, summary counts and optional reviewer annotations labelled as not Jev's.
-- Add `change_report.py --trace` with `templates/trace-report.html.j2` and `templates/trace-panel.xhtml.j2`: a records x anchors grid whose coloured cells open a side panel; `references/record-trace.md`.
+- Add `jev_judge.py trace`: judge REQ/ADR/NFR records against locked anchors with four Jev questions per cell, classify each cell (serves, related, exceeds, conflicts, none) in the script, and write `trace-<UTC>.json` with summary counts and optional reviewer annotations labelled as not Jev's. Records are read only through Raptor (`--source` runs Raptor's importer, `--index` takes a saved Raptor index, `--ids` restricts them); obligation statements are Raptor's, never extracted from text. Raptor is a dependency of `trace` only: without it `trace` returns `DEPENDENCY.RAPTOR` with the install command, and every other command runs without it.
+- Add `change_report.py --trace` with `templates/trace-report.html.j2` and `templates/trace-panel.xhtml.j2`: a records x anchors grid whose coloured cells, row headers (whole Raptor record, `templates/trace-record-panel.xhtml.j2`) and column headers (whole anchor, `templates/trace-anchor-panel.xhtml.j2`) open a side panel; `references/record-trace.md`; SKILL.md Step 1 and installation-and-troubleshooting check Raptor for record operations only.
 
 ## 0.13.1 — 2026-11-25
 

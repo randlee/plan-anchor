@@ -22,11 +22,14 @@ After anchors are locked, to check the requirement records (REQ, ADR, NFR) again
 ## Command
 
 ```
-python3 scripts/jev_judge.py trace --anchors <plan>/anchors.json --records records.jsonl [--annotations notes.json] [--out-dir DIR] [--dry-run | --answers-file F] [--workers N]
+python3 scripts/jev_judge.py trace --anchors <plan>/anchors.json --source <repo> [--source <repo> ...] [--raptor <checkout>] [--index <raptor-index.json> ...] [--ids ids.txt] [--annotations notes.json] [--out-dir DIR] [--dry-run | --answers-file F] [--workers N]
 python3 scripts/change_report.py --trace DIR/trace-<UTC>.json --out <folder>
 ```
 
-- `--records`: JSONL, one `{"id", "repo", "text"}` per record; the caller extracts the records. Or `--record-glob '<dir>/*.md'` (one file per record, id = file stem, `--repo` labels them).
+- Records come only from Raptor. `--source <repo>` runs Raptor's importer (`--raptor <checkout>`) on a repository with a `.raptor/` inventory; `--index` takes a saved Raptor import index as Raptor wrote it. Nothing parses record Markdown, splits headings or finds obligations in text. Raptor missing: `DEPENDENCY.RAPTOR` with the install command; no inventory: `RAPTOR.NO_INVENTORY`; importer failure: `RAPTOR.IMPORT_FAILED`.
+- Each record: `id`, `kind` (ADR for Raptor's decisions; REQ or NFR from the id for its requirements), `repository` (Raptor's repository URN; Raptor's index carries no per-record file path), the whole record as Raptor serves it (`raptor`), its import `diagnostics`, and `obligations`: Raptor's `requirement_statement.statements` verbatim, or, when Raptor serves none (ADRs, or an empty list), `statements: null` with a note saying so. Obligations are never synthesized.
+- `--ids` (one id per line) traces only those records; a requested id Raptor did not serve is listed in `not_served` with Raptor's reason, never read another way.
+- Jev receives the record as Raptor serves it (`state.record.raptor`).
 - Only `locked` anchors are traced (`ANCHOR.NONE_LOCKED` when there are none).
 - One Jev request per record x anchor with four choice questions: `relates`, `serves`, `conflicts`, `exceeds`. Live calls go through the batch client and need `allow_remote_judge: true`, as for `judge`. `--dry-run` writes the requests to `trace-<UTC>.requests.jsonl`; `--answers-file` keys are `<record>/<anchor>`, `<anchor>` or `*`.
 
@@ -44,13 +47,13 @@ The script classifies each cell from P(yes); Jev is never asked for counts.
 
 ## Outputs
 
-`<out-dir>/trace-<UTC>.json` (schema `plan-anchoring/trace/1`; default out-dir `<plan>/anchor-runs`): model, session ids, question digests, thresholds; per cell the answers, P(yes) and class; per record the MUST/SHALL sentences (`extracted_by: regex`, not a reading); `summary.per_anchor` counts, `records_with_no_relation`, `conflicts`.
+`<out-dir>/trace-<UTC>.json` (schema `plan-anchoring/trace/2`; default out-dir `<plan>/anchor-runs`): model, session ids, question digests, thresholds; per cell the answers, P(yes) and class; the Raptor revision and indexes, `not_served`; per record what Raptor serves (above); per anchor the whole anchor; `summary.per_anchor` counts, `records_with_no_relation`, `conflicts`.
 
 `--annotations` takes `[{record, anchor, clauses, what, remedy, jev_disputed}]` written by a reviewer agent for yellow and red cells. They merge only into exceeds and conflicts cells, carry `provenance: reviewer-agent`, and the report labels them "written by a reviewer agent, not Jev". An annotation for another cell is listed in `data.warnings`, not merged.
 
-The HTML page is a records x anchors grid; clicking a coloured cell shows its panel: record and repo, anchor statement, owner quote, scope, the record's MUST statements and Jev's P(yes) per question; yellow and red panels add the offending clauses, what exceeds or conflicts, the proposed remedy and the disputed flag.
+The HTML page is a records x anchors grid. Clicking a row header shows the whole record as Raptor serves it (every field, its obligation statements and any Raptor import diagnostics); clicking a column header shows the whole anchor (id, statement, verbatim quote, kind, scope, deterministic check, fixtures, stated by/at, status, version). Clicking a coloured cell shows its panel: record and repository, anchor statement, owner quote, scope, the record's obligation statements labelled as from Raptor (or Raptor's note that it serves none) and Jev's P(yes) per question; yellow and red panels add the offending clauses, what exceeds or conflicts, the proposed remedy and the disputed flag.
 
-Errors (exit 2): `ANCHOR.NONE_LOCKED`, `INPUT.MALFORMED` / `INPUT.EMPTY` / `VALIDATION.INPUT` for bad records, `FIXTURE.MISSING`, `POLICY.REMOTE_JUDGE_DISABLED`, `JEV.CONTEXT_EXCEEDED` (refused before sending); `change_report.py --trace` reports a file that is not a trace as `TRACE.INVALID`.
+Errors (exit 2): `ANCHOR.NONE_LOCKED`, `DEPENDENCY.RAPTOR`, `RAPTOR.NO_INVENTORY`, `RAPTOR.IMPORT_FAILED`, `INPUT.MALFORMED` / `INPUT.EMPTY` / `VALIDATION.INPUT` for a bad Raptor index or duplicate ids, `FIXTURE.MISSING`, `POLICY.REMOTE_JUDGE_DISABLED`, `JEV.CONTEXT_EXCEEDED` (refused before sending); `change_report.py --trace` reports a file that is not a trace as `TRACE.INVALID`.
 
 ## Interpretation
 

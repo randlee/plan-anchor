@@ -60,8 +60,9 @@ Subcommands
                   repeat) on stdout as each answer arrives, teed to anchor-runs/tournament-<run>.jsonl; never writes beads
   bead-batch      high layer: item beads x an anchor's question bead (and its open candidate children) as batch
                   request lines (--emit prints them), then the low layer; reads beads only
-  trace           records (REQ/ADR/NFR) x locked anchors: four Jev questions per cell, classified here as serves,
-                  related, exceeds, conflicts or none; writes trace-<UTC>.json (render: change_report.py --trace)
+  trace           records (REQ/ADR/NFR, read only through Raptor; DEPENDENCY.RAPTOR without it) x locked anchors:
+                  four Jev questions per cell, classified here as serves, related, exceeds, conflicts or none; writes
+                  trace-<UTC>.json (render: change_report.py --trace)
   tournament      run one anchor's question tournament through the low layer (oracle x candidate bundles x repeats) and
                   score it; writes result_vars.json for the anchor-tuning agent; data.accepted; never writes beads
 
@@ -118,7 +119,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import glob
 import hashlib
 import json
 import os
@@ -3626,7 +3626,7 @@ def cmd_batch(args) -> Result[Any, ClientError]:
 # --------------------------------------------------------------------------- #
 # trace: records (REQ/ADR/NFR) x locked anchors, four questions per cell, classified here (references/record-trace.md)
 # --------------------------------------------------------------------------- #
-TRACE_SCHEMA = "plan-anchoring/trace/1"
+TRACE_SCHEMA = "plan-anchoring/trace/2"
 TRACE_CANDIDATE = "trace"
 TRACE_CONFLICT_MIN = 0.5    # P(conflicts=yes) at or above this: conflicts, whatever the other answers
 TRACE_RELATION_MIN = 0.6    # P(serves=yes) or P(relates=yes) at or above this: the record touches the anchor
@@ -3635,26 +3635,33 @@ TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
 TRACE_ANNOTATED = ("exceeds", "conflicts")
 TRACE_PROVENANCE = "reviewer-agent"
 TRACE_PROVENANCE_LABEL = "written by a reviewer agent, not Jev"
-MUST_RE = re.compile(r"\b(?:must|shall)\b", re.IGNORECASE)
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;])\s+|\n")
+# Records are read only through Raptor (https://github.com/randlee/raptor): its import index is the one source of record
+# identity, text and obligation statements. Nothing here parses Markdown or finds obligations in text.
+RAPTOR_PIN = "8ce2be8363318be2f7c2e2b79d1f646399cab2fd"  # the Raptor revision judge-jev pins
+RAPTOR_INSTALL = (f"Install Raptor (needs a Rust toolchain): git clone https://github.com/randlee/raptor raptor && "
+                  f"git -C raptor checkout {RAPTOR_PIN} && uv venv raptor/.venv -p 3.11 && "
+                  "uv pip install -p raptor/.venv/bin/python ./raptor markdown; then pass --raptor raptor "
+                  "(references/installation-and-troubleshooting.md). Or pass a saved Raptor index with --index.")
+RAPTOR_OBLIGATIONS_FIELD = {"requirements": "requirement_statement.statements"}  # Raptor serves no statements for decisions
+RAPTOR_NO_OBLIGATIONS = "Raptor serves no obligation statements for this record; the record is shown as Raptor serves it."
 TRACE_QUESTIONS = {
     "relates": {"type": "choice",
-                "instructions": "Does `record.text` govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",
+                "instructions": "Does `record.raptor` (the record as Raptor serves it) govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",
                 "criteria": {"yes": "At least one obligation in the record governs behavior inside the anchor's scope.",
                              "no": "The record governs only other behavior.",
                              "unclear": "Cannot tell from the text."}},
     "serves": {"type": "choice",
-               "instructions": "Does at least one obligation in `record.text` carry out what `anchor.statement` requires, so that satisfying the record also satisfies the anchor within the anchor's scope?",
+               "instructions": "Does at least one obligation in `record.raptor` (the record as Raptor serves it) carry out what `anchor.statement` requires, so that satisfying the record also satisfies the anchor within the anchor's scope?",
                "criteria": {"yes": "An obligation in the record implements or states the anchor's requirement.",
                             "no": "No obligation in the record implements the anchor's requirement.",
                             "unclear": "The record touches the anchor's topic but it is not possible to tell whether it implements it."}},
     "conflicts": {"type": "choice",
-                  "instructions": "Does any obligation in `record.text` contradict `anchor.statement`: requiring what the anchor forbids, forbidding or limiting what the anchor requires or permits, or requiring a behavior the anchor says must not exist? Judge only inside `anchor.scope`.",
+                  "instructions": "Does any obligation in `record.raptor` (the record as Raptor serves it) contradict `anchor.statement`: requiring what the anchor forbids, forbidding or limiting what the anchor requires or permits, or requiring a behavior the anchor says must not exist? Judge only inside `anchor.scope`.",
                   "criteria": {"yes": "At least one obligation in the record contradicts the anchor.",
                                "no": "No obligation in the record contradicts the anchor.",
                                "unclear": "An obligation might contradict the anchor but the text does not make it certain."}},
     "exceeds": {"type": "choice",
-                "instructions": "Among the obligations in `record.text` that concern the anchor's topic, does any go beyond `anchor.statement`: stricter, applying outside `anchor.scope`, or adding constraints (limits, prohibitions, required structure) the anchor does not ask for? Answer no if the record does not concern the anchor's topic.",
+                "instructions": "Among the obligations in `record.raptor` (the record as Raptor serves it) that concern the anchor's topic, does any go beyond `anchor.statement`: stricter, applying outside `anchor.scope`, or adding constraints (limits, prohibitions, required structure) the anchor does not ask for? Answer no if the record does not concern the anchor's topic.",
                 "criteria": {"yes": "An obligation on the anchor's topic is broader or stricter than the anchor.",
                              "no": "Every obligation on the anchor's topic stays within the anchor.",
                              "unclear": "Cannot tell whether an obligation goes beyond the anchor."}},
@@ -3681,59 +3688,140 @@ def p_yes_of(answer) -> Result[float, ClientError]:
     return fail("DECIDR.RESPONSE_INVALID", "a trace answer has no probability for 'yes'")
 
 
-def must_sentences(text: str) -> list:
-    """Sentences holding must/shall, by regex: an extraction, not a reading."""
-    return [s.strip(" -*\t") for s in SENTENCE_SPLIT_RE.split(text) if MUST_RE.search(s) and s.strip(" -*\t")]
+def raptor_checkout(root: str) -> Result[dict, ClientError]:
+    """The Raptor checkout trace runs (``--raptor``): its venv python and scripts/extract.py. Read from no environment variable."""
+    if not root:
+        return fail("DEPENDENCY.RAPTOR", "trace reads REQ, NFR and ADR records only through Raptor, and no Raptor checkout was given (--raptor)",
+                    action=RAPTOR_INSTALL)
+    base = pathlib.Path(root).expanduser()
+    python, extract = base / ".venv" / "bin" / "python", base / "scripts" / "extract.py"
+    if not python.is_file() or not extract.is_file():
+        return fail("DEPENDENCY.RAPTOR", f"{root} is not an installed Raptor checkout (needs .venv/bin/python and scripts/extract.py)",
+                    action=RAPTOR_INSTALL)
+    revision = None
+    try:
+        got = subprocess.run(["git", "-C", str(base), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+        revision = got.stdout.strip() or None if got.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return Ok({"root": str(base), "python": str(python), "extract": str(extract), "revision": revision})
 
 
-def load_trace_records(args) -> Result[list, ClientError]:
-    """--records JSONL ({id, repo, text} per line) or --record-glob markdown files (one record each, id = stem)."""
-    if bool(args.records) == bool(args.record_glob):
-        return fail("VALIDATION.INPUT", "pass exactly one of --records or --record-glob")
-    raw = []
-    if args.records:
-        p = pathlib.Path(args.records)
-        if not p.is_file():
-            return fail("INPUT.MISSING", f"records file not found: {args.records!r}", action="Pass a JSONL file of {id, repo, text} lines.")
+def raptor_import(raptor: dict, project_root: str, output: pathlib.Path, run=subprocess.run) -> Result[str, ClientError]:
+    """Run Raptor's importer on one repository (its .raptor/ inventory) and return the index path it wrote."""
+    if not pathlib.Path(project_root, ".raptor").is_dir():
+        return fail("RAPTOR.NO_INVENTORY", f"{project_root} has no .raptor/ inventory, so Raptor cannot read its records",
+                    action="Add a .raptor/ inventory naming the record files (Raptor's README), or leave this repository out.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        got = run([raptor["python"], raptor["extract"], "--project-root", ".", "--output", str(output.resolve())],
+                  cwd=project_root, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor could not import {project_root}: {exc}", action=RAPTOR_INSTALL)
+    # Raptor's importer exits 1 when it imported with diagnostics; it still writes the index and a JSON report
+    # ({"index", "files", "records", "issues"}) as its last stdout line. Each record carries its own diagnostics here.
+    report = None
+    try:
+        report = json.loads((got.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        pass
+    with_issues = got.returncode == 1 and isinstance(report, dict) and isinstance(report.get("issues"), int) and report["issues"] > 0
+    if (got.returncode != 0 and not with_issues) or not output.is_file():
+        tail = (got.stderr or got.stdout or "")[-600:]
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor's importer failed on {project_root} (exit {got.returncode}): {tail}",
+                    action="Fix what Raptor reports, then rerun.")
+    return Ok(str(output))
+
+
+def raptor_index_records(index_path: str) -> Result[dict, ClientError]:
+    """Records and import diagnostics from one Raptor import index, as Raptor serves them (no field is re-derived from text).
+    kind: ADR for Raptor's decisions table; for its requirements table, the record id's prefix (REQ or NFR)."""
+    loaded = load_json(index_path, "Raptor import index")
+    if isinstance(loaded, Err):
+        return loaded
+    d = loaded.value
+    meta = d.get("metadata") if isinstance(d, dict) else None
+    issues = (d.get("diagnostics") or {}).get("issues") if isinstance(d, dict) else None
+    if not isinstance(meta, dict) or not isinstance(meta.get("repository"), str) or not isinstance(issues, list) \
+            or not all(isinstance(d.get(t), list) for t in ("requirements", "decisions")):
+        return fail("INPUT.MALFORMED", f"{index_path} is not a Raptor import index (metadata.repository, requirements, decisions, diagnostics.issues)",
+                    action="Pass the JSON written by Raptor's scripts/extract.py --output.")
+    repository = meta["repository"]
+    by_id = {}
+    for i in issues:
+        if isinstance(i, dict) and isinstance(i.get("id"), str):
+            by_id.setdefault(i["id"], []).append(i)
+    records = []
+    for table in ("requirements", "decisions"):
+        for rec in d[table]:
+            rid = rec.get("id") if isinstance(rec, dict) else None
+            checked = decidr_client.safe_id(rid, f"{index_path} {table} id")
+            if not checked["ok"]:
+                return Err(checked["error"])
+            field = RAPTOR_OBLIGATIONS_FIELD.get(table)
+            statements = None
+            if field:
+                value = rec
+                for part in field.split("."):
+                    value = value.get(part) if isinstance(value, dict) else None
+                statements = value if isinstance(value, list) and value else None
+            obligations = {"source": "raptor", "field": field if statements is not None else None, "statements": statements,
+                           "note": None if statements is not None else RAPTOR_NO_OBLIGATIONS}
+            records.append({"id": rid, "kind": "ADR" if table == "decisions" else rid.split("-", 1)[0],
+                            "repository": repository, "index": index_path, "raptor": rec, "obligations": obligations,
+                            "diagnostics": by_id.get(rid, [])})
+    imported = {r["id"] for r in records}
+    not_imported = {rid: v for rid, v in by_id.items() if rid not in imported}
+    return Ok({"repository": repository, "records": records, "not_imported": not_imported})
+
+
+def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict, ClientError]:
+    """Records from Raptor only: --source repositories imported by the Raptor checkout, and/or --index saved Raptor indexes.
+    --ids restricts them; a requested id Raptor did not serve is listed in ``not_served``, never filled from elsewhere."""
+    if not args.source and not args.index:
+        return fail("VALIDATION.INPUT", "pass at least one --source <repository root> (read through Raptor) or --index <Raptor index>",
+                    action="trace reads records only through Raptor.")
+    indexes, raptor = list(args.index), None
+    if args.source:
+        got = raptor_checkout(args.raptor)
+        if isinstance(got, Err):
+            return got
+        raptor = got.value
+        for n, src in enumerate(args.source, start=1):
+            made = raptor_import(raptor, src, out_dir / f"trace-{stamp_}.raptor-{n}.json")
+            if isinstance(made, Err):
+                return made
+            indexes.append(made.value)
+    records, seen, not_imported, repos = [], {}, {}, []
+    for path in indexes:
+        got = raptor_index_records(path)
+        if isinstance(got, Err):
+            return got
+        repos.append({"repository": got.value["repository"], "index": path})
+        not_imported.update(got.value["not_imported"])
+        for r in got.value["records"]:
+            if r["id"] in seen:
+                return fail("VALIDATION.INPUT", f"record id {r['id']} is served by two Raptor indexes ({seen[r['id']]}, {path})",
+                            action="Pass each repository once.")
+            seen[r["id"]] = path
+            records.append(r)
+    not_served = []
+    if args.ids:
         try:
-            text = p.read_text(encoding="utf-8")
+            wanted = [x.strip() for x in pathlib.Path(args.ids).read_text(encoding="utf-8").splitlines() if x.strip()]
         except (OSError, UnicodeDecodeError) as exc:
-            return fail("INPUT.MALFORMED", f"records file could not be read: {exc}")
-        for n, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError as exc:
-                return fail("INPUT.MALFORMED", f"records line {n} is not JSON: {exc}", action="Write one {id, repo, text} object per line.")
-            if not isinstance(obj, dict) or not isinstance(obj.get("text"), str) or not obj["text"].strip() \
-                    or not isinstance(obj.get("repo", ""), str):
-                return fail("INPUT.MALFORMED", f"records line {n} needs id, repo and non-empty text",
-                            action="Write one {id, repo, text} object per line.")
-            raw.append((obj.get("id"), obj.get("repo", ""), obj["text"], f"records line {n}"))
-    else:
-        for path in sorted(pathlib.Path(x) for x in glob.glob(args.record_glob, recursive=True)):
-            if not path.is_file():
-                continue
-            try:
-                body = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                return fail("INPUT.MALFORMED", f"record {path} could not be read: {exc}")
-            if body.strip():
-                raw.append((path.stem, args.repo, body, str(path)))
-    records, seen = [], set()
-    for rid, repo, text, where in raw:
-        checked = decidr_client.safe_id(rid, f"{where}: id")
-        if not checked["ok"]:
-            return Err(checked["error"])
-        rid = checked["value"]
-        if rid in seen:
-            return fail("VALIDATION.INPUT", f"record id {rid} appears twice", action="Give every record a unique id.")
-        seen.add(rid)
-        records.append({"id": rid, "repo": repo, "text": text})
+            return fail("INPUT.MISSING", f"--ids file could not be read: {exc}", action="Pass a file with one record id per line.")
+        keep = set(wanted)
+        records = [r for r in records if r["id"] in keep]
+        for rid in dict.fromkeys(wanted):
+            if rid not in seen:
+                reason = ("Raptor did not import it: " + "; ".join(str(i.get("message", "")) for i in not_imported[rid][:3])) \
+                    if rid in not_imported else "not in any Raptor index given"
+                not_served.append({"id": rid, "reason": reason})
     if not records:
-        return fail("INPUT.EMPTY", "no records to trace", action="Pass a non-empty --records file or a --record-glob that matches files.")
-    return Ok(records)
+        return fail("INPUT.EMPTY", "Raptor served no records to trace", action="Check the --source/--index repositories and --ids.")
+    return Ok({"records": records, "not_served": not_served, "repositories": repos,
+               "raptor": {k: raptor[k] for k in ("root", "revision")} if raptor else None})
 
 
 def load_trace_annotations(path: str) -> Result[list, ClientError]:
@@ -3798,9 +3886,13 @@ def cmd_trace(args) -> Result[dict, ClientError]:
     if not anchors:
         return fail("ANCHOR.NONE_LOCKED", f"{args.anchors} has no locked anchor to trace against",
                     action="Lock the anchors the owner approved (references/anchor-capture.md), then rerun.")
-    records = load_trace_records(args)
-    if isinstance(records, Err):
-        return records
+    out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(args.anchors).parent / "anchor-runs"
+    name = f"trace-{stamp()}"
+    loaded_records = load_trace_records(args, out_dir, name[len("trace-"):])
+    if isinstance(loaded_records, Err):
+        return loaded_records
+    source = loaded_records.value
+    records = Ok(source["records"])
     annotations = load_trace_annotations(args.annotations)
     if isinstance(annotations, Err):
         return annotations
@@ -3808,12 +3900,11 @@ def cmd_trace(args) -> Result[dict, ClientError]:
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
-    out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(args.anchors).parent / "anchor-runs"
 
     jobs = []
     for r in records.value:
         for a in anchors:
-            state = {"record": {"id": r["id"], "repo": r["repo"], "text": r["text"]},
+            state = {"record": {"id": r["id"], "kind": r["kind"], "repository": r["repository"], "raptor": r["raptor"]},
                      "anchor": {"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)}}
             body = {"model": args.model, "state": state, "questions": TRACE_QUESTIONS}
             size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
@@ -3822,7 +3913,6 @@ def cmd_trace(args) -> Result[dict, ClientError]:
                             action="Split the record into smaller records; never raise the cap to make it fit.")
             rid = decidr_client.batch_request_id(TRACE_CANDIDATE, r["id"], a["id"], TRACE_CANDIDATE, 1)
             jobs.append(decidr_client.BatchJob(r["id"], a["id"], a["id"], 1, rid, body, TRACE_QUESTIONS, {}, TRACE_CANDIDATE))
-    name = f"trace-{stamp()}"
     if args.dry_run:
         path = out_dir / f"{name}.requests.jsonl"
         write_text_atomic(str(path), "".join(json.dumps({"request_id": j.request_id, "request": j.body}, ensure_ascii=False) + "\n" for j in jobs))
@@ -3894,10 +3984,9 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         "thresholds": thresholds, "questions": TRACE_QUESTIONS,
         "questions_digest": canonical_digest(TRACE_QUESTIONS),
         "question_digests": {q: canonical_digest(v) for q, v in TRACE_QUESTIONS.items()},
-        "anchors": [{"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)} for a in anchors],
-        "records": [{"id": r["id"], "repo": r["repo"],
-                     "text_sha256": hashlib.sha256(r["text"].encode("utf-8")).hexdigest(),
-                     "must_statements": {"extracted_by": "regex", "pattern": MUST_RE.pattern, "sentences": must_sentences(r["text"])}}
+        "anchors": [dict(a, scope=a.get("scope") or "", quote=anchor_quote(a)) for a in anchors],
+        "raptor": source["raptor"], "repositories": source["repositories"], "not_served": source["not_served"],
+        "records": [{k: r[k] for k in ("id", "kind", "repository", "index", "raptor", "obligations", "diagnostics")}
                     for r in records.value],
         "cells": cells, "summary": trace_summary(judged, records.value, anchors), "warnings": warnings,
     }
@@ -3906,7 +3995,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         save_json(str(path), trace)
     except OSError as exc:
         return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
-    data = {"trace_path": str(path), "cells": len(cells), "summary": trace["summary"], "warnings": warnings,
+    data = {"trace_path": str(path), "cells": len(cells), "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
             "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
     if failures:
         return jev_failure("trace cells", failures, len(cells), data)
@@ -5080,9 +5169,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     tr = sub.add_parser("trace", help="judge records (REQ/ADR/NFR) x locked anchors: serves, related, exceeds, conflicts or none per cell; writes trace-<UTC>.json")
     tr.add_argument("--anchors", required=True, help="anchors.json; only locked anchors are traced")
-    tr.add_argument("--records", default="", help="JSONL, one {id, repo, text} record per line")
-    tr.add_argument("--record-glob", default="", help="glob of markdown files, one record each (id = file stem)")
-    tr.add_argument("--repo", default="", help="repo label for --record-glob records")
+    tr.add_argument("--source", action="append", default=[], help="repository root with a .raptor/ inventory; its REQ/NFR/ADR records are read through Raptor (repeatable)")
+    tr.add_argument("--index", action="append", default=[], help="a saved Raptor import index (scripts/extract.py --output), used as Raptor wrote it (repeatable)")
+    tr.add_argument("--raptor", default="", help="Raptor checkout with .venv; required with --source")
+    tr.add_argument("--ids", default="", help="file of record ids, one per line: trace only these; ids Raptor did not serve are listed in not_served")
     tr.add_argument("--annotations", default="", help="JSON [{record, anchor, clauses, what, remedy, jev_disputed}] merged into exceeds/conflicts cells, labelled as written by a reviewer agent, not Jev")
     tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
     tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")

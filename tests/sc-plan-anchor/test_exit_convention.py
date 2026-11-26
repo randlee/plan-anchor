@@ -190,7 +190,7 @@ class JevJudgeErrors(ConventionCase):
             "report": (["report", "--run", missing], None),
             "coverage": (["coverage", "--runs", str(self.d / "empty")], None),
             "diff": (["diff", "--prev", missing, "--next", missing], None),
-            "trace": (["trace", "--anchors", path, "--records", missing, "--dry-run"], "INPUT.MISSING"),
+            "trace": (["trace", "--anchors", path, "--index", missing, "--dry-run"], "INPUT.MISSING"),
             "batch": (["batch", "--input", missing, "--run-dir", str(self.d / "runs")], "INPUT.MISSING"),
             "bead-batch": (["bead-batch", "--anchors", missing, "--gate", "plan", "--anchor", "ANC-001", "--item", "bd-1",
                             "--emit", "--repository-root", str(self.d / "nowhere")], None),
