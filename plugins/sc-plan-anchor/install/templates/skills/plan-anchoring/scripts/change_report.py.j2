@@ -22,6 +22,9 @@ Inputs
   --fixture-checks F   ``check-fixtures`` outputs, oldest first (repeatable): first and last per anchor
   --tuning-result F    tournament ``result_vars.json`` files, oldest first (repeatable)
   --drift-file F       the drift review JSON (assets/schemas/drift-review.schema.json)
+  --trace T            instead of the above: render a `jev_judge.py trace` file T as DIR/<name>.html (default name:
+                       T's stem) with one panel per coloured cell in DIR/<name>/ (templates/trace-panel.xhtml.j2,
+                       page templates/trace-report.html.j2); --anchors and --baseline-rev are then not used
   --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
                        in DIR/<name>/
 
@@ -34,7 +37,7 @@ render of templates/change-report.html.j2, which receives only top-level arrays 
 the word-diff fragments are built here (escaped text inside <del>/<ins>).
 
 Output: one JSON envelope ``{success, data, error}`` on stdout. Exit 0 when the report was written, 2 with a
-typed error (VALIDATION.INPUT, SCRIPT.IO, GIT.BASELINE, DRIFT.INVALID, DEPENDENCY.SC_COMPOSE, RENDER.FAILED,
+typed error (VALIDATION.INPUT, SCRIPT.IO, GIT.BASELINE, DRIFT.INVALID, TRACE.INVALID, DEPENDENCY.SC_COMPOSE, RENDER.FAILED,
 SETTINGS.*, SCRIPT.INTERNAL), 130 on interrupt.
 """
 
@@ -62,6 +65,9 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = SKILL_DIR / "templates"
 DRIFT_SCHEMA = "plan-anchoring/drift-review/1"
 REPORT_SCHEMA = "plan-anchoring/change-report/1"
+TRACE_SCHEMA = "plan-anchoring/trace/1"
+TRACE_QUESTION_ORDER = ("relates", "serves", "exceeds", "conflicts")
+TRACE_DETAIL = ("exceeds", "conflicts")
 SEVERITIES = ("material", "minor")
 FINDING_STATUSES = ("open", "fixed", "reverted", "owner_decision")
 ANCHOR_FIELDS = ("statement", "scope", "status", "kind", "quote", "deterministic_check")
@@ -658,6 +664,117 @@ def overall_status(items: List[dict], drift: Optional[dict]) -> str:
     return "PASS"
 
 
+# ---------------------------------------------------------------- trace report
+
+
+def trace_problems(doc: Any) -> List[str]:
+    if not isinstance(doc, dict) or doc.get("schema") != TRACE_SCHEMA:
+        return [f"schema is not {TRACE_SCHEMA}"]
+    out = []
+    for key in ("anchors", "records", "cells"):
+        if not isinstance(doc.get(key), list):
+            out.append(f"{key} must be an array")
+    if out:
+        return out
+    anchors = {a.get("id") for a in doc["anchors"] if isinstance(a, dict)}
+    records = {r.get("id") for r in doc["records"] if isinstance(r, dict)}
+    for n, c in enumerate(doc["cells"], start=1):
+        if not isinstance(c, dict) or c.get("record") not in records or c.get("anchor") not in anchors or not isinstance(c.get("class"), str):
+            out.append(f"cell {n} must name a listed record and anchor and carry a class")
+        elif c["class"] not in ("none", "error") and not isinstance(c.get("p_yes"), dict):
+            out.append(f"cell {n} has no p_yes")
+    return out
+
+
+def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
+    note = c.get("annotation") or {}
+    musts = record.get("must_statements", {}).get("sentences", [])
+    p_yes = [{"question": q, "p": f"{c['p_yes'][q]:.2f}"} for q in TRACE_QUESTION_ORDER if q in c["p_yes"]]
+    lines = [f"{c['record']} ({record.get('repo', '')}) x {c['anchor']}: {c['class']}",
+             f"Anchor: {anchor['statement']}", f"Owner quote: {anchor['quote']}", f"Scope: {anchor['scope']}",
+             "Jev P(yes): " + ", ".join(f"{r['question']} {r['p']}" for r in p_yes)]
+    if note:
+        lines += [f"Clause: {x}" for x in note.get("clauses", [])]
+        lines += [f"What ({note.get('provenance_label', '')}): {note.get('what', '')}", f"Remedy: {note.get('remedy', '')}"]
+    return {"dom": dom_id("cell", f"{c['record']}-{c['anchor']}"), "record": c["record"], "repo": record.get("repo", ""),
+            "anchor": c["anchor"], "cls": c["class"], "statement": anchor["statement"], "quote": anchor["quote"],
+            "scope": anchor["scope"], "musts": musts, "p_yes": p_yes, "detail": c["class"] in TRACE_DETAIL,
+            "annotated": bool(note), "clauses": note.get("clauses", []), "what": note.get("what", ""),
+            "remedy": note.get("remedy", ""), "disputed": bool(note.get("jev_disputed")),
+            "provenance_label": note.get("provenance_label", ""),
+            "copy_json": json.dumps(c, indent=2, sort_keys=True, ensure_ascii=False), "context_text": "\n".join(lines)}
+
+
+def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
+    """Render a trace file: a records x anchors grid page and one panel per coloured cell."""
+    doc = read_json(Path(args.trace), "trace file")
+    if isinstance(doc, Err):
+        return doc
+    problems = trace_problems(doc.value)
+    if problems:
+        return err("TRACE.INVALID", f"{args.trace} is not a usable trace file: " + "; ".join(problems[:5]),
+                   "Pass a file written by `jev_judge.py trace`.")
+    t = doc.value
+    name = args.name or Path(args.trace).stem
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        return err("VALIDATION.INPUT", f"--name {name!r} must be a file stem of letters, digits, '.', '_' or '-'", "Pass --name like trace-phase-b.")
+    binary = find_sc_compose()
+    if isinstance(binary, Err):
+        return binary
+    anchors = {a["id"]: a for a in t["anchors"]}
+    records = {r["id"]: r for r in t["records"]}
+    cells = {(c["record"], c["anchor"]): c for c in t["cells"]}
+    out = Path(args.out).resolve()
+    panels_dir = out / name
+    try:
+        panels_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return err("SCRIPT.IO", f"could not create {panels_dir}: {exc}", "Pass a writable --out folder.")
+    sections, panel_paths, grid = [], [], []
+    with tempfile.TemporaryDirectory(prefix="trace-report-") as tmp:
+        scratch = Path(tmp)
+        for r in sorted(t["records"], key=lambda r: (r.get("repo", ""), natural(r["id"]))):
+            row = {"id": r["id"], "repo": r.get("repo", ""), "cells": []}
+            for a in t["anchors"]:
+                c = cells.get((r["id"], a["id"]), {"class": "none"})
+                dom = ""
+                if c["class"] not in ("none", "error"):
+                    variables = trace_cell_vars(c, anchors[a["id"]], records[r["id"]])
+                    dom = variables["dom"]
+                    target = panels_dir / f"{name}-{dom}.xhtml"
+                    text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
+                    if isinstance(text, Err):
+                        return text
+                    sections.append(text.value)
+                    panel_paths.append(target.as_posix())
+                row["cells"].append({"anchor": a["id"], "cls": c["class"], "dom": dom})
+            grid.append(row)
+        per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
+        summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
+        summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
+        th = t.get("thresholds", {})
+        metadata = [{"label": "Anchors", "value": str(t.get("anchors_path", ""))},
+                    {"label": "Model", "value": f"{t.get('model', '')} (answered: {', '.join(t.get('model_answered', [])) or '-'})"},
+                    {"label": "Answered by", "value": str(t.get("answered_by", ""))},
+                    {"label": "Thresholds", "value": ", ".join(f"{k} {v}" for k, v in th.items())},
+                    {"label": "Questions digest", "value": str(t.get("questions_digest", ""))},
+                    {"label": "Sessions", "value": str(len(t.get("session_ids", [])))},
+                    {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"},
+                    {"label": "Trace file", "value": str(args.trace)}]
+        shell = {"title": args.title or f"Records x anchors ({len(t['records'])} x {len(t['anchors'])})",
+                 "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what/remedy text in red and yellow panels is written by a reviewer agent, not Jev.",
+                 "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                 "anchor_cols": [{"id": a["id"], "statement": a["statement"]} for a in t["anchors"]],
+                 "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
+                 "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False)}
+        page = out / f"{name}.html"
+        rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
+        if isinstance(rendered, Err):
+            return rendered
+    return Ok({"html": page.as_posix(), "panels": panel_paths, "cells": len(panel_paths),
+               "records": len(t["records"]), "anchors": len(t["anchors"])})
+
+
 # ---------------------------------------------------------------- command
 
 
@@ -672,6 +789,15 @@ def issue_template(root: Path) -> Result[Optional[str], ToolError]:
 
 
 def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, ToolError]:
+    if not args.out:
+        return err("VALIDATION.INPUT", "--out is required", "Pass --out <folder> for the report.")
+    if args.trace:
+        return build_trace(args, run)
+    if not args.anchors or not args.baseline_rev:
+        return err("VALIDATION.INPUT", "--anchors and --baseline-rev are required (or pass --trace)",
+                   "Pass --anchors <anchors.json> --baseline-rev <rev>, or --trace <trace.json>.")
+    name = args.name or "change-report"
+    args.name = name
     anchors = Path(args.anchors)
     if not anchors.is_file():
         return err("SCRIPT.IO", f"anchors file {anchors} does not exist", "Pass --anchors naming anchors.json.")
@@ -825,8 +951,9 @@ class _JsonArgumentParser(argparse.ArgumentParser):
 def _parser() -> argparse.ArgumentParser:
     p = _JsonArgumentParser(prog="change_report.py", description=__doc__,
                             formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--anchors", required=True, help="anchors.json now")
-    p.add_argument("--baseline-rev", required=True, help="git revision holding anchors.json before the round")
+    p.add_argument("--anchors", default="", help="anchors.json now (required unless --trace)")
+    p.add_argument("--baseline-rev", default="", help="git revision holding anchors.json before the round (required unless --trace)")
+    p.add_argument("--trace", default="", help="render this `jev_judge.py trace` file instead of a change report")
     p.add_argument("--plan-dir", default="", help="plan folder holding anchor-runs/ (default: the folder holding --anchors)")
     p.add_argument("--gate", choices=("plan", "dev"), default="plan")
     p.add_argument("--item", action="append", default=[], help="plan item id; repeatable (default: every item with a run)")
@@ -836,7 +963,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="tournament result_vars.json, oldest first; repeatable")
     p.add_argument("--drift-file", default="", help="drift review JSON (assets/schemas/drift-review.schema.json)")
     p.add_argument("--out", required=True, help="output folder")
-    p.add_argument("--name", default="change-report", help="file stem of the page, sidecar and panel folder")
+    p.add_argument("--name", default="", help="file stem of the page, sidecar and panel folder (default change-report; with --trace the trace file's stem)")
     p.add_argument("--title", default="")
     p.add_argument("--repository-root", default=".", help="where .sc/plan-anchor/settings.yaml is looked up (default: .)")
     return p

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.2 — 2026-11-26
+
+- Add `jev_judge.py trace`: judge REQ/ADR/NFR records against locked anchors with four Jev questions per cell, classify each cell (serves, related, exceeds, conflicts, none) in the script, and write `trace-<UTC>.json` with MUST/SHALL extraction, summary counts and optional reviewer annotations labelled as not Jev's.
+- Add `change_report.py --trace` with `templates/trace-report.html.j2` and `templates/trace-panel.xhtml.j2`: a records x anchors grid whose coloured cells open a side panel; `references/record-trace.md`.
+
 ## 0.13.1 — 2026-11-25
 
 - Re-render the plan-anchor client from sc-decidr 0.4.1 (Jev requests use `jev-latest`) and update its pinned wheel version.

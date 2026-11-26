@@ -1,0 +1,73 @@
+---
+metadata:
+  name: trace-panel
+  description: One coloured record x anchor cell of the plan-anchoring trace report, as a copyable XHTML panel.
+required_variables:
+  - dom
+  - record
+  - repo
+  - anchor
+  - cls
+  - statement
+  - quote
+  - scope
+  - musts
+  - p_yes
+  - copy_json
+  - context_text
+defaults:
+  detail: false
+  annotated: false
+  clauses: []
+  what: ""
+  remedy: ""
+  disputed: false
+  provenance_label: ""
+---
+<section xmlns="http://www.w3.org/1999/xhtml" class="section trace-panel c-{{ cls | e }}" id="{{ dom | e }}">
+  <div class="section-head">
+    <h2>{{ record | e }}{% if repo %} <span class="small">({{ repo | e }})</span>{% endif %} &#x00D7; {{ anchor | e }} <span class="status cls-{{ cls | e }}">{{ cls | e }}</span></h2>
+    <div class="section-actions" role="group" aria-label="Copy cell">
+      <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+      <button type="button" class="icon-button" title="Copy Context" data-copy-text="{{ context_text | e }}">&#x2398;</button>
+    </div>
+  </div>
+  <h3>Anchor</h3>
+  <p class="statement">{{ statement | e }}</p>
+  <p class="quote">Owner: &#x201C;{{ quote | e }}&#x201D;</p>
+  <p class="small">Scope: {{ scope | e }}</p>
+{% if detail %}
+{% if annotated %}
+  <h3>{% if cls == "conflicts" %}What conflicts{% else %}What exceeds{% endif %}{% if disputed %} <span class="status status-drift">Jev disputed on reading</span>{% endif %}</h3>
+  <ul class="clauses">
+{% for c in clauses %}
+    <li>{{ c | e }}</li>
+{% endfor %}
+  </ul>
+  <p class="what">{{ what | e }}</p>
+  <h3>Proposed remedy</h3>
+  <p class="remedy">{{ remedy | e }}</p>
+  <p class="provenance small">What, remedy and the disputed flag: {{ provenance_label | e }}.</p>
+{% else %}
+  <p class="small">No reviewer annotation for this cell.</p>
+{% endif %}
+{% endif %}
+  <h3>Record MUST statements <span class="small">(extracted by regex)</span></h3>
+{% if musts %}
+  <ul class="musts">
+{% for m in musts %}
+    <li>{{ m | e }}</li>
+{% endfor %}
+  </ul>
+{% else %}
+  <p class="small">None extracted.</p>
+{% endif %}
+  <table class="p-yes">
+    <thead><tr><th scope="col">Question</th><th scope="col">Jev P(yes)</th></tr></thead>
+    <tbody>
+{% for row in p_yes %}
+      <tr><th scope="row">{{ row.question | e }}</th><td>{{ row.p | e }}</td></tr>
+{% endfor %}
+    </tbody>
+  </table>
+</section>

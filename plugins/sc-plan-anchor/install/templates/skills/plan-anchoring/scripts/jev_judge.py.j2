@@ -60,6 +60,8 @@ Subcommands
                   repeat) on stdout as each answer arrives, teed to anchor-runs/tournament-<run>.jsonl; never writes beads
   bead-batch      high layer: item beads x an anchor's question bead (and its open candidate children) as batch
                   request lines (--emit prints them), then the low layer; reads beads only
+  trace           records (REQ/ADR/NFR) x locked anchors: four Jev questions per cell, classified here as serves,
+                  related, exceeds, conflicts or none; writes trace-<UTC>.json (render: change_report.py --trace)
   tournament      run one anchor's question tournament through the low layer (oracle x candidate bundles x repeats) and
                   score it; writes result_vars.json for the anchor-tuning agent; data.accepted; never writes beads
 
@@ -116,6 +118,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import glob
 import hashlib
 import json
 import os
@@ -3621,6 +3624,296 @@ def cmd_batch(args) -> Result[Any, ClientError]:
 
 
 # --------------------------------------------------------------------------- #
+# trace: records (REQ/ADR/NFR) x locked anchors, four questions per cell, classified here (references/record-trace.md)
+# --------------------------------------------------------------------------- #
+TRACE_SCHEMA = "plan-anchoring/trace/1"
+TRACE_CANDIDATE = "trace"
+TRACE_CONFLICT_MIN = 0.5    # P(conflicts=yes) at or above this: conflicts, whatever the other answers
+TRACE_RELATION_MIN = 0.6    # P(serves=yes) or P(relates=yes) at or above this: the record touches the anchor
+TRACE_EXCEEDS_MIN = 0.6     # a related record with P(exceeds=yes) at or above this: exceeds
+TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
+TRACE_ANNOTATED = ("exceeds", "conflicts")
+TRACE_PROVENANCE = "reviewer-agent"
+TRACE_PROVENANCE_LABEL = "written by a reviewer agent, not Jev"
+MUST_RE = re.compile(r"\b(?:must|shall)\b", re.IGNORECASE)
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;])\s+|\n")
+TRACE_QUESTIONS = {
+    "relates": {"type": "choice",
+                "instructions": "Does `record.text` govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",
+                "criteria": {"yes": "At least one obligation in the record governs behavior inside the anchor's scope.",
+                             "no": "The record governs only other behavior.",
+                             "unclear": "Cannot tell from the text."}},
+    "serves": {"type": "choice",
+               "instructions": "Does at least one obligation in `record.text` carry out what `anchor.statement` requires, so that satisfying the record also satisfies the anchor within the anchor's scope?",
+               "criteria": {"yes": "An obligation in the record implements or states the anchor's requirement.",
+                            "no": "No obligation in the record implements the anchor's requirement.",
+                            "unclear": "The record touches the anchor's topic but it is not possible to tell whether it implements it."}},
+    "conflicts": {"type": "choice",
+                  "instructions": "Does any obligation in `record.text` contradict `anchor.statement`: requiring what the anchor forbids, forbidding or limiting what the anchor requires or permits, or requiring a behavior the anchor says must not exist? Judge only inside `anchor.scope`.",
+                  "criteria": {"yes": "At least one obligation in the record contradicts the anchor.",
+                               "no": "No obligation in the record contradicts the anchor.",
+                               "unclear": "An obligation might contradict the anchor but the text does not make it certain."}},
+    "exceeds": {"type": "choice",
+                "instructions": "Among the obligations in `record.text` that concern the anchor's topic, does any go beyond `anchor.statement`: stricter, applying outside `anchor.scope`, or adding constraints (limits, prohibitions, required structure) the anchor does not ask for? Answer no if the record does not concern the anchor's topic.",
+                "criteria": {"yes": "An obligation on the anchor's topic is broader or stricter than the anchor.",
+                             "no": "Every obligation on the anchor's topic stays within the anchor.",
+                             "unclear": "Cannot tell whether an obligation goes beyond the anchor."}},
+}
+
+
+def trace_class(p_yes: dict, conflict_min: float, relation_min: float, exceeds_min: float) -> str:
+    """One cell's class from Jev's P(yes) per question; counted here, never asked of Jev."""
+    if p_yes["conflicts"] >= conflict_min:
+        return "conflicts"
+    if p_yes["serves"] >= relation_min or p_yes["relates"] >= relation_min:
+        if p_yes["exceeds"] >= exceeds_min:
+            return "exceeds"
+        return "serves" if p_yes["serves"] >= relation_min else "related"
+    return "none"
+
+
+def p_yes_of(answer) -> Result[float, ClientError]:
+    if hasattr(answer, "noul"):
+        return Ok(float(answer.noul))
+    probs = getattr(answer, "probabilities", None)
+    if isinstance(probs, Mapping) and isinstance(probs.get("yes"), (int, float)):
+        return Ok(float(probs["yes"]))
+    return fail("DECIDR.RESPONSE_INVALID", "a trace answer has no probability for 'yes'")
+
+
+def must_sentences(text: str) -> list:
+    """Sentences holding must/shall, by regex: an extraction, not a reading."""
+    return [s.strip(" -*\t") for s in SENTENCE_SPLIT_RE.split(text) if MUST_RE.search(s) and s.strip(" -*\t")]
+
+
+def load_trace_records(args) -> Result[list, ClientError]:
+    """--records JSONL ({id, repo, text} per line) or --record-glob markdown files (one record each, id = stem)."""
+    if bool(args.records) == bool(args.record_glob):
+        return fail("VALIDATION.INPUT", "pass exactly one of --records or --record-glob")
+    raw = []
+    if args.records:
+        p = pathlib.Path(args.records)
+        if not p.is_file():
+            return fail("INPUT.MISSING", f"records file not found: {args.records!r}", action="Pass a JSONL file of {id, repo, text} lines.")
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return fail("INPUT.MALFORMED", f"records file could not be read: {exc}")
+        for n, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                return fail("INPUT.MALFORMED", f"records line {n} is not JSON: {exc}", action="Write one {id, repo, text} object per line.")
+            if not isinstance(obj, dict) or not isinstance(obj.get("text"), str) or not obj["text"].strip() \
+                    or not isinstance(obj.get("repo", ""), str):
+                return fail("INPUT.MALFORMED", f"records line {n} needs id, repo and non-empty text",
+                            action="Write one {id, repo, text} object per line.")
+            raw.append((obj.get("id"), obj.get("repo", ""), obj["text"], f"records line {n}"))
+    else:
+        for path in sorted(pathlib.Path(x) for x in glob.glob(args.record_glob, recursive=True)):
+            if not path.is_file():
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                return fail("INPUT.MALFORMED", f"record {path} could not be read: {exc}")
+            if body.strip():
+                raw.append((path.stem, args.repo, body, str(path)))
+    records, seen = [], set()
+    for rid, repo, text, where in raw:
+        checked = decidr_client.safe_id(rid, f"{where}: id")
+        if not checked["ok"]:
+            return Err(checked["error"])
+        rid = checked["value"]
+        if rid in seen:
+            return fail("VALIDATION.INPUT", f"record id {rid} appears twice", action="Give every record a unique id.")
+        seen.add(rid)
+        records.append({"id": rid, "repo": repo, "text": text})
+    if not records:
+        return fail("INPUT.EMPTY", "no records to trace", action="Pass a non-empty --records file or a --record-glob that matches files.")
+    return Ok(records)
+
+
+def load_trace_annotations(path: str) -> Result[list, ClientError]:
+    if not path:
+        return Ok([])
+    loaded = load_json(path, "annotations file")
+    if isinstance(loaded, Err):
+        return loaded
+    rows = loaded.value
+    if not isinstance(rows, list):
+        return fail("INPUT.MALFORMED", "annotations must be a JSON array of {record, anchor, clauses, what, remedy, jev_disputed}")
+    out = []
+    for n, row in enumerate(rows, start=1):
+        if not isinstance(row, dict) or not isinstance(row.get("record"), str) or not isinstance(row.get("anchor"), str) \
+                or not isinstance(row.get("clauses", []), list) or not all(isinstance(c, str) for c in row.get("clauses", [])) \
+                or not isinstance(row.get("what", ""), str) or not isinstance(row.get("remedy", ""), str) \
+                or not isinstance(row.get("jev_disputed", False), bool):
+            return fail("INPUT.MALFORMED", f"annotation {n} needs record and anchor strings, clauses (strings), what, remedy and jev_disputed (bool)")
+        out.append({"record": row["record"], "anchor": row["anchor"], "clauses": list(row.get("clauses", [])),
+                    "what": row.get("what", ""), "remedy": row.get("remedy", ""), "jev_disputed": row.get("jev_disputed", False),
+                    "provenance": TRACE_PROVENANCE, "provenance_label": TRACE_PROVENANCE_LABEL})
+    return Ok(out)
+
+
+def trace_answer_json(answer) -> dict:
+    if hasattr(answer, "noul"):
+        return {"noul": answer.noul}
+    return {"choice": answer.choice, "confidence": answer.confidence, "probabilities": dict(answer.probabilities)}
+
+
+def trace_summary(cells: list, records: list, anchors: list) -> dict:
+    per_anchor = {a["id"]: {c: 0 for c in TRACE_CLASSES} for a in anchors}
+    totals = {c: 0 for c in TRACE_CLASSES}
+    related = set()
+    for c in cells:
+        per_anchor[c["anchor"]][c["class"]] += 1
+        totals[c["class"]] += 1
+        if c["class"] != "none":
+            related.add(c["record"])
+    return {"per_anchor": per_anchor, "totals": totals,
+            "records_with_no_relation": [r["id"] for r in records if r["id"] not in related],
+            "conflicts": [{"record": c["record"], "anchor": c["anchor"]} for c in cells if c["class"] == "conflicts"]}
+
+
+def cmd_trace(args) -> Result[dict, ClientError]:
+    thresholds = {}
+    for name, flag, value in (("conflicts", "--conflict-threshold", args.conflict_threshold),
+                              ("relation", "--relation-threshold", args.relation_threshold),
+                              ("exceeds", "--exceeds-threshold", args.exceeds_threshold)):
+        checked = check_threshold(value, flag)
+        if isinstance(checked, Err):
+            return checked
+        thresholds[name] = checked.value
+    if not 1 <= args.workers <= decidr_client.BATCH_MAX_WORKERS:
+        return fail("VALIDATION.INPUT", f"--workers must be between 1 and {decidr_client.BATCH_MAX_WORKERS}")
+    if args.dry_run and args.answers_file:
+        return fail("VALIDATION.INPUT", "pass --dry-run or --answers-file, not both")
+    rec = _valid_record(args.anchors)
+    if isinstance(rec, Err):
+        return rec
+    anchors = [a for a in rec.value["anchors"] if a.get("status") == "locked"]
+    if not anchors:
+        return fail("ANCHOR.NONE_LOCKED", f"{args.anchors} has no locked anchor to trace against",
+                    action="Lock the anchors the owner approved (references/anchor-capture.md), then rerun.")
+    records = load_trace_records(args)
+    if isinstance(records, Err):
+        return records
+    annotations = load_trace_annotations(args.annotations)
+    if isinstance(annotations, Err):
+        return annotations
+    loaded = answers_file(args.answers_file, "'<record>/<anchor>' or '<anchor>'")
+    if isinstance(loaded, Err):
+        return loaded
+    fixture = loaded.value
+    out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(args.anchors).parent / "anchor-runs"
+
+    jobs = []
+    for r in records.value:
+        for a in anchors:
+            state = {"record": {"id": r["id"], "repo": r["repo"], "text": r["text"]},
+                     "anchor": {"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)}}
+            body = {"model": args.model, "state": state, "questions": TRACE_QUESTIONS}
+            size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
+            if size > args.max_request_bytes:
+                return fail("JEV.CONTEXT_EXCEEDED", f"the request for {r['id']}/{a['id']} is {size} bytes, over --max-request-bytes {args.max_request_bytes}",
+                            action="Split the record into smaller records; never raise the cap to make it fit.")
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, r["id"], a["id"], TRACE_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(r["id"], a["id"], a["id"], 1, rid, body, TRACE_QUESTIONS, {}, TRACE_CANDIDATE))
+    name = f"trace-{stamp()}"
+    if args.dry_run:
+        path = out_dir / f"{name}.requests.jsonl"
+        write_text_atomic(str(path), "".join(json.dumps({"request_id": j.request_id, "request": j.body}, ensure_ascii=False) + "\n" for j in jobs))
+        return Ok({"success": True, "data": {"dry_run": True, "requests": len(jobs), "requests_path": str(path)}, "error": None})
+
+    replies = []  # (answers, session_id, model_answered) or ClientError, in job order
+    if fixture is not None:
+        for job in jobs:
+            got = decidr_client.fixture_attempt(job, fixture, 1)
+            if not got["ok"]:
+                return Err(got["error"])
+            replies.append((got["value"]["answers"], None, "fixture"))
+    else:
+        allowed = decidr_client.remote_preflight(args.repository_root, "The record texts and anchor statements")
+        if not allowed["ok"]:
+            return Err(allowed["error"])
+        result = decidr_client.call_batch_results([j.body for j in jobs], model=args.model, abort_on=frozenset({"auth"}),
+                                                  timeout_secs=args.timeout, repository_root=args.repository_root,
+                                                  consent_what="The record texts and anchor statements", workers=args.workers)
+        if not result["ok"]:
+            return Err(result["error"])
+        by_position = {line.get("position"): line for line in result["value"]}
+        for n in range(len(jobs)):
+            line = by_position.get(n)
+            if line is None:
+                replies.append(ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned no result for this request"))
+            elif not line["ok"]:
+                replies.append(line["error"])
+            else:
+                replies.append((line["value"], line.get("session_id"), line.get("model_answered")))
+
+    notes = {(n["record"], n["anchor"]): n for n in annotations.value}
+    cells, failures, warnings, sessions, models = [], [], [], [], set()
+    for job, reply in zip(jobs, replies):
+        cell = {"record": job.item_id, "anchor": job.anchor_id, "request_id": job.request_id}
+        p_yes = {}
+        if not isinstance(reply, ClientError):
+            for q in TRACE_QUESTIONS:
+                got = p_yes_of(reply[0].get(q)) if q in reply[0] else fail("DECIDR.RESPONSE_INVALID", f"no answer for {q}")
+                if isinstance(got, Err):
+                    reply = got.error
+                    break
+                p_yes[q] = round(got.value, 4)
+        if isinstance(reply, ClientError):
+            failures.append((f"{job.item_id}/{job.anchor_id}", reply))
+            cells.append(dict(cell, **{"class": "error", "error": {"code": reply.code, "message": reply.message}}))
+            continue
+        answers, session_id, model = reply
+        if session_id:
+            sessions.append(session_id)
+        if model:
+            models.add(model)
+        cls = trace_class(p_yes, thresholds["conflicts"], thresholds["relation"], thresholds["exceeds"])
+        cell.update({"class": cls, "p_yes": p_yes, "answers": {q: trace_answer_json(answers[q]) for q in TRACE_QUESTIONS},
+                     "session_id": session_id})
+        note = notes.pop((job.item_id, job.anchor_id), None)
+        if note is not None:
+            if cls in TRACE_ANNOTATED:
+                cell["annotation"] = {k: v for k, v in note.items() if k not in ("record", "anchor")}
+            else:
+                warnings.append(f"annotation for {job.item_id}/{job.anchor_id} not merged: the cell is {cls}, not exceeds or conflicts")
+        cells.append(cell)
+    warnings += [f"annotation for {r}/{a} not merged: no such record or locked anchor" for r, a in notes]
+    judged = [c for c in cells if c["class"] != "error"]
+    trace = {
+        "schema": TRACE_SCHEMA, "generated_at": now_utc().isoformat(timespec="seconds"),
+        "anchors_path": args.anchors, "model": args.model, "model_answered": sorted(models),
+        "answered_by": "fixture" if fixture is not None else "jev", "session_ids": sessions,
+        "thresholds": thresholds, "questions": TRACE_QUESTIONS,
+        "questions_digest": canonical_digest(TRACE_QUESTIONS),
+        "question_digests": {q: canonical_digest(v) for q, v in TRACE_QUESTIONS.items()},
+        "anchors": [{"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)} for a in anchors],
+        "records": [{"id": r["id"], "repo": r["repo"],
+                     "text_sha256": hashlib.sha256(r["text"].encode("utf-8")).hexdigest(),
+                     "must_statements": {"extracted_by": "regex", "pattern": MUST_RE.pattern, "sentences": must_sentences(r["text"])}}
+                    for r in records.value],
+        "cells": cells, "summary": trace_summary(judged, records.value, anchors), "warnings": warnings,
+    }
+    path = out_dir / f"{name}.json"
+    try:
+        save_json(str(path), trace)
+    except OSError as exc:
+        return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
+    data = {"trace_path": str(path), "cells": len(cells), "summary": trace["summary"], "warnings": warnings,
+            "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
+    if failures:
+        return jev_failure("trace cells", failures, len(cells), data)
+    return Ok({"success": True, "data": data, "error": None})
+
+
+# --------------------------------------------------------------------------- #
 # bead-batch (high layer): resolve tracker records into request lines, then the low layer
 # --------------------------------------------------------------------------- #
 class TrackerReader:
@@ -4784,6 +5077,25 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--answers-file", default="", help="fixture answers keyed '<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>' or '*'; no network")
     tn.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tn.set_defaults(func=cmd_tournament)
+
+    tr = sub.add_parser("trace", help="judge records (REQ/ADR/NFR) x locked anchors: serves, related, exceeds, conflicts or none per cell; writes trace-<UTC>.json")
+    tr.add_argument("--anchors", required=True, help="anchors.json; only locked anchors are traced")
+    tr.add_argument("--records", default="", help="JSONL, one {id, repo, text} record per line")
+    tr.add_argument("--record-glob", default="", help="glob of markdown files, one record each (id = file stem)")
+    tr.add_argument("--repo", default="", help="repo label for --record-glob records")
+    tr.add_argument("--annotations", default="", help="JSON [{record, anchor, clauses, what, remedy, jev_disputed}] merged into exceeds/conflicts cells, labelled as written by a reviewer agent, not Jev")
+    tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
+    tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
+    tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")
+    tr.add_argument("--exceeds-threshold", type=float, default=TRACE_EXCEEDS_MIN, help="a related cell with P(exceeds=yes) at or above this: exceeds")
+    tr.add_argument("--workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
+    tr.add_argument("--max-request-bytes", type=int, default=DEFAULT_MAX_REQUEST_BYTES, help="refuse any request over this before sending")
+    tr.add_argument("--model", default=DEFAULT_MODEL)
+    tr.add_argument("--timeout", type=float, default=30.0)
+    tr.add_argument("--dry-run", action="store_true", help="write the requests to trace-<UTC>.requests.jsonl; call nothing")
+    tr.add_argument("--answers-file", default="", help="fixture answers keyed '<record>/<anchor>', '<anchor>' or '*'; no network")
+    tr.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
+    tr.set_defaults(func=cmd_trace)
 
     rp = sub.add_parser("report", help="render a run")
     rp.add_argument("--run", required=True)

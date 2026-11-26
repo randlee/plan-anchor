@@ -1,0 +1,60 @@
+---
+name: sc-plan-anchor-record-trace
+version: 1.0.0
+format: markdown
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+---
+name: record-trace
+version: {{ version }}
+description: Judge REQ, ADR and NFR records against the locked anchors with Jev to find over-specification and conflicts; jev_judge.py trace writes the matrix, change_report.py --trace renders it.
+---
+
+# Record trace
+
+## When to use
+
+After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits.
+
+## Command
+
+```
+python3 scripts/jev_judge.py trace --anchors <plan>/anchors.json --records records.jsonl [--annotations notes.json] [--out-dir DIR] [--dry-run | --answers-file F] [--workers N]
+python3 scripts/change_report.py --trace DIR/trace-<UTC>.json --out <folder>
+```
+
+- `--records`: JSONL, one `{"id", "repo", "text"}` per record; the caller extracts the records. Or `--record-glob '<dir>/*.md'` (one file per record, id = file stem, `--repo` labels them).
+- Only `locked` anchors are traced (`ANCHOR.NONE_LOCKED` when there are none).
+- One Jev request per record x anchor with four choice questions: `relates`, `serves`, `conflicts`, `exceeds`. Live calls go through the batch client and need `allow_remote_judge: true`, as for `judge`. `--dry-run` writes the requests to `trace-<UTC>.requests.jsonl`; `--answers-file` keys are `<record>/<anchor>`, `<anchor>` or `*`.
+
+## Classification
+
+The script classifies each cell from P(yes); Jev is never asked for counts.
+
+| Class | Rule (defaults; `--conflict-threshold`, `--relation-threshold`, `--exceeds-threshold`) | Colour |
+|---|---|---|
+| conflicts | P(conflicts) >= 0.5 | red |
+| exceeds | P(serves) or P(relates) >= 0.6, and P(exceeds) >= 0.6 | yellow |
+| serves | P(serves) >= 0.6 | green |
+| related | P(relates) >= 0.6 | blue |
+| none | otherwise | grey |
+
+## Outputs
+
+`<out-dir>/trace-<UTC>.json` (schema `plan-anchoring/trace/1`; default out-dir `<plan>/anchor-runs`): model, session ids, question digests, thresholds; per cell the answers, P(yes) and class; per record the MUST/SHALL sentences (`extracted_by: regex`, not a reading); `summary.per_anchor` counts, `records_with_no_relation`, `conflicts`.
+
+`--annotations` takes `[{record, anchor, clauses, what, remedy, jev_disputed}]` written by a reviewer agent for yellow and red cells. They merge only into exceeds and conflicts cells, carry `provenance: reviewer-agent`, and the report labels them "written by a reviewer agent, not Jev". An annotation for another cell is listed in `data.warnings`, not merged.
+
+The HTML page is a records x anchors grid; clicking a coloured cell shows its panel: record and repo, anchor statement, owner quote, scope, the record's MUST statements and Jev's P(yes) per question; yellow and red panels add the offending clauses, what exceeds or conflicts, the proposed remedy and the disputed flag.
+
+Errors (exit 2): `ANCHOR.NONE_LOCKED`, `INPUT.MALFORMED` / `INPUT.EMPTY` / `VALIDATION.INPUT` for bad records, `FIXTURE.MISSING`, `POLICY.REMOTE_JUDGE_DISABLED`, `JEV.CONTEXT_EXCEEDED` (refused before sending); `change_report.py --trace` reports a file that is not a trace as `TRACE.INVALID`.
+
+## Interpretation
+
+- Red: the record contradicts the owner. Fix the record (or ask the owner), then re-trace.
+- Yellow: the record adds constraints the anchor did not ask for. Keep them only if another authority asks for them.
+- A record with no relation to any anchor is not a deletion candidate: anchors capture what the owner stated, not every capability. Treat "unrelated" as "delete" only when the anchors are known to cover every capability.
+- Annotations are a reviewer's reading. When `jev_disputed` is true the reviewer disagrees with Jev's class; read the record before acting.
