@@ -497,7 +497,7 @@ class BatchTests(TournamentCase):
     def test_results_stream_preserves_request_order(self):
         """Fixture answers produce the same result order as their requests."""
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]), ("c3", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 3, False)
 
         result = self.run_recorded([line], settings, {"*": plan_answers()}, self.d / "ordered.jsonl")
         self.assertIsInstance(result, jj.Ok)
@@ -505,7 +505,7 @@ class BatchTests(TournamentCase):
 
     def test_fixture_auth_failure_stops_later_jobs(self):
         line = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "fixture-model", 1, "p", 0.6, 30.0, 1, False)
 
         with mock.patch.object(jj, "run_batch_job", wraps=jj.run_batch_job) as run_job:
             result = self.run_recorded([line], settings,
@@ -518,7 +518,7 @@ class BatchTests(TournamentCase):
         self.assertEqual(run_job.call_count, 1)
 
     def test_stream_batch_refuses_live_calls_before_running_jobs(self):
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "p", 0.6, 30.0, 3, False)
 
         with mock.patch.object(jj, "run_batch_job") as run_job, \
                 mock.patch.object(jj.decidr_client, "call_batch_results") as call:
@@ -565,7 +565,7 @@ class BatchTests(TournamentCase):
         long_message = "busy:" + ("x" * 1000)
         wheel_error = wheel_line({"error": {"id": "http.provider_busy", "category": "busy", "message": long_message,
                                               "attempts": 5, "retry_after_ms": 2500}})
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "live", 0.6, 30.0, 2, False)
         log_path = self.d / "live.jsonl"
         cancel_token = mock.Mock()
         with mock.patch("sc_agent.Cancel", return_value=cancel_token), \
@@ -590,7 +590,7 @@ class BatchTests(TournamentCase):
 
     def test_successful_batch_uses_observed_sends_without_inventing_unknown(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "jev", 1, "counts", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev", 1, "counts", 0.6, 30.0, 1, False)
         for index, sends in enumerate((5, None)):
             with self.subTest(sends=sends):
                 wire = wheel_line({"response": {"model": "controlled", "answers": plan_answers()}}, sends=sends)
@@ -604,7 +604,7 @@ class BatchTests(TournamentCase):
     def test_batch_auth_result_surfaces_once_with_shared_abort_and_overrides(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
         detail = {"id": "auth.credentials", "category": "auth", "message": "authentication failed (HTTP 401); provider response body withheld", "attempts": 1, "status": 401}
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "auth", 0.6, 30.0, 2, False)
         with mock.patch("sc_agent.Cancel", return_value=mock.Mock()), \
                 mock.patch("sc_agent.send_batch", side_effect=lambda requests, **kw: __import__("sc_decidr_test_double").batch_result([wheel_line({"error": detail})], kw["on_result"])) as send_batch, \
                 mock.patch.object(jj.decidr_client, "call_batch_results", wraps=jj.decidr_client.call_batch_results) as boundary:
@@ -622,7 +622,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callback_is_durable_before_interruption(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "interrupt", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "interrupt", 0.6, 30.0, 2, False)
         wire = wheel_line({"position": 1, "response": {"model": "controlled", "answers": plan_answers()}})
         path = self.d / "interrupted.jsonl"
         during, echoed = [], []
@@ -646,7 +646,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callbacks_log_finish_order_but_return_input_order_once(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]), ("c2", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "ordered", 0.6, 30.0, 2, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "ordered", 0.6, 30.0, 2, False)
         first = wheel_line({"position": 0, "response": {"model": "controlled", "answers": plan_answers()}})
         second = wheel_line({"position": 1, "error": {"id": "http.provider_busy", "category": "busy",
                                                     "message": "busy", "attempts": 5}})
@@ -673,7 +673,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callback_rejects_invalid_carried_positions(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "invalid", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "invalid", 0.6, 30.0, 1, False)
         for index, position in enumerate((None, True, "0", 0.5, -1, 1)):
             with self.subTest(position=position):
                 value = {"response": {"model": "controlled", "answers": plan_answers()}}
@@ -694,7 +694,7 @@ class BatchTests(TournamentCase):
 
     def test_live_callback_log_failure_is_typed(self):
         request = request_line("s1", "text", ("c1", PLAN_QS["questions"]))
-        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "io", 0.6, 30.0, 1, 24000, False)
+        settings = jj.decidr_client.BatchSettings("plan", "jev-latest", 1, "io", 0.6, 30.0, 1, False)
         parent = self.d / "not-a-directory"
         parent.write_text("occupied")
 
