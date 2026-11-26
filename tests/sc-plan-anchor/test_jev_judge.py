@@ -952,13 +952,6 @@ class RubricTests(unittest.TestCase):
         self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["failing"], out["data"]["anchors"][0]["attempts"]), ("needs_work", ["scoped"], 2))
         self.assertEqual(t.bodies[0]["state"]["anchor"]["scope"], "runtime crates")
         self.assertNotIn("item", t.bodies[0]["state"])
-        # a state without an item cannot be shortened: over the cap it is refused before any call
-        with mock.patch.object(jj, "DEFAULT_MAX_REQUEST_BYTES", 200), live(), stub_client(t):
-            code, out = run_cli(["rubric", "--statement", STATEMENT, "--quote", QUOTE])
-        # 0.8.3: no answer from Jev is exit 2 with the typed envelope, not a needs_work/error entry under exit 0
-        self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "JEV.CONTEXT_EXCEEDED"))
-        self.assertEqual((out["data"]["anchors"][0]["verdict"], out["data"]["anchors"][0]["error"]["code"]), ("error", "JEV.CONTEXT_EXCEEDED"))
-        self.assertEqual(len(t.bodies), 2)
 
     def test_add_rubric_gate(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1205,23 +1198,6 @@ class ConfirmTests(unittest.TestCase):
         self.assertEqual((j.code, j.out["error"]["code"]), (2, "AUTH.CREDENTIALS"))
 
 
-class RequestBytesDefaultTests(unittest.TestCase):
-    def test_default_depends_on_the_gate_and_the_flag_overrides(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), extra_args=["--dry-run"])
-            self.assertEqual((j.run["max_request_bytes"], j.run["totals"]["max_request_bytes"]), (24000, 24000))
-            j = Judged(d, Transport(gate="dev"), gate="dev", extra_args=["--dry-run"])
-            self.assertEqual(j.run["max_request_bytes"], 64000)
-            j = Judged(d, Transport(gate="dev"), gate="dev", extra_args=["--dry-run", "--max-request-bytes", "9000"])
-            self.assertEqual(j.run["max_request_bytes"], 9000)
-            # the dev default lets a 40k item through in one attempt; the plan default refuses it
-            t = Transport(gate="dev")
-            j = Judged(d, t, gate="dev", item_text="e" * 40000)
-            self.assertEqual((j.result["attempts"], j.result["item_shortened"]), (1, False))
-            j = Judged(d, Transport(), item_text="e" * 23000)
-            self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-        self.assertEqual((jj.DEFAULT_MAX_REQUEST_BYTES, jj.DEFAULT_MAX_REQUEST_BYTES_DEV), (24000, 64000))
-
 
 class ValidateTests(unittest.TestCase):
     def test_problems_are_listed(self):
@@ -1427,7 +1403,7 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(verdicts, {"ANC-001": "not_addressed", "REQ-014": "not_applicable"})
         self.assertEqual(run["results"][0]["anchor_id"], "ANC-001")  # failing first
         self.assertEqual(run["summary"], {"counts": {"not_addressed": 1, "not_applicable": 1}, "failing": ["ANC-001"],
-                                          "leaning_counts": {"not_addressed": 1, "not_applicable": 1}, "unstable": [], "errors": [], "excluded": [], "shortened": [], "pass": False})
+                                          "leaning_counts": {"not_addressed": 1, "not_applicable": 1}, "unstable": [], "errors": [], "excluded": [], "pass": False})
         self.assertTrue(run["fixture"])
         self.assertEqual(run["model_answered"], "fixture")
         self.assertEqual(run["results"][0]["attempts"], 1)
@@ -1501,7 +1477,6 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual(set(run["requests"][0]["questions"]), {"relevant", "addressed", "contradicted"})  # 0.9.0: triage questions follow a failed cell, never the gate request
         self.assertEqual(run["totals"]["requests"], 2)
         self.assertEqual(run["totals"]["bytes"], sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in run["requests"]))
-        self.assertEqual(run["totals"]["max_request_bytes"], 24000)
         self.assertTrue(Path(run["run_path"]).is_file() and Path(run["path"]).parent == Path(self.run_dir))
         self.assertIsNone(run["results"][0]["verdict"])
         self.assertEqual(run["results"][0]["attempts"], 0)
@@ -1516,25 +1491,11 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.ANCHORS"))
         code, out = self.judge("--all", "--answers-file", fixture, "--threshold", "1.5")
         self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-        code, out = self.judge("--all", "--answers-file", fixture, "--min-item-chars", "0")
-        self.assertEqual(out["error"]["code"], "VALIDATION.INPUT")
-
-    def test_read_item_truncates_and_rejects_empty(self):
-        long_item = write(self.d.name, "long.txt", "x" * 100)
-        ns = jj.argparse.Namespace(item_file=long_item, item_id="ex-1", item_title="", max_item_chars=40)
-        item = ok(jj.read_item(ns))
-        self.assertTrue(item["truncated"])
-        self.assertTrue(item["text"].startswith("x" * 40) and item["text"].endswith(jj.TRUNCATION_MARKER))
-        self.assertEqual(jj.item_core(item["text"]), "x" * 40)
-        empty = write(self.d.name, "empty.txt", "  \n")
-        self.assertEqual(failure(jj.read_item(jj.argparse.Namespace(item_file=empty, item_id="x", item_title="", max_item_chars=10))).code, "INPUT.EMPTY")
-        missing = jj.argparse.Namespace(item_file=str(Path(self.d.name) / "nope.txt"), item_id="x", item_title="", max_item_chars=10)
-        self.assertEqual(failure(jj.read_item(missing)).code, "INPUT.MISSING")
 
     def test_run_file_names_are_sanitised_and_never_collide(self):
         with env():
-            run_a = jj.assemble_run({"gate": "plan", "model": "m", "threshold": 0.6, "max_request_bytes": 1, "min_item_chars": 1, "dry_run": False, "answers_fixture": None},
-                                    record(), "a.json", {"id": "PR #12/x", "title": "", "text": "t", "truncated": False, "source": "s"}, [], [], None)
+            run_a = jj.assemble_run({"gate": "plan", "model": "m", "threshold": 0.6, "dry_run": False, "answers_fixture": None},
+                                    record(), "a.json", {"id": "PR #12/x", "title": "", "text": "t", "source": "s"}, [], [], None)
         self.assertTrue(run_a["run_id"].endswith("-PR__12_x"))
         run_dir = Path(self.d.name) / "coll"
         p1 = jj.write_run(dict(run_a), "", run_dir)
@@ -1728,59 +1689,6 @@ class ScriptTrustRuleTests(unittest.TestCase):
 
 
 class TransportPolicyTests(unittest.TestCase):
-    """Shortening (truncate, halve on overflow, pre-flight cap) is development-gate behaviour; the plan gate refuses instead (PlanSizeTests)."""
-
-    def test_overflow_once_then_success_halves_the_item(self):
-        text = "y" * 6000
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(context_overflow(), gate="dev")
-            j = Judged(d, t, item_text=text, gate="dev")
-        self.assertEqual((j.code, j.result["verdict"], j.result["attempts"]), (0, "satisfied", 2))
-        self.assertTrue(j.result["item_shortened"])
-        self.assertEqual(j.result["item_chars_sent"], 3000 + len(jj.TRUNCATION_MARKER))
-        self.assertEqual(j.sleeps, [])
-        sent = t.bodies[1]["state"]["item"]["text"]
-        self.assertTrue(sent.startswith("y" * 3000) and sent.endswith(jj.TRUNCATION_MARKER))
-        self.assertEqual(t.bodies[0]["state"]["item"]["text"], text)
-        self.assertEqual(j.run["summary"]["shortened"], ["ANC-001"])
-        self.assertEqual(j.run["item"]["chars"], 6000)  # the run records what the item was, the entry what was sent
-
-    def test_overflow_down_to_the_floor_records_context_exceeded(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(*[context_overflow()] * 10, gate="dev")
-            j = Judged(d, t, item_text="y" * 5000, extra_args=["--min-item-chars", "2000"], gate="dev")
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"]), (2, False, "error"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
-        self.assertIn("Shorten the evidence", j.result["error"]["suggested_action"])
-        self.assertIn(context_overflow().message, j.result["error"]["message"])
-        self.assertEqual(j.result["attempts"], 3)  # 5000, 2500, 2000 (floor), then give up
-        self.assertEqual([len(jj.item_core(b["state"]["item"]["text"])) for b in t.bodies], [5000, 2500, 2000])
-        self.assertTrue(j.result["item_shortened"])
-        self.assertEqual(j.result["item_chars_sent"], 2000 + len(jj.TRUNCATION_MARKER))
-        self.assertEqual(j.result["request_bytes"], len(json.dumps(t.bodies[-1], allow_nan=False).encode("utf-8")))
-        self.assertEqual((j.out["success"], j.out["error"]["code"]), (False, "JEV.CONTEXT_EXCEEDED"))  # 0.8.3: the envelope is the error
-
-    def test_preflight_cap_shortens_before_the_first_call(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(gate="dev")
-            j = Judged(d, t, item_text="z" * 20000, extra_args=["--max-request-bytes", "8000"], gate="dev")
-        self.assertEqual((j.code, j.result["attempts"], j.result["item_shortened"]), (0, 1, True))
-        self.assertLessEqual(len(json.dumps(t.bodies[0], allow_nan=False).encode("utf-8")), 8000)
-        self.assertLessEqual(j.result["request_bytes"], 8000)
-        self.assertLess(j.result["item_chars_sent"], 20000)
-
-    def test_preflight_cap_impossible_makes_no_call(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(gate="dev")
-            j = Judged(d, t, item_text="z" * 3000, extra_args=["--max-request-bytes", "500"], gate="dev")
-        self.assertEqual((j.result["verdict"], j.result["error"]["code"], j.result["attempts"]), ("error", "JEV.CONTEXT_EXCEEDED", 0))
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "JEV.CONTEXT_EXCEEDED"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual(t.bodies, [])
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(gate="dev"), item_text="z" * 3000, extra_args=["--max-request-bytes", "500", "--dry-run"], gate="dev")
-        self.assertEqual(j.result["error"]["code"], "JEV.CONTEXT_EXCEEDED")
-        self.assertEqual(j.code, 0)
-
     def test_rate_limited_twice_then_success(self):
         with tempfile.TemporaryDirectory() as d:
             t = Transport(http(429, retry_after=3.5, attempts=5))
@@ -1866,8 +1774,6 @@ impl StepSelector {
 
 
 class PlanSizeTests(unittest.TestCase):
-    """Ported from the plan-size fork branch: the plan gate reduces code and refuses, never shortens."""
-
     def test_long_code_block_is_reduced_to_signatures_with_a_marker(self):
         text, stats = jj.reduce_code("Design:\n\n" + RUST_BLOCK + "\n\nDone.", 8)
         self.assertIn("```rust\npub struct StepSelector {\nimpl StepSelector {\n    pub fn matches(\n        &self,\n        step: &Step,\n    ) -> bool {\n", text)
@@ -1897,128 +1803,6 @@ class PlanSizeTests(unittest.TestCase):
                 "build() {", "pub(crate) const MAX_STEPS: usize = 8;", "x = 1", "    return x", "let y = 2;"]
         self.assertEqual(jj.signature_lines(body), body[:7])
 
-    def test_plan_gate_sends_a_fitting_bead_whole(self):
-        text = "# Sprint\n\n" + RUST_BLOCK + "\n"
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text=text)
-        sent = t.bodies[0]["state"]["item"]["text"]
-        self.assertEqual(sent, text)  # a 14-line block is longer than --max-code-lines 8, but the bead fits
-        self.assertNotIn("<redacted", sent)
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 0, "lines": 0})
-        self.assertEqual((j.run["item"]["chars"], j.run["item"]["chars_before_reduction"]), (len(text), len(text)))
-        self.assertFalse(j.result["item_shortened"])
-        self.assertNotIn("size", j.result)
-        with tempfile.TemporaryDirectory() as d:  # the dry-run request carries the full code too
-            j = Judged(d, Transport(), item_text=text, extra_args=["--dry-run"])
-        self.assertEqual(j.run["requests"][0]["state"]["item"]["text"], text)
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 0, "lines": 0})
-
-    def test_oversize_plan_bead_reduces_only_its_longest_blocks(self):
-        medium = "```rust\npub fn medium() {\n" + "    step();\n" * 200 + "}\n```"   # 202 lines, first in the bead
-        large = "```rust\npub fn large() {\n" + "    step();\n" * 400 + "}\n```"     # 402 lines, the longest
-        text = "# Sprint\n\n## Design\n\n" + medium + "\n\n" + RUST_BLOCK + "\n\n" + large + "\n"
-        after_large = jj.reduce_code(text, 8, {2})[0]
-        after_both = jj.reduce_code(text, 8, {0, 2})[0]
-        self.assertGreater(len(after_large), 2000)
-        self.assertLess(len(after_both), 2000)
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text=text, extra_args=["--max-item-chars", "2000"])
-        sent = t.bodies[0]["state"]["item"]["text"]
-        self.assertEqual(sent, after_both)
-        self.assertIn("self.groups.iter()", sent)  # the 14-line block is long too, but was not needed
-        self.assertEqual(sent.count("<redacted: "), 2)
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 2, "lines": 201 + 401})
-        self.assertEqual(j.run["item"]["chars_before_reduction"], len(text))
-        self.assertEqual(j.run["item"]["chars"], len(after_both))
-        with tempfile.TemporaryDirectory() as d:  # a looser budget stops after the longest block
-            t = Transport()
-            j = Judged(d, t, item_text=text, extra_args=["--max-item-chars", str(len(after_large))])
-        self.assertEqual(t.bodies[0]["state"]["item"]["text"], after_large)
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 1, "lines": 401})
-
-    def test_request_bytes_limit_alone_triggers_reduction(self):
-        large = "```rust\npub fn large() {\n" + "    step();\n" * 400 + "}\n```"
-        text = "# Sprint\n\n" + large + "\n\n" + RUST_BLOCK + "\n"
-        self.assertLess(len(text), jj.DEFAULT_MAX_ITEM_CHARS)
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), item_text=text, extra_args=["--max-request-bytes", "4000", "--dry-run"])
-        self.assertEqual(j.code, 0, j.out)
-        request = j.run["requests"][0]
-        self.assertLessEqual(len(json.dumps(request, allow_nan=False).encode("utf-8")), 4000)
-        self.assertEqual(request["state"]["item"]["text"], jj.reduce_code(text, 8, {0})[0])
-        self.assertIn("self.groups.iter()", request["state"]["item"]["text"])
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 1, "lines": 401})
-        with tempfile.TemporaryDirectory() as d:  # same bead, default request budget: sent whole
-            j = Judged(d, Transport(), item_text=text, extra_args=["--dry-run"])
-        self.assertEqual(j.run["requests"][0]["state"]["item"]["text"], text)
-
-    def test_bead_still_too_large_after_every_long_block_is_reduced(self):
-        large = "```rust\npub fn large() {\n" + "    step();\n" * 400 + "}\n```"
-        text = "# T\n\n## Description\n\n" + "prose " * 600 + "\n\n" + large + "\n\n" + RUST_BLOCK + "\n"
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text=text, extra_args=["--max-item-chars", "3000"])
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-        self.assertIn("the plan-gate item budget is --max-item-chars 3000", j.out["error"]["message"])
-        self.assertEqual(t.bodies, [])
-        shape = j.out["data"]["shape"]
-        self.assertEqual(shape["code_reduced"], {"blocks": 2, "lines": 401 + 8})
-        self.assertEqual(shape["chars_before_reduction"], len(text))
-        self.assertEqual(shape["chars"], len(jj.reduce_code(text, 8)[0]))
-
-    def test_reduce_code_default_selection_is_unchanged(self):
-        text = "a\n" + RUST_BLOCK + "\nb\n```text\n" + "\n".join(f"l{n}" for n in range(12)) + "\n```\nc\n```toml\nx = 1\n```"
-        full = jj.reduce_code(text, 8)
-        self.assertEqual(full[1], {"blocks": 2, "lines": 8 + 12})
-        self.assertEqual(jj.reduce_code(text, 8, None), full)
-        self.assertEqual(jj.reduce_code(text, 8, {0, 1, 2}), full)
-        self.assertEqual(jj.reduce_code(text, 8, set()), (text, {"blocks": 0, "lines": 0}))
-        only_second = jj.reduce_code(text, 8, {1})
-        self.assertIn("self.groups.iter()", only_second[0])
-        self.assertEqual(only_second[1], {"blocks": 1, "lines": 12})
-        self.assertEqual(jj.long_code_blocks(text, 8), [0, 1])
-        self.assertEqual(jj.long_code_blocks(text, 12), [0])
-
-    def test_dev_gate_does_not_reduce_code(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(gate="dev")
-            j = Judged(d, t, item_text=RUST_BLOCK, gate="dev")
-        self.assertEqual(t.bodies[0]["state"]["item"]["text"], RUST_BLOCK)
-        self.assertNotIn("code_reduced", j.run["item"])
-        self.assertNotIn("chars_before_reduction", j.run["item"])
-
-    def test_oversize_plan_bead_is_refused_and_nothing_is_sent(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text="# T\n\n## Description\n\n" + "prose " * 5000)
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-        self.assertTrue(j.out["error"]["message"].startswith("plan bead ex-42 is 30021 characters after long code was reduced to signatures (30021 prose, 0 code; by section: Description 30017, (title) 5); "))
-        self.assertIn("the plan-gate item budget is --max-item-chars 24000", j.out["error"]["message"])
-        action = j.out["error"]["suggested_action"]
-        self.assertIn("judge its cause", action)
-        self.assertLess(action.index("no anchor, requirement or user-approved issue"), action.index("Split only approved work"))
-        self.assertTrue(action.endswith("See references/plan-size-and-shape.md"))
-        self.assertNotIn("split the bead", action)
-        self.assertEqual(t.bodies, [])
-        # the error carries the same numbers `shape` would report
-        data = j.out["data"]
-        self.assertEqual(data["item_id"], "ex-42")
-        self.assertEqual(data["size"], jj.size_breakdown("# T\n\n## Description\n\n" + "prose " * 5000))
-        self.assertEqual((data["shape"]["sections"], data["shape"]["prose_chars"], data["shape"]["chars_before_reduction"]),
-                         ({"title": 5, "description": 30017}, 30021, 30021))
-        self.assertNotIn("paragraphs", data["shape"])
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text="prose " * 1000, extra_args=["--max-request-bytes", "4000"])
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-        self.assertIn("over --max-request-bytes 4000", j.out["error"]["message"])
-        self.assertEqual(t.bodies, [])
-        with tempfile.TemporaryDirectory() as d:  # dry run is refused the same way: nothing would fit
-            j = Judged(d, Transport(), item_text="prose " * 1000, extra_args=["--max-request-bytes", "4000", "--dry-run"])
-        self.assertEqual((j.code, j.out["error"]["code"]), (2, "PLAN.TOO_LARGE"))
-
     def test_size_breakdown_separates_sections_prose_and_code(self):
         text = "# T\n\n## Description\n\nwhy\n\n## Design\n\n```rust\nfn a() {}\n```\n"
         size = jj.size_breakdown(text)
@@ -2026,38 +1810,6 @@ class PlanSizeTests(unittest.TestCase):
         self.assertEqual(size["code_chars"], len("```rust\nfn a() {}\n```\n"))
         self.assertEqual(size["prose_chars"] + size["code_chars"], len(text))
         self.assertEqual(sum(size["sections"].values()) + len("```rust\n") + len("```\n"), len(text) + 1)
-
-    def test_long_code_does_not_make_a_plan_bead_oversize(self):
-        code = "```rust\npub fn big() {\n" + "    step();\n" * 3000 + "}\n```"
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text="# Sprint\n\n" + code)
-        self.assertEqual((j.code, j.result["verdict"]), (0, "satisfied"))
-        self.assertLess(len(t.bodies[0]["state"]["item"]["text"]), 200)
-
-    def test_plan_gate_context_overflow_is_too_large_not_halved(self):
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport(context_overflow())
-            j = Judged(d, t, item_text="y" * 6000)
-        self.assertEqual((j.code, j.run["summary"]["pass"], j.result["verdict"], j.result["error"]["code"]), (2, False, "error", "PLAN.TOO_LARGE"))  # 0.8.3: a cell without an answer from Jev is exit 2 (the partial run is in data)
-        self.assertEqual(j.out["error"]["code"], "PLAN.TOO_LARGE")
-        self.assertIn("Jev rejected it for context size", j.result["error"]["message"])
-        self.assertEqual(j.result["error"]["data"]["shape"]["chars"], 6000)
-        self.assertEqual(len(t.bodies), 1)
-        self.assertFalse(j.result["item_shortened"])
-        self.assertEqual(j.result["attempts"], 1)
-        self.assertEqual(j.run["summary"]["errors"], ["ANC-001"])
-
-    def test_max_code_lines_must_be_positive(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Judged(d, Transport(), extra_args=["--max-code-lines", "0"])
-        self.assertEqual(j.out["error"]["code"], "VALIDATION.INPUT")
-        with tempfile.TemporaryDirectory() as d:
-            t = Transport()
-            j = Judged(d, t, item_text="# S\n\n" + RUST_BLOCK, extra_args=["--max-code-lines", "20"])
-        self.assertEqual(j.run["item"]["code_reduced"], {"blocks": 0, "lines": 0})
-        self.assertIn("self.groups.iter()", t.bodies[0]["state"]["item"]["text"])
-
 
 SHARED_PARAGRAPH = ("All work in this sprint follows the repository conventions: every public command prints JSON by default, "
                     "errors are typed and actionable, and no change lands without a passing CI run on the main branch.")
@@ -2416,7 +2168,7 @@ def make_run(d, name, gate, item, created_at, verdicts, title="", with_quote=Tru
     failing = [a for a, v in verdicts.items() if v in jj.FAILING]
     run = {"schema": "plan-anchoring/run/1", "run_id": f"{gate}-{created_at}-{item}", "gate": gate, "created_at": created_at,
            "anchors_path": "anchors.json", "plan": "phase-a",
-           "item": {"id": item, "title": title, "source": "f", "chars": 10, "truncated": False},
+           "item": {"id": item, "title": title, "source": "f", "chars": 10},
            "model_requested": "jev-latest", "model_answered": "jev-1.13.0", "threshold": 0.6, "dry_run": False, "fixture": False,
            "results": results, "summary": {"counts": {}, "failing": failing, "errors": [a for a, v in verdicts.items() if v == "error"],
                                            "pass": not failing and "error" not in verdicts.values()}}
@@ -2597,20 +2349,6 @@ class DiffTests(unittest.TestCase):
             self.assertEqual((data["pass_before"], data["pass_after"], data["item"]), (False, False, "ex-1"))
             self.assertEqual(data["item_size"], {"before_chars": 10, "after_chars": 34, "delta_chars": 24, "grew": True})
 
-    def test_diff_prefers_pre_reduction_size_and_reports_cuts(self):
-        with tempfile.TemporaryDirectory() as d:
-            prev = make_run(d, "p.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "not_addressed"})
-            nxt = make_run(d, "n.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "satisfied"})
-            p, n = json.loads(Path(prev).read_text()), json.loads(Path(nxt).read_text())
-            p["item"].update({"chars": 800, "chars_before_reduction": 1200})
-            n["item"].update({"chars": 900, "chars_before_reduction": 1100})
-            Path(prev).write_text(json.dumps(p))
-            Path(nxt).write_text(json.dumps(n))
-            code, out = run_cli(["diff", "--prev", prev, "--next", nxt])
-            self.assertEqual(code, 0, out)
-            self.assertEqual(out["data"]["item_size"], {"before_chars": 1200, "after_chars": 1100,
-                                                         "delta_chars": -100, "grew": False})
-
     def test_expected_verdicts_tell_corrections_from_regressions(self):
         with tempfile.TemporaryDirectory() as d:
             prev = make_run(d, "p.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "satisfied", "ANC-003": "not_addressed", "ANC-004": "satisfied"})
@@ -2686,14 +2424,13 @@ class ErrorHandlingTests(unittest.TestCase):
         self.assertEqual((code, out["canceled"]), (130, True))
 
     def test_numeric_flags_are_checked(self):
-        for flag, value in (("--threshold", "high"), ("--max-item-chars", "12.5"), ("--max-code-lines", "lots")):
+        for flag, value in (("--threshold", "high"),):
             with env():
                 code, out = run_cli(["judge", "--anchors", "x", "--gate", "plan", "--all", "--item-id", "ex-1", "--item-text", "t",
                                      "--dry-run", flag, value])
             self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), flag)
             self.assertIn(f"argument {flag}: invalid", out["error"]["message"])
-        self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD, jj.DEFAULT_MAX_ITEM_CHARS, jj.DEFAULT_MAX_CODE_LINES),
-                         ("jev", 0.6, 24000, 8))
+        self.assertEqual((jj.DEFAULT_MODEL, jj.DEFAULT_THRESHOLD), ("jev", 0.6))
         self.assertFalse(hasattr(jj, "JEV_URL"))
         self.assertFalse(hasattr(jj, "parse_env_number") or hasattr(jj, "_env_number"))
 

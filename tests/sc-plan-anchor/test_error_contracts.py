@@ -153,9 +153,6 @@ JEV_CASES = {
     "validation_input_threshold": (JUDGE + ["--dry-run", "--threshold", "1.5"], {"anchors.json": LOCKED, "item.txt": ITEM}, {}, None, 2,
                                    {"code": "VALIDATION.INPUT", "message": "--threshold must be between 0 and 1, got 1.5", "recoverable": False,
                                     "suggested_action": ""}, None),
-    "validation_input_positive": (JUDGE + ["--dry-run", "--max-code-lines", "0"], {"anchors.json": LOCKED, "item.txt": ITEM}, {}, None, 2,
-                                  {"code": "VALIDATION.INPUT", "message": "--max-code-lines must be a positive integer, got 0", "recoverable": False,
-                                   "suggested_action": ""}, None),
     "questions_roles": (JUDGE + ["--dry-run", "--overrides-file", "o.json"],
                         {"anchors.json": LOCKED, "item.txt": ITEM, "o.json": {"ANC-001": {"roles": {"compliance": "covers"}}}}, {}, None, 2,
                         {"code": "QUESTIONS.ROLES", "message": "question set for ANC-001 after overrides must map role 'compliance' to a question id in the set",
@@ -206,17 +203,6 @@ JEV_CASES = {
     "script_internal": (["coverage", "--runs", "runs"], {"runs/a.json": run_file(results=[{"verdict": "x"}])}, {}, None, 2,
                         {"code": "SCRIPT.INTERNAL", "message": "KeyError: 'anchor_id'", "recoverable": False,
                          "suggested_action": "Report this with the command line; check the JSON inputs against references/anchor-document.md."}, None),
-    "plan_too_large": (JUDGE + ["--dry-run", "--max-item-chars", "100"], {"anchors.json": LOCKED, "item.txt": "# T\n\n## Description\n\n" + "prose " * 40}, {}, None, 2,
-                       {"code": "PLAN.TOO_LARGE",
-                        "message": "plan bead ex-42 is 261 characters after long code was reduced to signatures (261 prose, 0 code; by section: Description 257, (title) 5); the plan-gate item budget is --max-item-chars 100. A reasonable plan bead fits in one Jev request; this one is asking too much",
-                        "recoverable": False,
-                        "suggested_action": "Oversize is a symptom; judge its cause before changing the bead. First remove work that no anchor, requirement or user-approved issue asks for and the change does not need. Then cut prose and process ceremony that does not serve a deliverable. Split only approved work that is still too large after that. Never split, trim or raise a limit just to pass the gate. See references/plan-size-and-shape.md"},
-                       {"item_id": "ex-42", "size": {"sections": {"(title)": 5, "Description": 257}, "code_chars": 0, "prose_chars": 261},
-                        "shape": {"chars": 261, "chars_after_reduction": 261, "code_reduced": {"blocks": 0, "lines": 0},
-                                  "sections": {"title": 5, "description": 257}, "code_chars": 0, "prose_chars": 261, "code_lines": 0,
-                                  "prose_lines": 2, "fenced_blocks": 0, "bullets": 0, "table_rows": 0,
-                                  "references": {"github": [], "req": [], "adr": [], "anc": []}, "no_issue_reference": True,
-                                  "chars_before_reduction": 261}}),
 }
 
 
@@ -326,7 +312,7 @@ class JevJudgeErrorContracts(unittest.TestCase):
             self.assertEqual((code, out["success"], out["data"]["clean"]), (0, True, False))
 
     def test_non_numeric_flag_exits_two_with_json(self):
-        for flag, value, kind in (("--max-item-chars", "lots", "int"), ("--max-code-lines", "8.5", "int"), ("--threshold", "high", "float")):
+        for flag, value, kind in (("--threshold", "high", "float"),):
             proc = run_test_child([sys.executable, str(SCRIPTS / "jev_judge.py"), "judge", "--anchors", "x", "--gate", "plan", "--all",
                                    "--item-id", "ex-1", "--item-text", "t", "--dry-run", flag, value],
                                   capture_output=True, text=True, encoding="utf-8")
@@ -382,31 +368,6 @@ class JevTransportErrorContracts(unittest.TestCase):
         code, out, calls = self.judge([failure])
         result = out["data"]["results"][0]
         self.assertEqual((code, calls, out["error"]["code"], result["attempts"]), (2, 1, "DECIDR.VALIDATION", 1))
-
-    def test_planning_gate_refuses_context_overflow_and_dev_gate_halves(self):
-        overflow = (context_overflow_line(), "JEV.CONTEXT_EXCEEDED")
-        code, out, calls = self.judge([overflow])
-        error = out["data"]["results"][0]["error"]
-        self.assertEqual((code, calls, error["code"], out["error"]["code"]), (2, 1, "PLAN.TOO_LARGE", "PLAN.TOO_LARGE"))
-        self.assertEqual(error["data"]["item_id"], "ex-42")
-
-        code, out, calls = self.judge([overflow, overflow], gate="dev", extra=("--min-item-chars", "1000"), item="evidence " * 200)
-        result = out["data"]["results"][0]
-        self.assertEqual((code, calls, result["item_shortened"], result["attempts"]), (2, 2, True, 2))
-        self.assertEqual(out["error"]["code"], "JEV.CONTEXT_EXCEEDED")
-
-    def test_dry_run_request_that_cannot_fit_reports_context_exceeded(self):
-        with Workspace({"anchors.json": LOCKED, "item.txt": "evidence " * 1000}):
-            code, out = call_main(jj.main, ["judge", "--anchors", "anchors.json", "--gate", "dev", "--all", "--item-id", "ex-42", "--item-file", "item.txt",
-                                            "--run-dir", "runs", "--dry-run", "--max-request-bytes", "1000", "--min-item-chars", "2000"])
-        result = out["data"]["results"][0]
-        self.assertEqual((code, result["explanation"]), (0, "dry run; request does not fit"))
-        self.assertEqual(result["error"], {
-            "code": "JEV.CONTEXT_EXCEEDED",
-            "message": "request is 5720 bytes with the item at 2055 chars, over --max-request-bytes 1000; the item is already at --min-item-chars 2000",
-            "recoverable": False,
-            "suggested_action": "Shorten the evidence for this item (names, counts and summaries only), shorten the question overrides, or raise --max-request-bytes."})
-
 
 def contract_error(code, message):
     return {"success": False, "data": None, "error": {"code": code, "message": message, "recoverable": False, "suggested_action": None}}

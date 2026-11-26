@@ -151,21 +151,6 @@ class TriageDefaultTests(unittest.TestCase):
         self.assertIn("extra_questions_sha256", digests["with"])
         self.assertNotIn("extra_questions_sha256", digests["without"])
 
-    def test_a_triage_request_over_the_size_cap_is_dropped_not_the_cell(self):
-        """The gate request fits, the triage request does not: the verdict stands and the cell records what was left out."""
-        with tempfile.TemporaryDirectory() as d:
-            anchors_path = write(d, "anchors.json", record(anchor()))
-            item = write(d, "item.txt", "Sprint 2 copies the legacy runtime crates.")
-            dry = ["judge", "--anchors", anchors_path, "--gate", "plan", "--all", "--item-id", "ex-42", "--item-file", item, "--dry-run"]
-            _, gate_only = run_cli(dry + ["--out", str(Path(d) / "g.json")])
-            fits = gate_only["data"]["totals"]["bytes"]
-            t = ByQuestions(plan_answers(comp="no"))
-            j = Judged(d, t, extra_args=["--max-request-bytes", str(fits + 50)])
-            self.assertEqual(j.code, 0, j.out)
-            self.assertEqual(j.result["verdict"], "not_addressed")
-            self.assertEqual(len(t.bodies), 2 if sum(len(json.dumps(b)) for b in t.bodies[1:]) else 1)
-
-
 class TriageReportTests(unittest.TestCase):
     """`report --format md` shows a failed cell's triage answers, the answers triage/rules.json routes on."""
 

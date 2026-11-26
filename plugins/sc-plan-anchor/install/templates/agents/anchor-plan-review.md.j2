@@ -66,14 +66,14 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
      --item-id "$ITEM_ID" --item-title "$ITEM_TITLE" --item-file "$ITEM_FILE" \
      [--overrides-file "$W/overrides.json"] --threshold "$THRESHOLD" --run-dir "$RUN_DIR" [--dry-run]
    ```
-   Exit 0: the run completed and every cell has an answer; read the outcome from the JSON, never the exit code: `data.summary.pass` is false when at least one verdict is failing, and `data.dry_run` marks a dry run (no verdicts, never a pass). Exit 2: fatal, stdout holds the script's error object. That includes any anchor Jev gave no answer for (`DECIDR.*`, `JEV.*`, `FIXTURE.MISSING`, a per-cell `PLAN.TOO_LARGE`): the partial run is still written and `data.run_path` names it, `data.failures` lists each anchor without an answer. The script makes one Jev request per anchor and retries transient failures three times; at this gate it sends the complete normalized sprint unchanged and refuses an oversize item with `PLAN.TOO_LARGE`. Do not re-run it, and never trim the bead or raise a limit; return the error unchanged so the skill can triage (`references/plan-size-and-shape.md`).
+   Exit 0: the run completed and every cell has an answer; read the outcome from the JSON, never the exit code: `data.summary.pass` is false when at least one verdict is failing, and `data.dry_run` marks a dry run (no verdicts, never a pass). Exit 2: fatal, stdout holds the script's error object. That includes any anchor Jev gave no answer for (`DECIDR.*`, `JEV.*`, `FIXTURE.MISSING`): the partial run is still written and `data.run_path` names it, `data.failures` lists each anchor without an answer. The script makes one Jev request per anchor and retries transient failures three times. Do not re-run it; return the error unchanged so the skill can triage.
 5. Point to the weak spot. For each cell in the run's `summary.failing`, read the anchor `statement`, the answers that failed (for `underspecified`, the cell's `low_questions`; the wording is in the result's `questions` when overridden, else `assets/questions/plan.json`) and `$ITEM_FILE`. Add `to_fix` to that result:
    - `where`: the verbatim sentence of the item text the failing answer concerns, or null when the bead says nothing on it;
    - `change`: one sentence on what the bead should state, or drop, so the answer is firm.
    Read only what those answers concern; do not re-judge other questions or anchors, and never reverse or soften Jev's verdict.
    If the anchor's own `scope` is right and this sprint simply does not touch it, set `where` to null and `change` to `exclude --id <ANC> --item <item_id> --reason "<one sentence>"`; recommend a scope fix only when the scope itself is wrong. Never apply either. An `excluded` cell (`summary.excluded`) was not judged and passes: return it with its `exclusion` and no `to_fix`.
 6. Render: `python3 "$SCRIPT" report --run <run path> --format md`.
-7. Return the envelope below. `results` copy the run's `results[]` unchanged (`verdict`, `leaning`, `min_confidence`, `attempts`, `confirmed`, `unstable`, `explanation`, `answers`, `low_questions`, and `answers_second` and `exclusion` when present) plus `to_fix` on failing cells; `reused_run` is true when `run` was given; `overrides_applied` is every anchor whose `question_set.overridden` is true; `item_truncated` is `item.truncated`; `shortened` is `summary.shortened`. Include the report markdown verbatim; do not summarise verdicts in prose. Measure `duration_ms` from invocation start to return, count actual external tool calls, and set `retry_count` to the sum of `max(attempts - 1, 0)` in returned results. A zero is valid only when measured.
+7. Return the envelope below. `results` copy the run's `results[]` unchanged (`verdict`, `leaning`, `min_confidence`, `attempts`, `confirmed`, `unstable`, `explanation`, `answers`, `low_questions`, and `answers_second` and `exclusion` when present) plus `to_fix` on failing cells; `reused_run` is true when `run` was given; `overrides_applied` is every anchor whose `question_set.overridden` is true. Include the report markdown verbatim; do not summarise verdicts in prose. Measure `duration_ms` from invocation start to return, count actual external tool calls, and set `retry_count` to the sum of `max(attempts - 1, 0)` in returned results. A zero is valid only when measured.
 
 ## Output Format
 
@@ -105,8 +105,6 @@ Return fenced JSON:
        "to_fix": {"where": "Port the runtime crate.", "change": "Name the starting point: copy crates/runtime from the legacy repo, then delete the legacy-specific modules."}}
     ],
     "overrides_applied": ["ANC-012"],
-    "item_truncated": false,
-    "shortened": [],
     "report_markdown": "## Anchor gate: plan · proj-a3f8 ..."
   },
   "error": null,
@@ -126,9 +124,9 @@ On exit 2 or any fatal condition: `success: false`, `data: null`, and `error` as
 - `VALIDATION.PATH`, `VALIDATION.ID`: an untrusted path or identifier failed preflight.
 - `VALIDATION.INPUT`, `VALIDATION.TRACKER`: missing item input or invalid tracker selection; stop before judging.
 - `TRACKER.SHOW_FAILED`: a linked question bead could not be shown in 3 attempts; stop before judging.
-- Script exit 2 because an anchor got no answer from Jev (the script already retried; `DECIDR.RATE_LIMITED`, `JEV.CONTEXT_EXCEEDED`, `DECIDR.RESPONSE_INVALID`, `DECIDR.NETWORK` and the like, or `FIXTURE.MISSING`): return the error object with its `data.run_path` and `data.failures`; do not re-run.
+- Script exit 2 because an anchor got no answer from Jev (the script already retried; `DECIDR.RATE_LIMITED`, `DECIDR.RESPONSE_INVALID`, `DECIDR.NETWORK` and the like, or `FIXTURE.MISSING`): return the error object with its `data.run_path` and `data.failures`; do not re-run.
 - `anchor_tracker.py resolve` errors (`TRACKER.MISMATCH`, `TRACKER.DOLT_REQUIRED`, `TRACKER.CLI_MISSING`, `SETTINGS.*`, `BEADS.METADATA_INVALID`, `BEADS.NOT_DIRECTORY`, `DEPENDENCY.PYYAML`, `REPO.NOT_FOUND`): return its error object unchanged; never switch trackers.
-- Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `PLAN.TOO_LARGE`, `SCRIPT.INTERNAL`: return the script's error object; never work around credential or remote-judge errors, and never split, trim or re-cap a bead to pass `PLAN.TOO_LARGE` (size is a symptom; the skill triages it).
+- Script exit 2 with `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `VALIDATION.ANCHORS`, `QUESTIONS.ROLES`, `ANCHOR.NOT_LOCKED`, `ANCHOR.UNKNOWN`, `SCRIPT.INTERNAL`: return the script's error object; never work around credential or remote-judge errors.
 - Unparseable script stdout: `SCRIPT.OUTPUT` with the first 300 characters.
 
 ## Constraints

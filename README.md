@@ -196,7 +196,7 @@ plugins/sc-plan-anchor/
 | `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
 | `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
 
-Planning-gate requests stay under 24,000 bytes: fitting beads are sent whole, and only oversized beads have the fewest eligible code blocks reduced before `PLAN.TOO_LARGE`. Development evidence can be shortened from the tail and halved on a context response down to 2,000 characters. The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
+The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
 
 
 ## Development
