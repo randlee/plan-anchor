@@ -291,26 +291,39 @@ class TraceTests(unittest.TestCase):
         self.assertIn("written from scratch", red)
         self.assertIn("Forbids the copy.", red)
         self.assertIn("Copy instead.", red)
-        self.assertIn("Jev disputed on reading", red)
-        self.assertIn("written by a reviewer agent, not Jev", red)
+        self.assertIn("Reviewer disputes Jev: Forbids the copy.", red)
+        self.assertIn("reviewer text, not Jev", red)
+        self.assertNotIn("reviewer text, not Jev", green)
+        for heading in ("What conflicts", "Proposed remedy", "Anchor", "Record statements"):
+            self.assertIn(f"<h3>{heading}</h3>", red)
+        self.assertLess(red.index("What conflicts"), red.index("Proposed remedy"))
+        self.assertLess(red.index("Proposed remedy"), red.index("<h3>Anchor</h3>"))
+        self.assertIn("ADR-002 × ANC-001 — conflicts", red)
         self.assertIn("No obligation statements.", red)
         record_panels = [t for n, t in panels.items() if "-rec-" in n]
         anchor_panels = [t for n, t in panels.items() if "-anc-" in n]
         self.assertEqual((len(record_panels), len(anchor_panels)), (3, 1))
         adr_panel = next(t for t in record_panels if "ADR-002" in t)
         self.assertIn("Runtime crates must be written from scratch.", adr_panel)
-        self.assertIn("decision.key_principles[1]", adr_panel)
+        self.assertIn("<h3>Key principles</h3>", adr_panel)
         req_panel = next(t for t in record_panels if "REQ-001" in t)
         self.assertIn("It shall log every copy.", req_panel)
         self.assertIn("Definitions: a crate is a Rust package.", req_panel)
         self.assertIn(STATEMENT_START, anchor_panels[0])
         self.assertIn("copy the libraries from the legacy repo", anchor_panels[0])
-        self.assertIn("stated_by", anchor_panels[0])
+        self.assertIn("<h3>Owner said</h3>", anchor_panels[0])
+        for text in record_panels + anchor_panels:
+            self.assertNotRegex(text, r">[a-z]+_[a-z_]+<|\[\d+\]|<table", "no snake_case keys, index paths or key/value tables")
         page = Path(env["data"]["html"]).read_text(encoding="utf-8")
         self.assertEqual(page.count('data-panel="'), 2 + 3 + 1)
         self.assertEqual(page.count('class="rec hdr" data-panel="rec-'), 3)
         self.assertEqual(page.count('class="anc hdr" data-panel="anc-'), 1)
         self.assertIn("c-none", page)
+        with contextlib.redirect_stdout(io.StringIO()):
+            cr.main(["--trace", out["data"]["trace_path"], "--out", str(Path(self.tmp) / "report"), "--name", "only", "--fields", "statements"])
+        only = (Path(self.tmp) / "report" / "only" / "only-rec-REQ-001.xhtml").read_text(encoding="utf-8")
+        self.assertIn("<h3>Statements</h3>", only)
+        self.assertNotIn("<h3>Requirement</h3>", only)
 
     def test_render_refuses_a_non_trace_file(self):
         bad = write(self.tmp, "bad.json", {"schema": "other"})

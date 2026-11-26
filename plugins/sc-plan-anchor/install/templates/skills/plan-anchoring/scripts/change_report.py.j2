@@ -23,8 +23,9 @@ Inputs
   --tuning-result F    tournament ``result_vars.json`` files, oldest first (repeatable)
   --drift-file F       the drift review JSON (assets/schemas/drift-review.schema.json)
   --trace T            instead of the above: render a `jev_judge.py trace` file T as DIR/<name>.html (default name:
-                       T's stem) with one panel per coloured cell in DIR/<name>/ (templates/trace-panel.xhtml.j2,
+                       T's stem) with one panel per record, anchor and coloured cell in DIR/<name>/ (templates/trace-panel.xhtml.j2,
                        page templates/trace-report.html.j2); --anchors and --baseline-rev are then not used
+  --fields P,...       with --trace: show only these record/anchor field paths (RECORD_FIELDS, ANCHOR_PANEL_FIELDS)
   --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
                        in DIR/<name>/
 
@@ -686,65 +687,92 @@ def trace_problems(doc: Any) -> List[str]:
     return out
 
 
-TRACE_ANCHOR_FIELDS = ("id", "statement", "quote", "kind", "scope", "deterministic_check", "fixtures", "stated_by", "stated_at",
-                       "status", "version", "source_type", "source_ref", "context")
+# Which fields a panel shows, with human labels, in reading order: (label, dotted path[, style]). A client passes its own
+# list, or --fields to keep only some paths. Raptor should own this rendering long term (references/record-trace.md).
+RECORD_FIELDS = (("Statements", "statements"), ("Requirement", "requirement_statement.text"), ("Context", "context.text"),
+                 ("Problem", "context.problem_statement"), ("Decision", "decision.text"), ("Key principles", "decision.key_principles"),
+                 ("Rationale", "rationale"), ("Acceptance criteria", "success_criteria.acceptance_criteria"),
+                 ("Positive consequences", "consequences.positive"), ("Negative consequences", "consequences.negative"),
+                 ("Related", "dependencies.related"), ("Superseded by", "superseded_by"))
+ANCHOR_PANEL_FIELDS = (("Statement", "statement", "statement"), ("Owner said", "quote", "quote"), ("Scope", "scope"),
+                 ("Deterministic check", "deterministic_check"), ("Kind", "kind"), ("Stated by", "stated_by"), ("Stated on", "stated_at"))
+MODALS = {"Must": "MUST", "MustNot": "MUST NOT", "Shall": "SHALL", "ShallNot": "SHALL NOT", "Should": "SHOULD", "May": "MAY"}
 
 
-def flat_rows(value: Any, path: str = "") -> List[dict]:
-    """A JSON value as (field path, value) rows, empty values left out; display only, the copy JSON keeps everything."""
-    if isinstance(value, dict):
-        return [row for k, v in value.items() for row in flat_rows(v, f"{path}.{k}" if path else str(k))]
+def _texts(value: Any) -> List[str]:
+    """Plain text of a Raptor value: a string, the `text` (or id/name) of an object, each element of a list."""
     if isinstance(value, list):
-        return [row for i, v in enumerate(value, start=1) for row in flat_rows(v, f"{path}[{i}]")]
-    if value is None or value == "":
-        return []
-    return [{"field": path, "value": str(value)}]
+        return [t for v in value for t in _texts(v)]
+    if isinstance(value, dict):
+        value = value.get("text") or value.get("id") or value.get("name")
+    return [str(value)] if value not in (None, "") else []
 
 
-def obligation_vars(record: dict) -> dict:
-    """The record's obligation statements exactly as Raptor serves them, or Raptor's note that it serves none."""
-    ob = record.get("obligations") or {}
-    items = [{"modal": str(x.get("modal") or ""), "text": str(x.get("text") or "")} if isinstance(x, dict) else {"modal": "", "text": str(x)}
-             for x in (ob.get("statements") or [])]
-    return {"obligations": items, "obligations_field": ob.get("field") or "", "obligations_note": ob.get("note") or ""}
+def field_blocks(obj: dict, fields: Sequence[tuple], keep: Optional[set] = None) -> List[dict]:
+    """The one field-list -> panel-blocks seam: each listed, non-empty field as a heading and its text (a list if several)."""
+    out = []
+    for label, path, *style in fields:
+        if keep and path not in keep:
+            continue
+        value: Any = obj
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        items = _texts(value)
+        if items:
+            out.append({"heading": label, "items": items, "list": len(items) > 1, "style": style[0] if style else ""})
+    return out
+
+
+def statements(record: dict) -> List[str]:
+    """The record's obligation statements as Raptor serves them, the modal written as in the text (MUST, MUST NOT)."""
+    out = []
+    for x in (record.get("obligations") or {}).get("statements") or []:
+        modal, text = (MODALS.get(x.get("modal"), str(x.get("modal") or "")), str(x.get("text") or "")) if isinstance(x, dict) else ("", str(x))
+        out.append(text if not modal or modal in text else f"{modal} {text}")
+    return out
 
 
 def short_repo(record: dict) -> str:
     return str(record.get("repository", "")).replace("urn:raptor:repo:", "")
 
 
-def trace_record_vars(record: dict) -> dict:
-    diags = [f"{d.get('file', '')}:{d.get('line', '')} {d.get('rule', '')}: {d.get('message', '')}" for d in record.get("diagnostics") or []]
-    return dict(obligation_vars(record), dom=dom_id("rec", record["id"]), record=record["id"], kind=str(record.get("kind", "")),
-                repo=short_repo(record), index=str(record.get("index", "")), rows=flat_rows(record.get("raptor")), diagnostics=diags,
-                copy_json=json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False))
+def _dump(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
 
 
-def trace_anchor_vars(anchor: dict) -> dict:
-    rows = [{"field": k, "value": json.dumps(anchor[k], ensure_ascii=False) if isinstance(anchor[k], (dict, list)) else str(anchor[k])}
-            for k in TRACE_ANCHOR_FIELDS if anchor.get(k) not in (None, "")]
-    return {"dom": dom_id("anc", anchor["id"]), "anchor": anchor["id"], "rows": rows,
-            "copy_json": json.dumps(anchor, indent=2, sort_keys=True, ensure_ascii=False)}
+def trace_record_vars(record: dict, keep: Optional[set] = None) -> dict:
+    raptor = record.get("raptor") or {}
+    blocks = field_blocks(dict(raptor, statements=statements(record)), RECORD_FIELDS, keep)
+    blocks += [{"heading": "Raptor import problems", "items": [f"line {d.get('line', '')}: {d.get('message', '')}" for d in record["diagnostics"]],
+                "list": True}] if record.get("diagnostics") else []
+    meta = [record.get("kind"), short_repo(record), raptor.get("status"), raptor.get("version") and f"version {raptor['version']}"]
+    return {"dom": dom_id("rec", record["id"]), "title": " ".join(filter(None, [record["id"], raptor.get("title")])),
+            "subtitle": " · ".join(str(m) for m in meta if m), "blocks": blocks, "copy_json": _dump(record)}
+
+
+def trace_anchor_vars(anchor: dict, keep: Optional[set] = None) -> dict:
+    return {"dom": dom_id("anc", anchor["id"]), "title": anchor["id"], "blocks": field_blocks(anchor, ANCHOR_PANEL_FIELDS, keep),
+            "copy_json": _dump(anchor)}
 
 
 def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
-    note = c.get("annotation") or {}
-    ob = obligation_vars(record)
-    p_yes = [{"question": q, "p": f"{c['p_yes'][q]:.2f}"} for q in TRACE_QUESTION_ORDER if q in c["p_yes"]]
-    lines = [f"{c['record']} ({short_repo(record)}) x {c['anchor']}: {c['class']}",
-             f"Anchor: {anchor['statement']}", f"Owner quote: {anchor['quote']}", f"Scope: {anchor['scope']}",
-             "Jev P(yes): " + ", ".join(f"{r['question']} {r['p']}" for r in p_yes)]
-    if note:
-        lines += [f"Clause: {x}" for x in note.get("clauses", [])]
-        lines += [f"What ({note.get('provenance_label', '')}): {note.get('what', '')}", f"Remedy: {note.get('remedy', '')}"]
-    lines += [f"Obligation (Raptor): {o['modal']} {o['text']}".replace("  ", " ") for o in ob["obligations"]] or [f"Obligations: {ob['obligations_note']}"]
-    return {**ob, "dom": dom_id("cell", f"{c['record']}-{c['anchor']}"), "record": c["record"], "repo": short_repo(record),
-            "anchor": c["anchor"], "cls": c["class"], "statement": anchor["statement"], "quote": anchor["quote"],
-            "scope": anchor["scope"], "p_yes": p_yes, "detail": c["class"] in TRACE_DETAIL,
-            "annotated": bool(note), "clauses": note.get("clauses", []), "what": note.get("what", ""),
-            "remedy": note.get("remedy", ""), "disputed": bool(note.get("jev_disputed")),
-            "provenance_label": note.get("provenance_label", ""),
-            "copy_json": json.dumps(c, indent=2, sort_keys=True, ensure_ascii=False), "context_text": "\n".join(lines)}
+    note, cls, stm = c.get("annotation") or {}, c["class"], statements(record)
+    blocks = []
+    if cls in TRACE_DETAIL:
+        what = ("Reviewer disputes Jev: " if note.get("jev_disputed") else "") + note.get("what", "")
+        blocks.append({"heading": f"What {cls}", "items": [f"“{x}”" for x in note.get("clauses", [])], "list": True,
+                       "note": "" if note else "No reviewer annotation yet."})
+        if note:
+            blocks += [{"items": [what]}, {"heading": "Proposed remedy", "note": "reviewer text, not Jev", "items": [note.get("remedy", "")]}]
+    blocks.append({"heading": "Anchor", "items": [anchor["statement"], f"Owner: “{anchor['quote']}”", f"Scope: {anchor['scope']}"]})
+    blocks.append({"heading": "Record statements", "items": stm or [(record.get("obligations") or {}).get("note") or "No obligation statements."],
+                   "list": bool(stm)})
+    jev = "Jev P(yes): " + " · ".join(f"{q} {c['p_yes'][q]:.2f}" for q in TRACE_QUESTION_ORDER if q in c["p_yes"])
+    blocks.append({"items": [jev], "style": "small"})
+    title = f"{c['record']} × {c['anchor']} — {cls}"
+    context = [title, *[x for b in blocks for x in ([b["heading"]] if b.get("heading") else []) + b["items"]]]
+    return {"dom": dom_id("cell", f"{c['record']}-{c['anchor']}"), "cls": cls, "title": title, "subtitle": short_repo(record),
+            "blocks": blocks, "copy_json": _dump(c), "context_text": "\n".join(context)}
 
 
 def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
@@ -775,34 +803,26 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     sections, panel_paths, grid = [], [], []
     with tempfile.TemporaryDirectory(prefix="trace-report-") as tmp:
         scratch = Path(tmp)
-        for r in t["records"]:
-            text = render(binary.value, "trace-record-panel.xhtml.j2", trace_record_vars(r), panels_dir / f"{name}-{dom_id('rec', r['id'])}.xhtml", scratch, run)
-            if isinstance(text, Err):
-                return text
-            sections.append(text.value)
-            panel_paths.append((panels_dir / f"{name}-{dom_id('rec', r['id'])}.xhtml").as_posix())
-        for a in t["anchors"]:
-            text = render(binary.value, "trace-anchor-panel.xhtml.j2", trace_anchor_vars(a), panels_dir / f"{name}-{dom_id('anc', a['id'])}.xhtml", scratch, run)
-            if isinstance(text, Err):
-                return text
-            sections.append(text.value)
-            panel_paths.append((panels_dir / f"{name}-{dom_id('anc', a['id'])}.xhtml").as_posix())
+        keep = set(args.fields.split(",")) if args.fields else None
+        jobs = [trace_record_vars(r, keep) for r in t["records"]]
+        jobs += [trace_anchor_vars(a, keep) for a in t["anchors"]]
         for r in sorted(t["records"], key=lambda r: (short_repo(r), natural(r["id"]))):
             row = {"id": r["id"], "repo": short_repo(r), "dom": dom_id("rec", r["id"]), "cells": []}
             for a in t["anchors"]:
                 c = cells.get((r["id"], a["id"]), {"class": "none"})
                 dom = ""
                 if c["class"] not in ("none", "error"):
-                    variables = trace_cell_vars(c, anchors[a["id"]], records[r["id"]])
-                    dom = variables["dom"]
-                    target = panels_dir / f"{name}-{dom}.xhtml"
-                    text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
-                    if isinstance(text, Err):
-                        return text
-                    sections.append(text.value)
-                    panel_paths.append(target.as_posix())
+                    jobs.append(trace_cell_vars(c, anchors[a["id"]], records[r["id"]]))
+                    dom = jobs[-1]["dom"]
                 row["cells"].append({"anchor": a["id"], "cls": c["class"], "dom": dom})
             grid.append(row)
+        for variables in jobs:
+            target = panels_dir / f"{name}-{variables['dom']}.xhtml"
+            text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
+            if isinstance(text, Err):
+                return text
+            sections.append(text.value)
+            panel_paths.append(target.as_posix())
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -1008,6 +1028,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--anchors", default="", help="anchors.json now (required unless --trace)")
     p.add_argument("--baseline-rev", default="", help="git revision holding anchors.json before the round (required unless --trace)")
     p.add_argument("--trace", default="", help="render this `jev_judge.py trace` file instead of a change report")
+    p.add_argument("--fields", default="", help="with --trace: comma-separated field paths record and anchor panels show (default all listed)")
     p.add_argument("--plan-dir", default="", help="plan folder holding anchor-runs/ (default: the folder holding --anchors)")
     p.add_argument("--gate", choices=("plan", "dev"), default="plan")
     p.add_argument("--item", action="append", default=[], help="plan item id; repeatable (default: every item with a run)")
