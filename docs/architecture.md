@@ -69,7 +69,7 @@ threshold is asked again and must agree, else the cell is `underspecified`
 Full order in §4 of the data-model document.
 
 Consequences: Cells near 0.6 on unrelated sprints can fail as
-`underspecified`; ADR-012 adds an explicit exclusion for that case rather than
+`underspecified`; REQ-006 adds an explicit exclusion for that case rather than
 changing the threshold. REQ-009, REQ-075, REQ-076.
 
 ## ADR-004 Tracker: br or bd, selected once
@@ -100,106 +100,6 @@ or a `.beads/` that does not fit it (`TRACKER.MISMATCH` in a `br` install,
 Consequences: Anchor storage and both gates are tracker-neutral. REQ-021 to
 REQ-025.
 
-## ADR-005 Plan sources: Markdown authoritative, tracker copy equivalent
-
-Status: superseded by ADR-014. Date: 2026-10-11.
-
-Context: Plans are written as Markdown, but some teams keep a tracker copy;
-the two must not judge differently.
-
-Decision: `scripts/plan_source.py` normalizes a phase index plus authoritative
-sprint documents, or a tracker epic copy, to the same ordered items and
-byte-identical Jev request bodies. Markdown is authoritative when both exist.
-Markdown review needs tracker records only for anchor roots and their question
-children. Structural defects and copy drift fail before delegation.
-
-Consequences: `plan_source.py` and its contract are no longer shipped, and the
-installer removes them from earlier installs.
-
-## ADR-006 Python: stdlib, 3.11 floor, Result for expected failures
-
-Status: accepted (was partial until 0.7.1; amended for 0.12.1). Date: 2026-10-17.
-
-Context: Scripts run inside agent sessions on any developer machine, and the
-calling agent needs a typed failure, not a traceback.
-
-Decision: Standard library only on Python 3.11+, except PyYAML for settings
-(`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily, and the
-`sc-decidr` wheel for live Jev calls. The wheel version is recorded in the
-generated `decidr_client.py` header and the installation instructions in
-[README.md](../README.md). The client lazily imports `sc_agent` for a live call and for reading sc-agent
-session rows; every other path remains
-standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
-`jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
-`scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
-discriminant and the shared `ClientError {code, message, action, data}`. Exceptions are
-for bugs; the CLI boundary converts them to `SCRIPT.INTERNAL`. All Python is
-unit-tested; CI runs ubuntu, macOS and Windows on 3.11 and 3.x, plus a 3.11
-installer job. A Python 3.11 dependency-floor job runs both tracker renders
-without PyYAML and with its declared minimum, installing the sc-decidr wheel
-selected from `SC_DECIDR_VERSION` in the generated client template by
-`scripts/install_sc_decidr_ci.py`. The installer job uses
-Python 3.11; the installer supports 3.11 and newer (ADR-015).
-
-Consequences: Every skill script and the installer return `Result` for
-expected failures and share `result.py`; `JudgeError` is a value, not an
-exception. Every CLI boundary, `anchor_runner_contract.py` included since
-0.7.1, maps an unexpected exception to `SCRIPT.INTERNAL`
-(`anchor_runner_contract.py` keeps `SCRIPT.IO` for unreadable input). The
-SessionStart hook and `plan_anchor_paths.py` are standard library only.
-REQ-047, REQ-048, REQ-052.
-
-## ADR-007 CLI contract: JSON envelope; exit 0 when it ran, 2 when it could not
-
-Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3). Date: 2026-10-17.
-Amended 2026-10-18 (0.8.3): a Jev call without an answer is exit 2, refusals
-and no-ops are exit 0, and every CLI exits 130 with a `CANCELED` envelope.
-
-Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
-meant "ran, negative answer", so a caller could not tell a failing gate from a
-broken tool by exit code alone, and some commands broke the rule (`validate`
-exited 1 with `success: false`; argparse errors were plain text).
-
-Decision: Every command prints `{success, data, error}`. Exit 0 means the
-command ran: `success: true`, and `data` carries the outcome, negative ones
-included (`judge` `summary.pass`, `check-fixtures` `pass`/`mismatches`,
-`validate` `valid`/`problems`, `lint` `clean`, `rubric` `pass`, `dedupe`
-`likely_duplicates`, `add`/`update` `added`/`updated` false with `refused`,
-`validate-fence` and `anchor_tuning_contract.py` `valid`/`violation`,
-`install.py --status` `state`). Refusals are outcomes too: `add`'s
-`ANCHOR.DUPLICATE`, `ANCHOR.DUPLICATE_CANDIDATE`, `ANCHOR.LINT`,
-`ANCHOR.NOT_TESTABLE` and the statement-repeats-the-quote rule (also on
-`update`) are `data.refused {code, message, recoverable, suggested_action}`
-with nothing written, and a no-op (`update` with nothing to change, `retire`
-of a retired anchor, `exclude --remove` with nothing to remove) is
-`data.changed: false`. `check-fixtures` with nothing judged is `pass: false`,
-`judged: 0` and a `note`, since no fixture was tested. Exit 2 means the tool
-could not do its job: `success: false`, `data: null` (or diagnostic data) and
-`error {code, message, recoverable, suggested_action}`, for bad arguments
-(`VALIDATION.INPUT`, argparse included), unreadable files, invalid settings,
-`POLICY.REMOTE_JUDGE_DISABLED`, 401, a missing dependency or `SCRIPT.INTERNAL`.
-A Jev call that got no answer is exit 2 as well, never folded into a negative
-result: when any `judge` or `check-fixtures` cell, `dedupe --jev` pair or
-`rubric`/`add --rubric` candidate has no answer after the retries (transport
-and HTTP errors, an invalid response, a context overflow, a failed confirmation, a missing or malformed fixture entry),
-the error takes the first failure's code, `data` keeps the partial work (the run file is still written and `data.run_path` names it) and
-`data.failures` lists each item without an answer. `add --rubric`
-records nothing even with `--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
-130 on interrupt with a `CANCELED` envelope (`recoverable: true`). No command exits 1. The repository's
-CI scripts (`check_version_sync.py` drift, a missing `--base` ref or a
-malformed manifest, `gen_install_data.py --check` staleness, a failing git
-command or a corrupt `legacy-owned.json`, any `install_sc_compose_ci.py`
-failure) also exit 2 with a message, never a traceback, since their job is to
-fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
-stdin, stdout and stderr to UTF-8 at entry, on every
-platform. Agent launches report a typed failure reason; a gate agent that
-cannot show a question bead stops with `TRACKER.SHOW_FAILED` (0.8.3).
-
-Consequences: Callers read the outcome field, not the exit code; the gate
-agents, skill and references say so, and a test fails if shipped prompt text
-mentions exit 1. Scripting on exit 1 broke in 0.7.2; reading a Jev failure
-from an exit-0 run broke in 0.8.3. REQ-049 to REQ-051, REQ-081.
-
 ## ADR-008 Harness-specific agents behind one trusted runner
 
 Status: accepted. Date: 2026-10-11.
@@ -219,23 +119,7 @@ nearest per-folder install). See §5 of the call-graph document.
 
 Consequences: Drift between harness copies (`install/harness/<target>/` and
 the rendered agent bodies) fails CI. The registry and agent identity are
-resolved by the runner, not the agents. REQ-030 to REQ-034.
-
-## ADR-009 Separate planning and code-review gates
-
-Status: planned. Date: 2026-10-17.
-
-Context: The gates already have separate agents (`anchor-plan-review`,
-`anchor-sprint-review`), but both run through `jev_judge.py judge --gate
-plan|dev` and share code paths, so a change for one can move the other. Plan
-review is in production use; code review is not.
-
-Decision: The planning gate and the code-review gate keep separate agents and
-get separate Python entry points. Not built: there is one entry point.
-
-Consequences: The production plan-review path can be hardened and released
-without carrying development-gate changes. The shared judge core stays in one
-module. REQ-036.
+resolved by the runner, not the agents. REQ-031 to REQ-034.
 
 ## ADR-010 Independent question tuning
 
@@ -260,56 +144,9 @@ an input; `anchor_tuning_contract.py` rejects one.
 Consequences: Leaf plan review waits for the sealed digest. A planner's "the
 plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
-## ADR-012 Anchor exclusions as a plain skip
-
-Status: accepted. Date: 2026-10-17.
-
-Context: An anchor that plainly does not apply to an unrelated sprint can still
-fail as `underspecified` when relevance wavers near 0.6 (ADR-003).
-
-Decision: An anchor may carry `exclude: [{item, reason}]`, set with
-`jev_judge.py exclude`. `judge` makes no Jev call for those cells and reports
-them as `excluded` (which passes) with the reason in the run summary,
-`report`, `coverage`, `diff` and `anchors.md`. An exclusion records a history
-event but does not bump `version`. There is no approval workflow and no other
-new verdict state.
-
-Consequences: Exclusions are visible and retrievable, and the threshold is
-unchanged. An anchor excluded everywhere is still uncovered. REQ-006.
-
-## ADR-013 Repository settings convention
-
-Status: accepted (amended for 0.12.1; amended at phase j plan review,
-2026-11-24). Date: 2026-10-17.
-
-Context: Behavior varied by machine and environment variable; the skill needs
-one committed place for per-repository choices.
-
-Decision: `.sc/<package>/settings.yaml`, here `.sc/plan-anchor/settings.yaml`:
-YAML, snake_case, committed, never secrets, `schema_version: 1`, strict
-validation (unknown and duplicate keys and wrong types rejected), modeled on
-pydantic strictness and parsed with PyYAML's `SafeLoader`. YAML 1.1 booleans
-apply, so `yes` is read as `true`. "Committed" is checked only as "not
-git-ignored" (`set` reports `settings_ignored_by_git`).
-
-Consequences: A typo never falls back to a default. The keys are
-`schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
-`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-088); the
-nearest file at or above the repository wins whole (ADR-015).
-Since 0.7.3 the
-`PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
-six in 0.7.3), their values are checked-in defaults with
-CLI flags (`--threshold`,
-`--no-confirm`, with `--confirm-near-threshold` stating the default; the Jev
-endpoint has no override). `USER` is read only as the default for
-`add --stated-by`, and the home directory (`HOME`, `USERPROFILE`) only ends
-the install and settings walks and names the global locations. `install.py` writes `anchor_tracker` and
-`allow_remote_judge`, keeps `plan_dir`, and keeps `install-lock.json` beside
-the settings. REQ-019, REQ-088.
-
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
-Status: accepted. Date: 2026-10-17. Supersedes ADR-005.
+Status: accepted. Date: 2026-10-17.
 
 Context: The skill anchors Markdown plans and `bd`/`br` plans alike. ADR-005
 put `plan_source.py` between the plan and the gates: it accepts only a
@@ -477,27 +314,6 @@ CI. Known limitations:
 
 REQ-059 to REQ-064, REQ-067 to REQ-072, REQ-074, REQ-080; ANC-032 to ANC-036.
 
-## ADR-016 Remote-judge consent is a committed setting
-
-Status: accepted (built in 0.7.1; was planned). Date: 2026-10-17.
-
-Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it was
-the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
-`--allow-remote`, which was per machine, invisible in review and contrary to
-ANC-005.
-
-Decision: Consent is `allow_remote_judge: true|false` in the committed
-`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). It is consent to
-send to TypeSafe (Jev) only (owner ruling, 2026-11-24). A non-bool is `SETTINGS.INVALID_REMOTE_JUDGE` (YAML 1.1 `yes`
-is a bool, ADR-013). Agents never write the key; the skill and the
-installer skill ask once and never infer consent from past runs. The installer
-takes `--allow-remote-judge` / `--no-remote-judge`; a rerun without either
-keeps the recorded value.
-
-Consequences: Consent is per repository (or per parent folder) and visible in
-review. This repository records
-`allow_remote_judge: true`. REQ-065, REQ-066.
-
 ## ADR-017 Jev queries are recorded once, in sc-agent's session log
 
 Status: accepted at phase j plan review, 2026-11-24; binding on sprint j-4,
@@ -516,4 +332,4 @@ the `session_id` of each query they used. They never copy the composed request b
 answers, `model_answered` or attempt counts.
 
 Consequences: Reading an answer, or rescoring a tournament with `--results`,
-needs the sc-agent session log. REQ-013, REQ-038, REQ-076, REQ-083, REQ-085, REQ-086.
+needs the sc-agent session log. REQ-013, REQ-038, REQ-076, REQ-083.

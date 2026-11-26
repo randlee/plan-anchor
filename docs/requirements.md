@@ -32,7 +32,7 @@ Source: SKILL.md "Design positions" (Capture); `references/anchor-capture.md`. S
 Source: `design/data-model-and-gating.md` §1. Status: shipped.
 
 **REQ-006** An anchor shall be able to carry an `exclude` list of `{item, reason}` entries; `judge` shall skip each listed cell without calling Jev, report it as `excluded` (passing) with its reason in the run summary, report, coverage, diff and `anchors.md`, with no approval workflow and no other new verdict state.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Anchor exclusions"; ADR-012. Status: shipped.
+Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Anchor exclusions". Status: shipped.
 
 ## Jev requests and gating
 
@@ -56,9 +56,6 @@ Source: PRD "Provenance & reporting". Status: shipped.
 
 ## Data leaving the machine and configuration
 
-**REQ-016** `--dry-run` and `--answers-file` execution shall make zero network calls.
-Source: INTENT "Success"; retired ANC-006 (requirement retained). Status: shipped.
-
 **REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys (`schema_version`, `anchor_tracker`, `allow_remote_judge`, `plan_dir` (REQ-088)), committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
 Source: OPERATOR. Status: shipped. Values are parsed with PyYAML's `SafeLoader` (YAML 1.1), so `allow_remote_judge: yes` reads as `true` and is accepted; `plan_anchor_settings.py set` writes only `true` or `false`. "Committed" is checked only as not git-ignored (`set` reports `settings_ignored_by_git`); tracking is not checked.
 
@@ -73,22 +70,10 @@ Source: OPERATOR. Status: shipped. Since 0.8.2 `install.py` applies these rules 
 **REQ-023** The skill and the installer shall never run or recommend `bd init`; `br init` is the only bootstrap and runs only on `anchor_tracker.py write --init` or `install.py --init-br`, with fixed argv and no shell.
 Source: OPERATOR. Status: shipped.
 
-**REQ-024** The plan-anchor repository itself shall pin `anchor_tracker: br`.
-Source: OPERATOR. Status: shipped. It also records `allow_remote_judge: true`.
-
 **REQ-025** Both gate reviewers shall take the tracker from `anchor_tracker.py resolve`, never from a default, and reject a mismatch with a supplied value.
 Source: OPERATOR; SKILL.md Step 1. Status: shipped.
 
-**REQ-026** The skill shall document `br` initialization with no prerequisite beyond a local Git repository.
-Source: ANC-018. Status: shipped.
-
-**REQ-082** A phase plan shall be written as a phase index that links separate sprint documents, each sprint document authoritative for its own content; plan-anchor's own `docs/plans/phase-a/` follows this (`plan-phase-a.md` and the `sprint-a*.md` files). This is a rule for writing plans: the gates neither parse nor enforce the structure (ADR-014).
-Source: ANC-015. Status: shipped (followed in `docs/plans/phase-a/`; not enforced by code).
-
 ## Agents and runner
-
-**REQ-030** Claude workflows shall invoke subagents with the Agent tool, never the Task tool; Cursor uses its Task tool without a model override.
-Source: ANC-002; `references/agent-delegation-workflow.md`. Status: shipped.
 
 **REQ-031** Each agent definition shall be installed in its harness directory (`.claude/agents`, `.codex/agents`, `.cursor/agents`) from one body template plus per-harness frontmatter (`install/harness/<target>/agents/`), with bodies identical across harnesses after frontmatter and registries identical after the harness path.
 Source: ANC-009. Status: shipped.
@@ -102,11 +87,8 @@ Source: INTENT "Success"; retired ANC-004 (requirement retained). Status: shippe
 **REQ-034** Agent inputs shall carry validated paths and identifiers confined to the Git workspace, never shell command strings.
 Source: retired ANC-008 (requirement retained); `design/architecture-and-call-graphs.md` §5. Status: shipped.
 
-**REQ-035** The plugin shall not define or invoke `arch-qa` or `req-qa`.
-Source: ANC-014. Status: shipped.
-
 **REQ-036** The planning gate and the code-review (development) gate shall be separate agents with separate Python entry points; plan review is production, code review is not.
-Source: OPERATOR; ADR-009. Status: planned. The agents are separate; both run through `jev_judge.py judge --gate plan|dev`.
+Source: OPERATOR. Status: planned. The agents are separate; both run through `jev_judge.py judge --gate plan|dev`.
 
 ## Question tuning
 
@@ -128,16 +110,7 @@ Source: ANC-024, ANC-025. Status: shipped.
 **REQ-042** After plan review, disputed failures shall go to `anchor-tuning` only through a checked-in `sc-compose` Jinja2 template, and the tuner shall return exactly one of `plan_violation` (question digest unchanged) or `question_defect`.
 Source: ANC-028, ANC-029, ANC-030. Status: shipped.
 
-**REQ-046** Each tuning plan edit shall be its own commit, recorded in a notes table row (change, reason, run IDs, before/after failing cells) and compared with `jev_judge.py diff`; there shall be no ledger CLI.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Ledger". Status: planned; only the `diff` subcommand is built.
-
 ## Python and CLI contract
-
-**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. `decidr_client.py` may import `sc_agent` only for a live decision call and for reading sc-agent session rows, and reports a missing wheel as `DEPENDENCY.SC_DECIDR`; every other path, an `--answers-file` run included, remains standard-library-only. The installer is the exception (REQ-059).
-Source: OPERATOR; ADR-006. Status: shipped.
-
-**REQ-048** Functions that can fail in an expected way shall return `Result[T, E]` (frozen `Ok`/`Err` with a literal `ok` discriminant) rather than raise; exceptions are for bugs and are converted to `SCRIPT.INTERNAL` at the CLI boundary.
-Source: OPERATOR; ADR-006. Status: shipped in every skill script and `install.py` (`anchor_runner_contract.py` since 0.7.1; it keeps `SCRIPT.IO` for unreadable input).
 
 **REQ-049** Every error shall be printed as the JSON envelope `{success: false, data, error: {code, message, recoverable, suggested_action}}`, never a traceback.
 Source: OPERATOR; ADR-007. Status: shipped; argparse usage errors are `VALIDATION.INPUT` envelopes on stdout in every CLI since 0.7.1 (`--help` still prints text, exit 0).
@@ -148,28 +121,10 @@ Source: OPERATOR (0.7.2; 0.8.3: "jev API failure (or similar) should return an e
 **REQ-051** Every agent launch shall report a typed failure reason, and failures shall never fall back silently.
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures". Status: shipped for runner contract failures.
 
-**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel.
-Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
-
 ## Documentation and packaging
-
-**REQ-053** The normal plan-anchoring workflow shall require Jev; offline modes are for development only.
-Source: ANC-011. Status: shipped.
-
-**REQ-054** Examples shall be executable with repository-valid paths, supported commands and supported JSON schemas.
-Source: ANC-013. Status: shipped.
-
-**REQ-055** Maintainer tests shall not be redistributed with the plugin.
-Source: `tests/sc-plan-anchor/test_package_layout.py`. Status: shipped.
-
-**REQ-056** `claude-code-skills-agents-guidelines.md` shall be the governing architecture baseline for the skill, agents, registries, runner and orchestration.
-Source: ANC-001. Status: shipped.
 
 **REQ-057** Both gates shall judge the sprint text the calling agent supplies through `judge --item-file` (or stdin), read from wherever that agent wrote the plan, with no plan parsing or format requirement; anchor records shall use only the tracker `anchor_tracker.py` resolves, and installed skill and agent text shall name only the installed tracker's commands.
 Source: OPERATOR (2026-10-17); INTENT "Success"; ADR-014; ANC-016; ANC-017. Status: shipped.
-
-**REQ-058** `VERSION` shall be the single source of truth for every shipped version string, and each release shall have a `CHANGELOG.md` section.
-Source: OPERATOR (0.6.0 release). Status: shipped.
 
 ## Installer
 
@@ -194,7 +149,7 @@ Source: OPERATOR; ADR-015. Status: shipped.
 ## Remote-judge consent
 
 **REQ-065** Consent to send plan text to TypeSafe shall be `allow_remote_judge: true|false` in the committed `.sc/plan-anchor/settings.yaml` (the nearest file), never an environment variable and never inferred from past runs; the answer recorded with `plan_anchor_settings.py set allow_remote_judge true|false`.
-Source: OPERATOR (2026-10-17); ADR-016; OPERATOR (phase j plan-review ruling, 2026-11-24) (consent covers TypeSafe only). Status: shipped (0.7.1).
+Source: OPERATOR (2026-10-17); OPERATOR (phase j plan-review ruling, 2026-11-24) (consent covers TypeSafe only). Status: shipped (0.7.1).
 
 **REQ-066** The installer shall take `--allow-remote-judge` / `--no-remote-judge` and record the answer in the settings file; a rerun without either shall keep the recorded value.
 Source: OPERATOR (2026-10-17); ADR-016. Status: shipped (0.7.1).
@@ -230,8 +185,9 @@ Source: OPERATOR (0.8.2); ANC-033; ADR-015. Status: shipped.
 **REQ-075** An anchor's `kind` shall be `directive` (the default, and the reading of a record without one), `prohibition` or `structural`, set by `add --kind` or `update --kind` and checked by `validate`. A prohibition ignores compliance: `not_applicable` on a confident relevance `no`, `contradicted` on a confident conflict `yes`, `underspecified` when relevance is unclear or below the threshold or conflict is not a confident `no`, `asserted_only` when the development gate's evidence is a confident `no`, else `satisfied`. A structural anchor is never sent to Jev at the planning gate (verdict `deterministic_only`, which passes, also in `check-fixtures`) and is gated as a directive at the development gate.
 Source: CHANGELOG 0.3.0. Status: shipped.
 
-**REQ-076** When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`, so that the second send is a new Jev call with its own session row and not a result-cache hit: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`.
+**REQ-076** When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`, so that the second send is a new Jev call with its own session row and not a result-cache hit: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`. When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
 Source: CHANGELOG 0.3.0, 0.7.3; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped; planned for `cache=False` and both `session_id`s in place of the second answers (phase j).
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j; today `_rubric_judgement` in `jev_judge.py.j2` re-asks with the cache on).
 
 **REQ-078** The record subcommands shall be `add` (`--status proposed|locked`, default `proposed`; `--stated-by` defaults to `USER`), `update`, `retire`, `exclude` (`--remove`), `set-beads`, `promote --adr` and `render`; `retire` and `promote` bump `version`, `exclude` and `set-beads` do not, and `promote` does not check the anchor's status. No subcommand moves `proposed` to `locked` or writes `question_overrides`, which `judge` still reads from the record before `--overrides-file`.
 Source: CHANGELOG 0.2.0, 0.3.0; `design/data-model-and-gating.md` §2, §6. Status: shipped.
@@ -250,12 +206,6 @@ Source: OPERATOR (issue #58, 0.8.6). Status: shipped.
 
 ## Session log and run records (phase j)
 
-**REQ-083** A `--dry-run` shall only check that its input composes into valid requests and show the would-send requests, redacted, on stdout, or in the file named by `--out` (for `judge`, `--out` names the requests file on a dry run). A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); REQ-016. Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
-
-**REQ-085** When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j; today `_rubric_judgement` in `jev_judge.py.j2` re-asks with the cache on).
-
-**REQ-086** Each result line that `batch`, `bead-batch` and `tournament` write to stdout, `anchor-runs/tournament-<run>.jsonl` and `<out>/results.jsonl` shall be the shared `jev-batch-result/2` line with only its generic fields. The tournament's ranking in `<out>/result_vars.json` shall reference the `session_id`s it scored. `tournament --results` shall read the answers it rescores by `session_id`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today the lines are `plan-anchor/jev-batch-result/1` and carry `answers`, `retry_count` and `attempts`).
+**REQ-083** A `--dry-run` shall only check that its input composes into valid requests and show the would-send requests, redacted, on stdout, or in the file named by `--out` (for `judge`, `--out` names the requests file on a dry run). A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`. `--dry-run` and `--answers-file` execution shall make zero network calls.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); INTENT "Success"; retired ANC-006 (requirement retained). Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
 
