@@ -1145,7 +1145,7 @@ class HistoryMigrationTests(unittest.TestCase):
     def test_migrate_0_6_0_removes_plan_source(self):
         data = self.migrate("0.6.0")
         self.assertTrue(data["plan"]["replace"])
-        # ADR-014: the gates take the caller's sprint text; plan_source.py is no longer shipped.
+        # ADR-PA-0014: the gates take the caller's sprint text; plan_source.py is no longer shipped.
         self.assertIn(".claude/skills/plan-anchoring/scripts/plan_source.py", data["plan"]["remove"])
         self.assertIn(".claude/skills/plan-anchoring/references/plan-source-contract.md", data["plan"]["remove"])
 

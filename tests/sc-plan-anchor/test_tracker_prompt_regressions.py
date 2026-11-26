@@ -68,7 +68,7 @@ class TrackerPromptRegressionTests(unittest.TestCase):
                 self.assertIn('anchor_tracker.py" resolve --repository-root "$ROOT"', prompt)
 
     def test_development_gate_resolves_tracker_and_takes_caller_text(self):
-        """REQ-057 / ADR-014: the development gate selects the tracker like the planning gate and judges the caller's text."""
+        """REQ-PA-0057 / ADR-PA-0014: the development gate selects the tracker like the planning gate and judges the caller's text."""
         for tracker, harness in ((t, h) for t in TRACKERS for h in HARNESSES):
             with self.subTest(tracker=tracker, harness=harness):
                 prompt = rendered_agent(tracker, harness, "anchor-sprint-review.md").read_text(encoding="utf-8")
@@ -80,8 +80,8 @@ class TrackerPromptRegressionTests(unittest.TestCase):
                 self.assertNotRegex(prompt, r"\bbd (show|children)\b")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         entry = changelog.split("\n## 0.7.0 ")[1].split("\n## ")[0]  # the release that made the change
-        self.assertIn("ADR-014", entry)
-        self.assertIn("REQ-057", entry)
+        self.assertIn("ADR-PA-0014", entry)
+        self.assertIn("REQ-PA-0057", entry)
 
     def test_installation_doc_covers_br_and_selection(self):
         doc = (rendered_skill("br") / "references" / "installation-and-troubleshooting.md").read_text(encoding="utf-8")

@@ -1,4 +1,4 @@
-"""Both gate prompts judge the sprint text the caller already wrote (ADR-014, REQ-057).
+"""Both gate prompts judge the sprint text the caller already wrote (ADR-PA-0014, REQ-PA-0057).
 
 The caller passes that text as ``item_file``; no gate rediscovers or rebuilds the
 sprint, and plan_source.py is no longer shipped.
