@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0 — 2026-11-26
+
+- Remove the request-size limits: the planning gate's 24,000-byte and 24,000-character caps, `PLAN.TOO_LARGE`, the code-reduction loop that fitted a bead to them, the development gate's truncation and context halving, the batch and rubric pre-flight size checks, and the `--max-item-chars`, `--max-request-bytes`, `--min-item-chars` and `judge --max-code-lines` flags. A provider's context-size error is returned as the provider's error.
+- Drop the record trim's deleted references from the shipped prompts and references.
+
 ## 0.13.0 — 2026-11-23
 
 - Re-render the plan-anchor client from sc-decidr 0.4.0 and update its pinned wheel version.

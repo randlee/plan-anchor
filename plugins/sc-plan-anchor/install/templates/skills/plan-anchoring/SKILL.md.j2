@@ -118,7 +118,6 @@ locking do not load that reference.
 - Never tune a question or reword a statement to make one bead pass. Fixtures and a known-bad bead must still fail.
 - Never tune a question from a live failure alone; the independent tuner's frozen oracle must demonstrate the false result. Statement, scope and fixture clarity changes need no prior approval: apply, test, then drift-review. A scope change invalidates prior gate runs for that anchor; an `exclude` is not a rescope.
 - A failing-to-passing plan edit that grows the composed item is a hard stop unless each added passage is traced to a locked ANC/REQ/ADR that predates the failed run.
-- Never split a bead, trim its text, or raise a size cap to pass `PLAN.TOO_LARGE`. Triage unapproved work, then prose and ceremony, then split.
 - Never send more than one bead or one work description per Jev request, and never the whole plan.
 - Never compute coverage, counts, or "satisfied anywhere" by asking Jev. The script does it.
 - Missing the selected anchor tracker, `python3`, PyYAML, or API key, `allow_remote_judge` not `true`, or an `anchor_tracker.py resolve` error: surface and stop; do not degrade silently.

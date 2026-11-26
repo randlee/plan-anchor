@@ -8,8 +8,7 @@ entry is derived from an existing source; nothing here is new scope.
   document, or an operator decision (`OPERATOR`). Retired anchors are cited only
   where their retirement reason says the requirement itself remains.
 - **Status** describes the code at 0.8.3 (`fix/0.8.3-errors`): `shipped` (built),
-  `planned` (decided, not built) or `retired` (withdrawn; the entry stays
-  listed and its number is not reused).
+  `planned` (decided, not built).
 - **Verified** names the test that exercises the requirement, as
   `file::Class.test`, with files under `tests/sc-plan-anchor/`; a bare
   `Class.test` is in the file named just before it. `none` means no test was
@@ -51,28 +50,19 @@ Verified: `test_jev_judge_exclude.py::JudgeExclusionTests.test_excluded_cell_mak
 Source: OPERATOR; PRD "Keep the state small"; `design/data-model-and-gating.md` §3. Status: shipped.
 Verified: partial: `test_jev_judge.py::QuoteTests.test_run_results_carry_the_quote` (asserts `state.anchor` exactly), `test_gate_prompts.py::FreeFormSprintDryRunTests.test_free_form_sprint_builds_a_request_at_both_gates` (asserts `state.item` exactly). No test asserts that `state` has no other keys.
 
-**REQ-008** The planning gate shall send a bead whole when it fits 24,000 request bytes, never shorten prose, reduce only the longest eligible fenced code blocks to signatures when it does not fit, and refuse with `PLAN.TOO_LARGE` before sending when it still does not fit.
+**REQ-008** The planning gate shall send a bead whole, never shorten prose.
 Source: OPERATOR; `experiments/2026-10-10-redact-only-when-oversize.md`. Status: shipped.
-Verified: `test_jev_judge.py::PlanSizeTests.test_plan_gate_sends_a_fitting_bead_whole`, `PlanSizeTests.test_oversize_plan_bead_reduces_only_its_longest_blocks`, `PlanSizeTests.test_oversize_plan_bead_is_refused_and_nothing_is_sent`, `PlanSizeTests.test_plan_gate_context_overflow_is_too_large_not_halved`, `RequestBytesDefaultTests.test_default_depends_on_the_gate_and_the_flag_overrides`.
 
 **REQ-009** The script shall turn independent answers into one verdict in code, first match wins. For a directive: relevance `no` at confidence ≥ 0.6 is `not_applicable`; a lower-confidence relevance `no` falls through and ends as `underspecified`; then `contradicted`, `underspecified`, `not_addressed`, and `asserted_only` or `satisfied` only when compliance is `yes` and conflict is a confident `no` (otherwise `underspecified`). A prohibition and a structural anchor gate differently (REQ-075).
 Source: OPERATOR; `design/data-model-and-gating.md` §4. Status: shipped.
 Verified: `test_jev_judge.py::DecideTests` (all rows, including `test_row1_not_applicable` and `test_threshold_boundaries`).
 
-**REQ-010** Coverage across items and run-to-run differences shall be computed by the script from run files, never asked of Jev. Dry-run and fixture run files already on disk shall be skipped.
-Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5; LEAD (phase j plan review, 2026-11-24). Status: shipped; planned for skipping fixture run files (phase j).
+**REQ-010** Coverage across items and run-to-run differences shall be computed by the script from run files, never asked of Jev. Dry-run run files already on disk shall be skipped.
+Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. Status: shipped.
 Verified: `test_jev_judge.py::CoverageTests.test_uncovered_latest_wins_and_dry_runs_ignored`, `DiffTests`.
 
-**REQ-011** The shared sc-decidr client shall own provider retries and status classification. Plan-anchor shall make one client call per logical request and shall not resend provider failures; it shall abort on authentication failure and continue judging other anchors after a non-authentication failure. A failed send has its own sc-agent session row that holds the error and the attempt count. Plan-anchor shall record that send's `session_id` with the typed failure and shall not copy the attempt count.
-Source: `design/architecture-and-call-graphs.md` §4; REQ-SAG-0018; OPERATOR (phase j ruling, 2026-11-24). Status: shipped for retries, classification, abort and continue; planned for the failed send's `session_id` in place of the attempt count (phase j; today the wheel-reported attempt count is recorded on typed failures).
-Verified: `test_jev_judge.py::TransportPolicyTests`.
-
-**REQ-012** Every Jev answer shall be checked before use by sc-decidr's shared typed response decoder for live replies and the shared client fixture validator for fixture replies. The check requires exactly the requested answer IDs, a type matching each question, and finite probabilities and confidence values in the range 0 through 1. Invalid replies are `DECIDR.RESPONSE_INVALID`.
-Source: `design/architecture-and-call-graphs.md` §4. Status: shipped.
-Verified: `test_jev_judge.py::JudgeFixtureTests.test_malformed_fixture_answer_is_response_invalid` (shared client fixture validation; runs in the sc-plan-anchor CI suite).
-
-**REQ-013** Each live run shall be written to its own run file that copies the statement, quote and provenance it judged. Each anchor result in a run file shall carry plan-anchor's own `anchor_id` and the `session_id` of every Jev query that produced it (two when the request was confirmed, REQ-076). A run file shall not contain Jev's answers, `model_answered` or `attempts`; they are read from the sc-agent session row with that `session_id`. An `--answers-file` run writes no run file and prints its results (REQ-016).
-Source: `design/data-model-and-gating.md` §1–2; OPERATOR (phase j session-log ruling, 2026-11-24); LEAD (phase j plan review, 2026-11-24) (fixture runs). Status: shipped for the copied statement, quote and provenance; planned for `session_id` in place of the answers, `model_answered` and `attempts` (phase j).
+**REQ-013** Each live run shall be written to its own run file that copies the statement, quote and provenance it judged. Each anchor result in a run file shall carry plan-anchor's own `anchor_id` and the `session_id` of every Jev query that produced it (two when the request was confirmed, REQ-076). A run file shall not contain Jev's answers, `model_answered` or `attempts`; they are read from the sc-agent session row with that `session_id`.
+Source: `design/data-model-and-gating.md` §1–2; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped for the copied statement, quote and provenance; planned for `session_id` in place of the answers, `model_answered` and `attempts` (phase j).
 Verified: partial: `test_jev_judge.py::QuoteTests.test_run_results_carry_the_quote` (statement and quote in stdout `data`; `stated_by`, `stated_at` and `context` and the run file itself are not checked), `JudgeFixtureTests.test_run_file_names_are_sanitised_and_never_collide`.
 
 **REQ-014** A failing report shall name the anchor and show its statement next to the user's verbatim quote.
@@ -81,30 +71,13 @@ Verified: `test_jev_judge.py::ReportTests.test_line_format_quotes_the_statement`
 
 ## Data leaving the machine and configuration
 
-**REQ-015** A live send whose model the sc-decidr wheel resolves to the TypeSafe (Jev) provider shall fail closed with `POLICY.REMOTE_JUDGE_DISABLED` and send nothing without a recorded `allow_remote_judge: true` (REQ-065). A live send of any model for which the sc-decidr wheel resolves no key shall send nothing and exit 2 with `AUTH.CREDENTIALS`. Plan-anchor shall not check provider credentials itself; the wheel resolves the provider and its key and reports a missing key (REQ-087). The consent check is the generated client's gate, which compares the resolved provider with the wheel's TypeSafe constant; plan-anchor shall not decide consent from the model alias.
-Source: PRD "Jev data handling"; `design/architecture-and-call-graphs.md` §6; OPERATOR (phase j ruling, 2026-11-24); OPERATOR (phase j plan-review ruling, 2026-11-24). Status: shipped for TypeSafe consent and the TypeSafe credential; planned for the `haiku` and `luna` sends, which need no consent and whose key the wheel resolves (phase j).
-Verified: `test_jev_judge.py::FailClosedTests.test_missing_key_and_missing_consent` (asserts zero transport calls).
-
-**REQ-016** `--dry-run` and `--answers-file` execution shall make zero network calls. An `--answers-file` run shall open no sc-agent `Run` and write no run file and no result line.
-Source: INTENT "Success"; retired ANC-006 (requirement retained); LEAD (phase j plan review, 2026-11-24). Status: shipped for zero network calls; planned for the `--answers-file` run writing no run file (phase j).
+**REQ-016** `--dry-run` and `--answers-file` execution shall make zero network calls.
+Source: INTENT "Success"; retired ANC-006 (requirement retained). Status: shipped.
 Verified: `test_remote_judge_setting.py::LiveCallConsentTests.test_dry_run_and_fixture_answers_need_no_setting`, `test_jev_judge_exclude.py::JudgeExclusionTests.test_dry_run_writes_no_request_for_an_excluded_cell` (both assert the transport stub received no body), `test_jev_judge.py::FailClosedTests.test_fixture_and_dry_run_need_neither`.
-
-**REQ-017** Script output shall redact the exact value of every provider key named by the sc-decidr wheel's provider-key list, and bearer tokens, from every emitted value, replacing each with `[redacted]`, and never write them to a run file. Plan-anchor shall redact by calling the generated client's redaction, which reads the wheel's list, and shall keep no provider-key list of its own.
-Source: ANC-012; OPERATOR (phase j ruling, 2026-11-24); OPERATOR (phase j plan-review ruling, 2026-11-24). Status: shipped for `TYPESAFE_API_KEY` and bearer tokens; run files are redacted since 0.8.3 (`save_json`; before, only stdout was). Planned for every provider key through the wheel's list (phase j; today `redact_sensitive` in `jev_judge.py.j2` reads only `TYPESAFE_API_KEY`).
-Verified: `test_jev_judge.py::FailClosedTests.test_every_emitted_value_redacts_the_live_key_and_bearer_tokens`, `FailClosedTests.test_key_format_checked_and_never_echoed`, `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
-Verified: `test_jev_failures.py::RunFileRedaction.test_a_key_in_the_item_title_never_reaches_a_fixture_run_file`, `RunFileRedaction.test_a_key_in_the_item_text_never_reaches_a_dry_run_file` (a canary key in `TYPESAFE_API_KEY` and a bearer token, fed through `--item-title` and `--item-file`, are absent from the run file). Partial: a live run's file is not read (it is written by the same `save_json`).
-
-**REQ-018** The sc-decidr wheel shall resolve the key of the provider it selects for a model; for TypeSafe it reads `TYPESAFE_API_KEY` first and, only when it is absent, the documented platform credential store. Plan-anchor shall not read environment variables as runtime configuration and shall not read a provider key itself; provider-key values are read only by the generated client's redaction (REQ-017).
-Source: ANC-005; OPERATOR; OPERATOR (phase j ruling, 2026-11-24); OPERATOR (phase j plan-review ruling, 2026-11-24). Status: shipped (met since 0.7.3; credential-store fallback added in 0.8.6); planned for moving the `TYPESAFE_API_KEY` read in `redact_sensitive` into the generated client's redaction (phase j; `test_only_typesafe_key_is_read_from_the_environment` changes to assert plan-anchor's own scripts read no provider key).
-Verified: `test_jev_judge.py::CredentialLookupTests`, `test_no_plugin_env_vars.py::ShippedTreeNamesNoRetiredVariable.test_only_typesafe_key_is_read_from_the_environment`, `ShippedTreeNamesNoRetiredVariable.test_no_plan_anchor_prefix_in_shipped_files`, `RetiredVariablesHaveNoEffect.test_dry_run_output_and_requests_are_unchanged`, `RetiredVariablesHaveNoEffect.test_live_request_url_and_behaviour_are_unchanged`. Note: the remote-judge opt-in moved to settings in 0.7.1 (REQ-065) and the other six `PLAN_ANCHOR_*` variables were removed in 0.7.3; their values are defaults with CLI flags. The only other variables read are `USER`, as the default for `add --stated-by` (provenance, not configuration), and the home directory (`HOME`, `USERPROFILE` or `HOMEDRIVE`+`HOMEPATH` through `os.path.expanduser`), which only ends the nearest-install and settings walks and names the global locations (REQ-068, REQ-073).
 
 **REQ-019** Repository settings shall live in `.sc/plan-anchor/settings.yaml`: YAML with snake_case keys (`schema_version`, `anchor_tracker`, `allow_remote_judge`, `plan_dir` (REQ-088)), committed, no secrets, `schema_version: 1`, and strict validation that rejects unknown keys, duplicate keys and wrong types.
 Source: OPERATOR. Status: shipped. Values are parsed with PyYAML's `SafeLoader` (YAML 1.1), so `allow_remote_judge: yes` reads as `true` and is accepted; `plan_anchor_settings.py set` writes only `true` or `false`. "Committed" is checked only as not git-ignored (`set` reports `settings_ignored_by_git`); tracking is not checked.
 Verified: `test_anchor_tracker.py::MalformedInputTests` (`test_unknown_keys_are_rejected`, `test_schema_version_must_be_integer_one`, `test_tracker_value_must_be_bd_or_br`, `test_malformed_settings` for duplicate keys), `RepositoryContractTests.test_settings_file_is_not_gitignored`, `WriteAndInitTests.test_write_produces_committed_format`, `test_remote_judge_setting.py::LiveCallConsentTests.test_invalid_value_is_a_typed_error`. YAML 1.1 `yes`/`no` (operator decision, 2026-10-19): `LiveCallConsentTests.test_yaml_yes_lets_the_call_through`, `LiveCallConsentTests.test_yaml_no_is_refused`, `LiveCallConsentTests.test_show_through_the_script_reads_yes_and_no_as_bools`, `SetCommandTests.test_set_over_a_yaml_yes_writes_false_and_keeps_yes_as_true`, `test_install.py::InstallTests.test_a_hand_written_yaml_yes_reads_as_true_and_writes_back_as_bools`; planted negative: `LiveCallConsentTests.test_quoted_yes_and_no_are_strings_not_answers` (quoted `'yes'` is `SETTINGS.INVALID_REMOTE_JUDGE`).
-
-**REQ-020** Settings shall gain a `fast_agents.profiles` list of `{name, model}` under the same strict validation, where `model` is `haiku` or `luna`; a profile with any other key is rejected.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Configuration"; OPERATOR (phase j plan-review ruling, 2026-11-24) (the harness-only `tool` field goes: stand-ins are sc-agent sends). Status: retired (phase j plan review, 2026-11-24; never built). OPERATOR (phase j plan-review ruling, 2026-11-24): stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job.
-Verified: none.
 
 ## Trackers
 
@@ -131,18 +104,6 @@ Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test
 **REQ-026** The skill shall document `br` initialization with no prerequisite beyond a local Git repository.
 Source: ANC-018. Status: shipped.
 Verified: `test_tracker_prompt_regressions.py::TrackerPromptRegressionTests.test_installation_doc_covers_br_and_selection`.
-
-**REQ-027** The planning gate shall accept a Markdown phase plan and its copy in a tracker, and both shall normalize to the same ordered sprint items and byte-identical Jev request JSON.
-Source: ANC-016; INTENT "Success". Status: retired (0.7.0; superseded by ADR-014 and REQ-057, `plan_source.py` is no longer shipped). ANC-016 is now met by REQ-057.
-Verified: n/a (the tests were removed with `plan_source.py`).
-
-**REQ-028** Markdown plan review shall require tracker records only for an anchor root and its plan-question and dev-question children.
-Source: ANC-017. Status: retired (0.7.0; superseded by ADR-014 and REQ-057). ANC-017 is now met by REQ-057.
-Verified: n/a.
-
-**REQ-029** A phase plan shall be a phase index linking separate authoritative sprint documents; malformed structures, duplicate IDs, symlink escapes, copy drift and digest mismatches shall fail before delegation.
-Source: ANC-015; INTENT "Out of scope". Status: retired (0.7.0; superseded by ADR-014 and REQ-057). ANC-015 is now met by REQ-082.
-Verified: n/a.
 
 **REQ-082** A phase plan shall be written as a phase index that links separate sprint documents, each sprint document authoritative for its own content; plan-anchor's own `docs/plans/phase-a/` follows this (`plan-phase-a.md` and the `sprint-a*.md` files). This is a rule for writing plans: the gates neither parse nor enforce the structure (ADR-014).
 Source: ANC-015. Status: shipped (followed in `docs/plans/phase-a/`; not enforced by code).
@@ -204,25 +165,13 @@ Verified: partial: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.t
 Source: ANC-028, ANC-029, ANC-030. Status: shipped.
 Verified: `test_anchor_tuning_contracts.py::AnchorTuningContractTests.test_triage_request_and_result_render_validate_relationally`.
 
-**REQ-043** `judge --stand-ins <names|all>` shall send the identical Jev request with model `haiku` and with model `luna`, after the Jev send, one batch per stand-in model over the cells (one send per cell per stand-in model), through the judge command's sc-agent `Run`, so that each stand-in query gets its own sc-agent session row and its own run link. Each stand-in answer shall be checked before use with sc-decidr's shared typed response decoder (exact answer IDs, matching answer types, and finite probabilities and confidence in the range 0 through 1; malformed replies are `DECIDR.RESPONSE_INVALID`). The run file shall record each stand-in query's `session_id` beside the Jev result for that cell and shall not copy the stand-in's answers. A stand-in send that intentionally repeats a request already sent to the same model shall pass `cache=False`. Stand-in results shall not change gating.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md`; OPERATOR (phase j ruling, 2026-11-24). Status: retired (phase j plan review, 2026-11-24; never built). OPERATOR (phase j plan-review ruling, 2026-11-24): stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job.
-Verified: none.
-
-**REQ-044** `follow-up --run --cell --profile --question` shall resume, through sc-agent, the stand-in session whose `session_id` the run file records for that cell and profile, and shall append the follow-up query's `session_id` to the run's transcript file instead of the reply text. Resuming a `haiku` or `luna` session is not available until randlee/sc-agent#428 lands, so `follow-up` cannot be built before then.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md`; OPERATOR (phase j ruling, 2026-11-24). Status: retired (phase j plan review, 2026-11-24; never built). OPERATOR (phase j plan-review ruling, 2026-11-24): stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job.
-Verified: none.
-
-**REQ-045** The stand-in tuning loop shall treat stand-in output as advisory and divergence as signal, keep the tuner neutral, and make one small plan edit per iteration followed by a re-run. Once `follow-up` is available (REQ-044, after randlee/sc-agent#428), the loop shall always run the follow-up turns without asking permission.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "The loop"; OPERATOR (phase j ruling, 2026-11-24). Status: retired (phase j plan review, 2026-11-24; never built). OPERATOR (phase j plan-review ruling, 2026-11-24): stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job.
-Verified: none.
-
 **REQ-046** Each tuning plan edit shall be its own commit, recorded in a notes table row (change, reason, run IDs, before/after failing cells) and compared with `jev_judge.py diff`; there shall be no ledger CLI.
 Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Ledger". Status: planned; only the `diff` subcommand is built.
 Verified: `diff` only: `test_jev_judge.py::DiffTests`.
 
 ## Python and CLI contract
 
-**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. `decidr_client.py` may import `sc_agent` only for a live decision call, for reading sc-agent session rows and for the wheel's provider-key list used by redaction, and reports a missing wheel as `DEPENDENCY.SC_DECIDR`; every other path, an `--answers-file` run included, remains standard-library-only. The installer is the exception (REQ-059).
+**REQ-047** Skill scripts shall use the standard library on Python 3.11 or newer; PyYAML is allowed only in `plan_anchor_settings.py` and `anchor_tracker.py`, imported lazily and reported as `DEPENDENCY.PYYAML` when missing; `jev_judge.py` imports `plan_anchor_settings.py` only for a live Jev call. `decidr_client.py` may import `sc_agent` only for a live decision call and for reading sc-agent session rows, and reports a missing wheel as `DEPENDENCY.SC_DECIDR`; every other path, an `--answers-file` run included, remains standard-library-only. The installer is the exception (REQ-059).
 Source: OPERATOR; ADR-006. Status: shipped.
 Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_other_scripts_stay_stdlib_only` (no `import yaml` outside the two scripts, and they import and print `--help` with PyYAML blocked), `MalformedInputTests.test_missing_pyyaml_is_a_typed_error_not_a_fallback`. Other third-party imports and the 3.11 floor are exercised by the unit matrix.
 
@@ -241,11 +190,11 @@ Verified: `test_exit_convention.py::JevJudgeNegativeOutcomes` (all), `JevJudgeEr
 Verified (0.8.3): `test_jev_failures.py::JudgeAndCheckFixtures` and `DedupeAndRubric` (all; real processes against a closed port 127.0.0.1:9 and missing or malformed fixtures), `RefusalsAndNoOps` (all), `test_exit_convention.py::JevJudgeErrors.test_live_judge_refusals_are_typed` (`AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`), `test_error_contracts.py::JevTransportErrorContracts.test_transient_codes_retry_three_times_then_record_an_error_verdict` (phase j: retries belong to the sc-decidr wheel; this check moves to the wheel's send tests in sc-agent and the consumer test is deleted with plan-anchor's attempt counting), `test_ci_scripts_exit.py::CheckVersionSync.test_version_drift_exits_2`, `CheckVersionSync.test_a_missing_base_ref_exits_2`, `GenInstallData` (all), `InstallScComposeCi.test_any_failure_exits_2_with_a_message`. Interrupts (130) are verified on POSIX only (`test_jev_failures.py::Interrupts`); on Windows they are read from the code.
 
 **REQ-051** Every agent launch shall report a typed failure reason, and failures shall never fall back silently.
-Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures"; OPERATOR (phase j plan-review ruling, 2026-11-24). Status: shipped for runner contract failures. The stand-in send clause is retired (OPERATOR, phase j plan-review ruling, 2026-11-24: stand-ins are removed).
+Source: OPERATOR; `design/anchor-tuning-stand-ins.md` "Failures". Status: shipped for runner contract failures.
 Verified: partial: `test_anchor_runner_contract.py::RunnerContractTests.test_attestation_is_redacted_and_atomic_failures_are_typed`.
 
-**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel recorded in `scripts/install_sc_decidr_ci.py`.
-Source: OPERATOR; `.github/workflows/tests.yml`; LEAD (phase j plan review, 2026-11-24) (the workflows hold no version literal; they run `scripts/install_sc_decidr_ci.py`). Status: shipped.
+**REQ-052** CI shall run the full suite on ubuntu, macOS and Windows with Python 3.11 and 3.x, and an installer job on Python 3.11 (ubuntu, macOS) where the `sc-compose` tests must run rather than skip. A dependency-floor job on Python 3.11 shall run both tracker renders without PyYAML and with its declared minimum, installing the named sc-decidr prerelease wheel.
+Source: OPERATOR; `.github/workflows/tests.yml`. Status: shipped.
 Verified: partial: `test_anchor_tracker.py::RepositoryContractTests.test_ci_installs_pyyaml`; `test_install_sc_decidr_ci.py::DecidrWheelInstallerTests.test_supported_runners_download_and_install_the_same_pinned_wheel` and `test_release_and_wheel_versions_follow_client_template`. The matrix itself is the workflow.
 
 ## Documentation and packaging
@@ -302,8 +251,8 @@ Verified: `test_install.py::InstallTests.test_dry_run_writes_nothing`.
 
 ## Remote-judge consent
 
-**REQ-065** Consent to send plan text to TypeSafe shall be `allow_remote_judge: true|false` in the committed `.sc/plan-anchor/settings.yaml` (the nearest file), never an environment variable and never inferred from past runs; with consent `false` or absent, every live send whose model the sc-decidr wheel resolves to the TypeSafe provider shall be refused with `POLICY.REMOTE_JUDGE_DISABLED` (exit 2) and send nothing, while a send resolved to any other provider (such as `--model haiku` or `--model luna`) needs no consent; with no key resolved by the sc-decidr wheel a send is refused with `AUTH.CREDENTIALS` (REQ-015); the user is asked once and the answer recorded with `plan_anchor_settings.py set allow_remote_judge true|false`.
-Source: OPERATOR (2026-10-17); ADR-016; OPERATOR (phase j plan-review ruling, 2026-11-24) (consent covers TypeSafe only). Status: shipped (0.7.1); planned for haiku and luna sends passing without consent (phase j).
+**REQ-065** Consent to send plan text to TypeSafe shall be `allow_remote_judge: true|false` in the committed `.sc/plan-anchor/settings.yaml` (the nearest file), never an environment variable and never inferred from past runs; the answer recorded with `plan_anchor_settings.py set allow_remote_judge true|false`.
+Source: OPERATOR (2026-10-17); ADR-016; OPERATOR (phase j plan-review ruling, 2026-11-24) (consent covers TypeSafe only). Status: shipped (0.7.1).
 Verified: `test_remote_judge_setting.py::LiveCallConsentTests` (all, including `test_every_live_subcommand_is_refused_without_an_answer`, `test_old_variable_has_no_effect`, `test_old_flag_is_a_usage_error_on_every_live_subcommand`, `test_dry_run_and_fixture_answers_need_no_setting`), `SetCommandTests` (all), `PromptAndDocsTests.test_gate_agents_carry_the_rule`, `PromptAndDocsTests.test_skill_asks_once_and_never_infers`. Asking the user once is a skill instruction; the test checks the text.
 
 **REQ-066** The installer shall take `--allow-remote-judge` / `--no-remote-judge` and record the answer in the settings file; a rerun without either shall keep the recorded value.
@@ -320,7 +269,7 @@ Verified: `test_install.py::RenderingTests.test_plugin_ships_only_the_installer_
 Source: OPERATOR; ANC-036; ADR-015 (Single-tracker installs). Status: shipped.
 Verified: `test_installer_skill.py::GlobalDestinationTests` (all), `ParentFolderInstallTests.test_install_writes_the_parent_and_no_child`, `ParentFolderInstallTests.test_a_parent_folder_needs_a_tracker`, `test_install.py::InstallTests.test_dest_may_be_a_folder_inside_a_repository`, `InstallTests.test_dest_must_be_an_existing_directory`, `test_windows_portability.py::NoHomeDirectoryTests.test_machine_wide_globals_are_still_refused` (`/etc/codex` and the managed-settings directories).
 
-**REQ-069** `agent-preflight` and both gate agents shall accept only the canonical `jev_judge.py` of the nearest install (under `.claude`, `.codex` or `.cursor`), walking up from the working directory and stopping before the home directory, and only when that install's `.sc/plan-anchor/install-lock.json` lists the script; a copy in a global location, a farther install's copy, a copy the lock does not list (hand-copied, or no lock), a copy under `.agents/` or the source tree shall be `VALIDATION.PATH`. There shall be no plugin-root or manifest fallback.
+**REQ-069** `agent-preflight` and both gate agents shall accept only the canonical `jev_judge.py` of the nearest install (under `.claude`, `.codex` or `.cursor`), walking up from the working directory and stopping before the home directory, and only when that install's `.sc/plan-anchor/install-lock.json` lists the script; a copy in a global location, a farther install's copy, a copy the lock does not list (hand-copied, or no lock), a copy under `.agents/` or the source tree shall be `VALIDATION.PATH`.
 Source: OPERATOR; ADR-015 (supersedes the fallbacks in ADR-008's 0.7.0 form). Status: shipped; the lock requirement and the removal of `.agents/` are 0.8.3.
 Verified: `test_jev_judge.py::ScriptTrustRuleTests.test_a_parent_folder_install_is_trusted_from_a_child_repository`, `ScriptTrustRuleTests.test_only_the_nearest_install_is_trusted`, `ScriptTrustRuleTests.test_a_copy_only_in_the_global_claude_dir_is_refused`, `ScriptTrustRuleTests.test_the_source_tree_is_not_an_install`, `test_installer_skill.py::ParentFolderInstallTests.test_trust_lookup_finds_the_parent_copy_from_each_child`, `test_error_contracts.py::JevJudgeErrorContracts.test_preflight_error_envelopes_from_an_installed_copy`. The gate agents' copy of the rule is prompt text.
 Verified (0.8.3): `test_subfolder_and_trust.py::TrustNeedsTheInstallLock` (all: an installer-written copy is trusted; a lock-less copy, a copy the lock does not list and a copy under `.agents/` are `VALIDATION.PATH`), `test_windows_portability.py::NoHomeDirectoryTests.test_settings_lock_and_install_lookups_do_not_raise`, `NoHomeDirectoryTests.test_a_known_home_still_stops_the_walk_and_is_global` (the walk stops before home). `test_jev_judge.py::ScriptTrustRuleTests.test_the_walk_stops_before_home` plants its copy under `~/.agents`, so it is refused as global, not by the walk stop.
@@ -356,10 +305,6 @@ Verified: `test_jev_judge.py::KindTests.test_add_update_validate_kind`, `KindTes
 Source: CHANGELOG 0.3.0, 0.7.3; OPERATOR (phase j session-log ruling, 2026-11-24). Status: shipped; planned for `cache=False` and both `session_id`s in place of the second answers (phase j).
 Verified: partial: `test_jev_judge.py::ConfirmTests` (all, through `judge`); the `check-fixtures` path is not tested.
 
-**REQ-077** The development gate shall cut the item to `--max-item-chars` (24,000 characters) with a truncation marker (`item.truncated`), then halve it, keeping the head, until each request is under `--max-request-bytes` (64,000) or after a Jev context overflow, stopping below `--min-item-chars` (2,000) with `JEV.CONTEXT_EXCEEDED`. At the planning gate `--max-item-chars` is a budget the item must fit after code reduction (REQ-008), never a cut.
-Source: CHANGELOG 0.2.0, 0.3.0. Status: shipped.
-Verified: `test_jev_judge.py::JudgeFixtureTests.test_read_item_truncates_and_rejects_empty`, `TransportPolicyTests.test_overflow_down_to_the_floor_records_context_exceeded`, `test_error_contracts.py::JevTransportErrorContracts.test_dry_run_request_that_cannot_fit_reports_context_exceeded`.
-
 **REQ-078** The record subcommands shall be `add` (`--status proposed|locked`, default `proposed`; `--stated-by` defaults to `USER`), `update`, `retire`, `exclude` (`--remove`), `set-beads`, `promote --adr` and `render`; `retire` and `promote` bump `version`, `exclude` and `set-beads` do not, and `promote` does not check the anchor's status. No subcommand moves `proposed` to `locked` or writes `question_overrides`, which `judge` still reads from the record before `--overrides-file`.
 Source: CHANGELOG 0.2.0, 0.3.0; `design/data-model-and-gating.md` §2, §6. Status: shipped.
 Verified: partial: `test_jev_judge.py::RetireUpdateTests.test_promote_and_set_beads`, `RetireUpdateTests.test_update_fields_and_fixtures`, `test_jev_judge_exclude.py::ExcludeCommandTests.test_exclude_on_a_locked_anchor_keeps_version_and_records_history`. Promoting a proposed or retired anchor is untested.
@@ -377,27 +322,20 @@ Source: CHANGELOG 0.8.3. Status: shipped (prompt text in `anchor-plan-review` an
 Verified: none.
 
 **REQ-088** The anchor record (`intent.md`, `anchors.json`, `anchors.md`, `anchor-runs/`) shall live in the current phase's plan folder, `docs/plans/phase-<current>/` with the phase id written out, named by `plan_dir` in `.sc/plan-anchor/settings.yaml`. `plan_anchor_settings.py set plan_dir` records it and `show` reports it; a value that is absolute, has an empty, `.` or `..` part, a backslash or a `<placeholder>` is `SETTINGS.INVALID_PLAN_DIR` in the file and `VALIDATION.INPUT` on `set`; the installer and `anchor_tracker.py write` keep it. The skill sets `A="$P/anchors.json"` from it and asks the user when it is unset; no shipped file names a literal folder. A new record's `plan` and `intent_ref` default to the folder holding `--anchors` and `intent.md` beside it.
-Source: OPERATOR (issue #58, 0.8.6). Status: shipped. Renumbered from a duplicate REQ-082 at phase j plan review (2026-11-24); REQ-082 is the phase-plan structure rule.
+Source: OPERATOR (issue #58, 0.8.6). Status: shipped.
 Verified: `test_plan_dir.py` (all), `test_install.py::InstallTests.test_rerun_and_switch_keep_the_plan_dir`, `InstallTests.test_a_placeholder_plan_dir_is_refused`, `RenderingTests.test_installer_settings_match_the_installed_settings_script`. Whether an agent asks the user when `plan_dir` is unset is prompt text and untested.
 
 ## Session log and run records (phase j)
 
-**REQ-083** A `--dry-run` of `judge`, `check-fixtures`, `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch` or `tournament` shall only check that its input composes into valid requests and show the would-send requests, redacted, on stdout, or in the file named by `--out` (for `judge`, `--out` names the requests file on a dry run). A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event, and shall open no sc-agent `Run` and make no send, so that it writes no session row and no run link. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); REQ-016; LEAD (phase j plan review, 2026-11-24) (all eight sending commands). Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
-Verified: none.
-
-**REQ-084** Each invocation of `judge`, `check-fixtures`, `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch` or `tournament` shall open one sc-agent `Run` through the generated client (`with open_run(...) as run:`, which sets the tool, version, agent role, Logger and test seams; plan-anchor holds no tool constant), make every send of the invocation through it with the client's functions and use `run.run_id`, the ULID the wheel mints when the `Run` is created, as the `run_id` of every record and result line the invocation writes. Plan-anchor shall not mint a run id. `judge` shall name its run file `<run_id>.json`. `check-fixtures` shall write one record per (`run_id`, item), where the item is one fixture sentence, named `<run_id>-<item>.json` with the item id sanitised for a file name. An interrupt shall call `run.cancel()`.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24). Status: planned (phase j; today `judge` run ids are `<gate>-<stamp>-<item>` and each fixture sentence gets its own `gate-stamp-item` run id). OPERATOR (phase j plan-review ruling, 2026-11-24): the run is a wheel context object; tools never mint ids.
+**REQ-083** A `--dry-run` shall only check that its input composes into valid requests and show the would-send requests, redacted, on stdout, or in the file named by `--out` (for `judge`, `--out` names the requests file on a dry run). A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24); REQ-016. Status: planned (phase j; today a dry run writes a run file marked `dry_run`, and `tournament --dry-run` writes `requests.dry-run.jsonl` in `--out`).
 Verified: none.
 
 **REQ-085** When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
 Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j ruling, 2026-11-24); `skills/plan-anchoring/references/question-tuning.md` "Run". Status: planned (phase j; today `_rubric_judgement` in `jev_judge.py.j2` re-asks with the cache on).
 Verified: none.
 
-**REQ-086** Each result line that `batch`, `bead-batch` and `tournament` write to stdout, `anchor-runs/tournament-<run>.jsonl` and `<out>/results.jsonl` shall be the shared `jev-batch-result/2` line with only its generic fields. Plan-anchor shall keep no record per line: its own fields for a line (`anchor_id`, `candidate_id` and the repeat) are recovered from the line's `request_id` and the rebuilt jobs. The tournament's ranking in `<out>/result_vars.json` shall reference the `session_id`s it scored. `tournament --results` shall read the answers it rescores by `session_id` through the generated client's `answers_for`, which uses the sc-decidr wheel's session-row reader; plan-anchor shall not read the session log's files itself.
-Source: OPERATOR (phase j session-log ruling, 2026-11-24); LEAD (phase j plan review, 2026-11-24) (no plan-anchor record per line: `request_id` already encodes its ids). Status: planned (phase j; today the lines are `plan-anchor/jev-batch-result/1` and carry `answers`, `retry_count` and `attempts`).
+**REQ-086** Each result line that `batch`, `bead-batch` and `tournament` write to stdout, `anchor-runs/tournament-<run>.jsonl` and `<out>/results.jsonl` shall be the shared `jev-batch-result/2` line with only its generic fields. The tournament's ranking in `<out>/result_vars.json` shall reference the `session_id`s it scored. `tournament --results` shall read the answers it rescores by `session_id`.
+Source: OPERATOR (phase j session-log ruling, 2026-11-24). Status: planned (phase j; today the lines are `plan-anchor/jev-batch-result/1` and carry `answers`, `retry_count` and `attempts`).
 Verified: none.
 
-**REQ-087** `judge`, `check-fixtures`, `dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch` and `tournament` shall accept `--model <selector>`, take any selector the sc-decidr wheel resolves (for example `jev`, `haiku`, `luna`, `laya` or `decider`), pass it unchanged to the command's sc-agent `Run` and send every query of that command with that one model. When the resolved provider is not TypeSafe, a live call shall be sent when the wheel resolves a provider and key for that model, including when no `TYPESAFE_API_KEY` is set, and shall not be refused with `AUTH.CREDENTIALS` for the missing TypeSafe key. Plan-anchor shall not name a model in code, choose a provider, pass a provider, or check a provider's key. With no `--model`, a command shall pass no model, and the wheel's configured default model (setting `model`, built-in `jev`, sc-agent REQ-SAG-0019) applies; plan-anchor shall keep no default model of its own.
-Source: OPERATOR (phase j ruling, 2026-11-24); OPERATOR (phase j plan-review ruling, 2026-11-24) (the wheel resolves the provider: global model configuration `models.<alias>`, else the first model-table row, newest first, whose provider is keyless or whose key resolves; sc-agent phase j); OPERATOR (phase j plan-review ruling, 2026-11-24) (with no `--model` the model is `jev`, overridable by a configuration variable); OPERATOR (phase j plan-review ruling, 2026-11-24) (no model name is hard-coded: the caller chooses the model, one model per command). Status: planned (phase j).
-Verified: none.

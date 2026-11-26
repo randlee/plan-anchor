@@ -113,7 +113,7 @@ class FreeFormSprintDryRunTests(unittest.TestCase):
                     out = json.loads(proc.stdout)
                     self.assertTrue(out["success"])
                     data = out["data"]
-                    self.assertEqual((data["gate"], data["dry_run"], data["item"]["truncated"]), (gate, True, False))
+                    self.assertEqual((data["gate"], data["dry_run"]), (gate, True))
                     self.assertTrue(data["requests"])
                     for request in data["requests"]:
                         self.assertEqual(request["state"]["item"], {"id": "bi-1", "title": "Anchor data model", "text": FREE_FORM})

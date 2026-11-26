@@ -37,7 +37,7 @@ Return `VALIDATION.INPUT` when `item_id` or `item_file` is missing.
 1. Establish script trust and `ROOT` exactly as `anchor-plan-review` step 1. {% if tracker == "br" %}Reject a supplied `anchor_tracker` other than `br` with `VALIDATION.TRACKER`.{% elif tracker == "bd" %}Reject a supplied `anchor_tracker` other than `bd` with `VALIDATION.TRACKER`.{% endif %} `python3 --version` and `jq --version` must succeed, or return `PREREQ.MISSING`. Resolve the tracker read-only with the accepted script's sibling: `RESOLVED="$(python3 "$(dirname "$SCRIPT")/anchor_tracker.py" resolve --repository-root "$ROOT")"`. On exit 2 (`success: false`) return its JSON error object unchanged; never run its `write` subcommand or initialize a tracker. Set `ANCHOR_TRACKER="$(printf '%s' "$RESOLVED" | jq -r '.data.tracker')"`; {% if tracker == "br" %}when `anchor_tracker` was supplied and differs, or the resolved tracker is not `br` (this install is rendered for `br`; the plugin installer must be rerun with `--tracker` (`references/installation-and-troubleshooting.md`)), return `VALIDATION.TRACKER`.{% elif tracker == "bd" %}when `anchor_tracker` was supplied and differs, or the resolved tracker is not `bd` (this install is rendered for `bd`; the plugin installer must be rerun with `--tracker` (`references/installation-and-troubleshooting.md`)), return `VALIDATION.TRACKER`.{% endif %} `"$ANCHOR_TRACKER" --version` must succeed, or return `PREREQ.MISSING`. `gh` is required only when `pr_number` is given.
 2. Preflight before reading repository inputs. Invoke `agent-preflight` with the canonical workspace and script paths, `--anchors "$anchors_path" --run-dir "$run_dir" --identifier "$item_id"`, `--evidence "$item_file"` first, one `--identifier` for each explicit anchor ID, every supplied evidence path and optional `run` as `--evidence`, `--pr-number "$pr_number"` when present, and `--correlation-id "${correlation_id:-$item_id}"`. On failure, return its error unchanged. Use only the canonical anchors, run directory, item path (`evidence[0]`, as `ITEM_FILE`), evidence paths, and optional run path it returns. Create `W` with `mktemp -d "${TMPDIR:-/tmp}/plan-anchoring-${work_key}.XXXXXX"`.
 3. Copy the sprint unchanged: `cat "$ITEM_FILE" > "$W/item.txt"`. Note `Closed beads` for `evidence_sections` when the text has that heading.
-4. Assemble the account in `"$W/account.md"`, labelled by section, in this priority order. The request cap at this gate is 64,000 bytes and the script shortens from the tail, so the sprint report goes first (`references/measured-behaviour.md`):
+4. Assemble the account in `"$W/account.md"`, labelled by section, in this priority order.:
    1. `## Sprint report` from `evidence` files that are not PR bodies, verbatim;
    2. `## Pull request` title and body (from `evidence` or `gh pr view`);
    3. `## Files changed` from `git diff --stat "$base_oid..$head_oid" --`, names and counts only, after requiring both OIDs to be hexadecimal; never put branch names from PR data into a shell command. Skip this section when there is no `pr_number`;
@@ -83,8 +83,6 @@ Return fenced JSON:
       {"anchor_id": "ANC-012", "verdict": "asserted_only", "check": "git log --follow crates/runtime shows the legacy history, or diff -r <legacy>/crates/runtime crates/runtime is mostly deletions"}
     ],
     "evidence_sections": ["Closed beads", "Sprint report", "Pull request", "Files changed"],
-    "item_truncated": false,
-    "shortened": [],
     "report_markdown": "## Anchor gate: dev · A2 ..."
   },
   "error": null,
