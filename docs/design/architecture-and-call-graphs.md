@@ -124,7 +124,7 @@ flowchart TD
     QM["Quality manager<br/>(QA side of the dev/QA matrix)"]
     QM -- "item_file (the sprint text), evidence paths or pr_number" --> SA["anchor-sprint-review"]
 
-    subgraph Assemble["assemble the account (priority order; item cut to 24,000 chars, 64,000-byte request cap)"]
+    subgraph Assemble["assemble the account (priority order)"]
         E1["1. sprint report / completion summary"]
         E2["2. PR title and body<br/>(gh pr view --json)"]
         E3["3. git diff --stat base..head<br/>(file names and counts only)"]
