@@ -284,7 +284,6 @@ class TraceTests(unittest.TestCase):
             self.assertIn("copy the libraries from the legacy repo", t)
             self.assertIn("the runtime crates", t)
         self.assertIn("The tool MUST copy the legacy crates.", green)
-        self.assertIn("from Raptor", green)
         self.assertIn("0.80", green)
         self.assertNotIn("Proposed remedy", green)
         self.assertIn("c-serves", green)
@@ -294,7 +293,7 @@ class TraceTests(unittest.TestCase):
         self.assertIn("Copy instead.", red)
         self.assertIn("Jev disputed on reading", red)
         self.assertIn("written by a reviewer agent, not Jev", red)
-        self.assertIn("Raptor serves no obligation statements", red)
+        self.assertIn("No obligation statements.", red)
         record_panels = [t for n, t in panels.items() if "-rec-" in n]
         anchor_panels = [t for n, t in panels.items() if "-anc-" in n]
         self.assertEqual((len(record_panels), len(anchor_panels)), (3, 1))

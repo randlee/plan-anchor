@@ -3643,7 +3643,7 @@ RAPTOR_INSTALL = (f"Install Raptor (needs a Rust toolchain): git clone https://g
                   "uv pip install -p raptor/.venv/bin/python ./raptor markdown; then pass --raptor raptor "
                   "(references/installation-and-troubleshooting.md). Or pass a saved Raptor index with --index.")
 RAPTOR_OBLIGATIONS_FIELD = {"requirements": "requirement_statement.statements"}  # Raptor serves no statements for decisions
-RAPTOR_NO_OBLIGATIONS = "Raptor serves no obligation statements for this record; the record is shown as Raptor serves it."
+RAPTOR_NO_OBLIGATIONS = "No obligation statements."
 TRACE_QUESTIONS = {
     "relates": {"type": "choice",
                 "instructions": "Does `record.raptor` (the record as Raptor serves it) govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",

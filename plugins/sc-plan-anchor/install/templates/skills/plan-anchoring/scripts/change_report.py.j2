@@ -807,17 +807,14 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
         th = t.get("thresholds", {})
-        metadata = [{"label": "Anchors", "value": str(t.get("anchors_path", ""))},
+        metadata = [{"label": "Anchors", "value": str(t.get("anchors_path", "")).rsplit("/", 1)[-1]},
                     {"label": "Model", "value": f"{t.get('model', '')} (answered: {', '.join(t.get('model_answered', [])) or '-'})"},
                     {"label": "Answered by", "value": str(t.get("answered_by", ""))},
                     {"label": "Thresholds", "value": ", ".join(f"{k} {v}" for k, v in th.items())},
-                    {"label": "Questions digest", "value": str(t.get("questions_digest", ""))},
                     {"label": "Sessions", "value": str(len(t.get("session_ids", [])))},
                     {"label": "Records read through", "value": "Raptor " + str((t.get("raptor") or {}).get("revision") or "(saved index)")},
-                    {"label": "Raptor indexes", "value": ", ".join(f"{x.get('repository')} ({x.get('index')})" for x in t.get("repositories", [])) or "-"},
                     {"label": "Requested ids Raptor did not serve", "value": "; ".join(f"{x['id']}: {x['reason']}" for x in t.get("not_served", [])) or "-"},
-                    {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"},
-                    {"label": "Trace file", "value": str(args.trace)}]
+                    {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"}]
         shell = {"title": args.title or f"Records x anchors ({len(t['records'])} x {len(t['anchors'])})",
                  "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what/remedy text in red and yellow panels is written by a reviewer agent, not Jev.",
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),

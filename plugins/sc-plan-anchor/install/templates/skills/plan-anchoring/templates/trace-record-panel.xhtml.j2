@@ -23,8 +23,7 @@ defaults:
       <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
     </div>
   </div>
-  <p class="small">The record as Raptor serves it (index {{ index | e }}); nothing here is parsed from Markdown.</p>
-  <h3>Obligation statements <span class="small">(from Raptor{% if obligations_field %}, {{ obligations_field | e }}{% endif %})</span></h3>
+  <h3>Obligation statements</h3>
 {% if obligations %}
   <ul class="obligations">
 {% for o in obligations %}
