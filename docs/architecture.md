@@ -72,8 +72,9 @@ roles gate: a `prohibition` ignores compliance, and a `structural` anchor is
 not sent to Jev at the planning gate (`deterministic_only`, passing) and is
 gated as a directive at the development gate. A live answer within 0.10 of the
 threshold is asked again and must agree, else the cell is `underspecified`
-(`unstable`); `--no-confirm` turns this off. Full order in §4 of the
-data-model document.
+(`unstable`); `--no-confirm` turns this off. The re-ask is sent with
+`cache=False`, so it is a new Jev call and not a result-cache hit (ADR-017).
+Full order in §4 of the data-model document.
 
 Consequences: Cells near 0.6 on unrelated sprints can fail as
 `underspecified`; ADR-012 adds an explicit exclusion for that case rather than
@@ -134,9 +135,12 @@ Decision: Standard library only on Python 3.11+, except PyYAML for settings
 (`plan_anchor_settings.py`, `anchor_tracker.py`), imported lazily, and the
 `sc-decidr` wheel for live Jev calls. The wheel version is recorded in the
 generated `decidr_client.py` header and the installation instructions in
-[README.md](../README.md). The client lazily imports `sc_agent`; offline paths
-remain standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
-The wheel owns provider retries, credential lookup and status classification;
+[README.md](../README.md). The client lazily imports `sc_agent` for a live call, for reading sc-agent
+session rows and for the wheel's provider-key list used by redaction (amended
+at phase j plan review, 2026-11-24); every other path remains
+standard-library-only and a missing wheel is `DEPENDENCY.SC_DECIDR`.
+The wheel owns provider selection, provider retries, credential lookup, run
+ids and status classification;
 `jev_judge.py` imports the settings module only for a live Jev call. Expected failures are returned as `Result[T, E]` from
 `scripts/result.py`: frozen `Ok`/`Err` dataclasses with a literal `ok`
 discriminant and the shared `ClientError {code, message, action, data}`. Exceptions are
@@ -158,9 +162,15 @@ REQ-047, REQ-048, REQ-052.
 
 ## ADR-007 CLI contract: JSON envelope; exit 0 when it ran, 2 when it could not
 
-Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3). Date: 2026-10-17.
+Status: accepted (rewritten for 0.7.2; was partial; amended for 0.8.3;
+amended at phase j plan review, 2026-11-24). Date: 2026-10-17.
 Amended 2026-10-18 (0.8.3): a Jev call without an answer is exit 2, refusals
 and no-ops are exit 0, and every CLI exits 130 with a `CANCELED` envelope.
+Amended 2026-11-24 (phase j plan review, lead ruling): an `--answers-file`
+(fixture) run writes no run file and opens no sc-agent `Run`.
+Amended 2026-11-24 (phase j plan review, lead ruling): a failed `Run`
+creation writes no run file and exits 2; `run_main` and `utf8_stdio()` come
+from the rendered decidr client.
 
 Context: Agents branch on exit code and parse stdout. Before 0.7.2, exit 1
 meant "ran, negative answer", so a caller could not tell a failing gate from a
@@ -190,18 +200,20 @@ result: when any `judge` or `check-fixtures` cell, `dedupe --jev` pair or
 `rubric`/`add --rubric` candidate has no answer after the retries (transport
 and HTTP errors, an invalid response, a context overflow or per-cell
 `PLAN.TOO_LARGE`, a failed confirmation, a missing or malformed fixture entry),
-the error takes the first failure's code, `data` keeps the partial work (the
-run file is still written; `data.run_path` names it) and `data.failures` lists
-each item without an answer; `add --rubric` records nothing even with
-`--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
+the error takes the first failure's code, `data` keeps the partial work (on a
+live run whose `Run` was created, the run file is still written and `data.run_path` names it) and
+`data.failures` lists each item without an answer. An `--answers-file`
+(fixture) run writes no run file and opens no sc-agent `Run`. A failed `Run`
+creation (the wheel refuses to open the `Run`) writes no run file and exits 2. `add --rubric`
+records nothing even with `--allow-untestable`. A dry run asks Jev nothing and exits 0. Every CLI returns
 130 on interrupt with a `CANCELED` envelope (`recoverable: true`;
-`result.run_main`). No command exits 1. The repository's
+the rendered decidr client's `run_main`). No command exits 1. The repository's
 CI scripts (`check_version_sync.py` drift, a missing `--base` ref or a
 malformed manifest, `gen_install_data.py --check` staleness, a failing git
 command or a corrupt `legacy-owned.json`, any `install_sc_compose_ci.py`
 failure) also exit 2 with a message, never a traceback, since their job is to
 fail CI. Since 0.8.1 every CLI and the SessionStart hook reconfigure
-stdin, stdout and stderr to UTF-8 at entry (`result.utf8_stdio()`), on every
+stdin, stdout and stderr to UTF-8 at entry (the rendered decidr client's `utf8_stdio()`), on every
 platform. Agent launches report a typed failure reason; a gate agent that
 cannot show a question bead stops with `TRACKER.SHOW_FAILED` (0.8.3).
 
@@ -257,10 +269,13 @@ Context: A planner that tunes its own questions tunes them toward a pass.
 Decision: A dedicated `anchor-tuning` subagent of the planner, launched
 concurrently after the first draft and INTENT/ANC capture, treats approved
 INTENT and ANC as its only authority, freezes an oracle before seeing Jev
-answers, calls Jev directly and in parallel over a candidate pool larger than
-production, and seals a smaller production set. It tests on temporary plan
-copies only and never edits authoritative sources. It may recommend
-clarity-only INTENT/ANC changes; the user approves each. Disputed review
+answers, judges a candidate pool larger than production in parallel, and
+seals a smaller production set. Its Jev queries go only through
+`jev_judge.py tournament`, which sends each one through sc-agent `send`, so
+every query has a row in the sc-agent session log (ADR-017); the tuner never
+calls Jev another way. It tests on temporary plan copies only and never
+edits authoritative sources. It may recommend clarity-only INTENT/ANC changes;
+the user approves each. Disputed review
 failures reach it only through a checked-in `sc-compose` template, and it
 returns exactly `plan_violation` or `question_defect`. No desired verdict is
 an input; `anchor_tuning_contract.py` rejects one.
@@ -270,30 +285,43 @@ plan is fine, fix the questions" is untrusted context. REQ-037 to REQ-042.
 
 ## ADR-011 Fast-model stand-ins for tuning
 
-Status: planned. Date: 2026-10-17.
+Status: retired (phase j plan review, 2026-11-24; never built). Owner ruling
+(phase j plan review, 2026-11-24): stand-ins are removed; the caller runs jev
+or haiku or luna or laya or decider, one model per command, and fan-out across
+models is the caller's job (REQ-087). Date: 2026-10-17; amended 2026-11-24.
+The text below is kept as history.
 
 Context: Jev returns choices and confidence but no reason, so a failing cell
 cannot be asked why. Predicted (counterfactual) answers from models proved
-unreliable.
+unreliable. The first design, never built, ran each stand-in as a harness CLI
+session in an empty temp dir; every query now goes through sc-agent (ADR-017).
 
-Decision: `judge --stand-ins` sends the identical Jev request to fast models
-(Claude `haiku`, Codex `luna`) configured under `fast_agents.profiles` in
-settings, one session per cell per model with no tools in an empty temp dir,
-checked before use by sc-decidr's shared typed response decoder; malformed
-answers produce `DECIDR.RESPONSE_INVALID`. Fixture answers use the shared
-client fixture validator. Stand-in output is advisory and never gates;
-divergence from Jev is a signal that the question and the text are misaligned.
-`follow-up` resumes the session of the model that answered. The tuner stays
-neutral, always runs the follow-up turns, makes one small edit (usually the
-sprint's `Prerequisites` or `Additional context`) and re-runs. The ledger is
-one commit per edit, a notes table row per iteration and `jev_judge.py diff`;
-no ledger CLI. A stand-in launch failure is an error: exit 2 with a typed
-error envelope (ADR-007). Source: `design/anchor-tuning-stand-ins.md` (draft).
+Decision: `judge --stand-ins` sends the identical Jev request with model
+`haiku` and with model `luna` (profiles configured under
+`fast_agents.profiles` in settings), after the Jev send, one batch per
+stand-in model over the cells, through the judge command's sc-agent `Run`. Each stand-in query gets its own sc-agent
+session row and run link. Answers are checked before use by sc-decidr's
+shared typed response decoder; malformed answers produce
+`DECIDR.RESPONSE_INVALID`. Fixture answers use the shared client fixture
+validator. The run file records each stand-in's `session_id` beside the Jev
+result and copies no stand-in answer. A stand-in send that intentionally
+repeats a request already sent to the same model passes `cache=False`.
+Stand-in output is advisory and never gates; divergence from Jev is a signal
+that the question and the text are misaligned. `follow-up` resumes the
+stand-in's sc-agent session; resume is future work (randlee/sc-agent#428), and
+`follow-up` is not available until #428 lands. The tuner stays neutral, runs
+the follow-up turns without asking once they are available, makes one small
+edit (usually the sprint's `Prerequisites` or `Additional context`) and
+re-runs. The ledger is one commit per edit, a notes table row per iteration
+and `jev_judge.py diff`; no ledger CLI. A stand-in send failure is an error:
+exit 2 with a typed error envelope (ADR-007). Source:
+`design/anchor-tuning-stand-ins.md` (draft; predates this amendment).
 
 Consequences: Tuning gains an explanation channel without a second verdict.
-Settings validation must accept `fast_agents`; it rejects the key now. Only
+Settings validation keeps rejecting `fast_agents`. Only
 `diff` exists; `--stand-ins`, `follow-up`, `fast_agents` and the tuning-loop
-prompt are not built. REQ-020, REQ-043 to REQ-046.
+prompt are not built, and `follow-up` also waits on randlee/sc-agent#428.
+REQ-020, REQ-043 to REQ-046.
 
 ## ADR-012 Anchor exclusions as a plain skip
 
@@ -314,7 +342,8 @@ unchanged. An anchor excluded everywhere is still uncovered. REQ-006.
 
 ## ADR-013 Repository settings convention
 
-Status: accepted (amended for 0.12.1). Date: 2026-10-17.
+Status: accepted (amended for 0.12.1; amended at phase j plan review,
+2026-11-24). Date: 2026-10-17.
 
 Context: Behavior varied by machine and environment variable; the skill needs
 one committed place for per-repository choices.
@@ -328,24 +357,30 @@ git-ignored" (`set` reports `settings_ignored_by_git`).
 
 Consequences: A typo never falls back to a default. The keys are
 `schema_version`, `anchor_tracker`, `allow_remote_judge` (ADR-016) and
-`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-082); the
+`plan_dir`, the current phase folder `docs/plans/phase-<current>` (REQ-088); the
 nearest file at or above the repository wins whole (ADR-015).
-The `sc-decidr` wheel owns credential lookup and precedence. Every live
-decision call passes `keyring_service=None` and `keyring_account=None` through
-the generated client, selecting the shared default TypeSafe keyring entry
-(service `TYPESAFE_API_KEY`, account the current OS user; REQ-SAG-0401). The
-plugin does not query the platform credential store. The plugin reads
-`TYPESAFE_API_KEY` only to redact it from emitted values and run files
-(REQ-017), never to resolve or pass a credential. Since 0.7.3 the
+The `sc-decidr` wheel owns provider selection, credential lookup and
+precedence. Every live decision call passes only the model alias and no
+keyring override (`keyring_service=None`, `keyring_account=None`) through the
+generated client; the wheel resolves the model's provider and selects that
+provider's key and keyring entry (for TypeSafe, service `TYPESAFE_API_KEY`,
+account the current OS user; REQ-SAG-0401). The plugin does not query the
+platform credential store and reads no provider key; the generated client's
+redaction reads the values of the wheel's provider-key list to redact them
+from emitted values and run files (REQ-017), never to resolve or pass a
+credential. Since 0.7.3 the
 `PLAN_ANCHOR_*` variables are gone (the remote-judge opt-in in 0.7.1, the other
 six in 0.7.3), their values are checked-in defaults with
-CLI flags (`--model`, `--threshold`, `--max-item-chars`, `--max-code-lines`,
+CLI flags (`--threshold`, `--max-item-chars`, `--max-code-lines`,
 `--no-confirm`, with `--confirm-near-threshold` stating the default; the Jev
-endpoint has no override), `USER` is read only as the default for
+endpoint has no override). The default model is not checked in: the caller
+picks `--model`, and with no `--model` a command passes no model, so the
+sc-decidr wheel's default applies (`jev`, set by sc-agent configuration key
+`model`; ADR-SAG-0020). `USER` is read only as the default for
 `add --stated-by`, and the home directory (`HOME`, `USERPROFILE`) only ends
 the install and settings walks and names the global locations. `install.py` writes `anchor_tracker` and
 `allow_remote_judge`, keeps `plan_dir`, and keeps `install-lock.json` beside
-the settings. REQ-018, REQ-019, REQ-082.
+the settings. REQ-018, REQ-019, REQ-088.
 
 ## ADR-014 The calling agent supplies the plan text; no gate parses plans
 
@@ -521,7 +556,8 @@ REQ-059 to REQ-064, REQ-067 to REQ-072, REQ-074, REQ-080; ANC-032 to ANC-036.
 
 ## ADR-016 Remote-judge consent is a committed setting
 
-Status: accepted (built in 0.7.1; was planned). Date: 2026-10-17.
+Status: accepted (built in 0.7.1; was planned; amended at phase j plan
+review, 2026-11-24). Date: 2026-10-17.
 
 Context: Sending plan text to TypeSafe needs the user's consent. At 0.7.0 it was
 the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
@@ -529,9 +565,15 @@ the session environment variable `PLAN_ANCHOR_ALLOW_REMOTE_JUDGE=1` or
 ANC-005.
 
 Decision: Consent is `allow_remote_judge: true|false` in the committed
-`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). Only `true` lets
-a live Jev call through (`judge`, `check-fixtures`, `dedupe --jev`, `rubric`,
-`add --rubric`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
+`.sc/plan-anchor/settings.yaml` (the nearest file, ADR-015). It is consent to
+send to TypeSafe (Jev) only (owner ruling, 2026-11-24): a send whose model the
+wheel resolves to any other provider, such as `--model haiku` or
+`--model luna`, needs no consent. The generated client's gate compares the
+resolved model's provider with the wheel's TypeSafe constant; plan-anchor's own
+`remote_preflight` checks are removed. Only `true` lets a live
+TypeSafe send through (from any sending command: `judge`, `check-fixtures`,
+`dedupe --jev`, `rubric`, `add --rubric`, `batch`, `bead-batch`,
+`tournament`); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED`
 (exit 2, nothing sent), and the absent case's action says to ask the user once
 and record the answer with `plan_anchor_settings.py set allow_remote_judge
 true|false`. A non-bool is `SETTINGS.INVALID_REMOTE_JUDGE` (YAML 1.1 `yes`
@@ -543,5 +585,61 @@ keeps the recorded value. The environment variable is ignored and
 `--allow-remote` is a `VALIDATION.INPUT` usage error.
 
 Consequences: Consent is per repository (or per parent folder) and visible in
-review. Fail-closed behavior (REQ-015) is unchanged. This repository records
+review. Fail-closed behavior (REQ-015) applies to TypeSafe sends; haiku and
+luna sends fail closed only on a key the wheel cannot resolve. This repository records
 `allow_remote_judge: true`. REQ-018, REQ-065, REQ-066.
+
+## ADR-017 Jev queries are recorded once, in sc-agent's session log
+
+Status: accepted at phase j plan review, 2026-11-24; binding on sprint j-4,
+which builds it when it merges into plan-anchor's integrate/phase-j.
+Date: 2026-11-24; amended at phase j plan review, 2026-11-24.
+
+Context: Every Jev query from every tool goes through sc-agent `send` or
+`send_batch` and gets one session-log row keyed by its ULID `session_id`
+(owner ruling, 2026-11-24). Run files, result lines and the tournament log
+copied the answers, `model_answered` and attempt counts that the row already
+holds. sc-agent's result cache, on by default, returns an earlier row's result
+for an identical request and model without calling Jev, which would make a
+confirmation or a repeat measure nothing. Dry runs wrote run files into the
+committed `anchor-runs/` folder.
+
+Decision: Plan-anchor's records hold only what it derives (verdicts, leaning,
+rankings) and its own ids (`anchor_id`, `candidate_id`, repeat), and reference
+the `session_id` of each query they used. They never copy the composed request body, Jev's
+answers, `model_answered` or attempt counts; a failed send is referenced by
+its `session_id`, whose row holds the error and the attempts. Result lines are
+the shared `jev-batch-result/2` line. An intentional identical resend (the
+near-threshold confirmation, the second and third `rubric` confirmations, and
+tournament and `batch` repeats) passes `cache=False`. A dry run shows the
+would-send requests and writes nothing under `anchor-runs/` and no log event.
+Every command that sends Jev queries, `judge` included, opens one sc-agent
+`Run` per invocation through the generated client (`with open_run(...) as
+run:`), makes every send through it with the client's functions (one cache
+policy per call) and uses `run.run_id`, the ULID the wheel mints, for its records and
+file names; plan-anchor never mints an id. The `Run` owns the logger,
+cancellation (`run.cancel()`), configuration resolution (project, config
+directory, workers, timeout) and the test seams, which are injected when the
+`Run` is created; a call passes only its request or requests, the model or
+agent role when they vary, `cache=False` for an intentional resend and, for a
+batch, `on_result`. Readers get answers by
+`session_id` from the wheel's session-row reader and never parse the session
+log's files. Redaction calls the generated client, which uses the wheel's
+provider-key list. `judge` writes `<run_id>.json` and `check-fixtures` writes one
+record per (`run_id`, item) as `<run_id>-<item>.json`. Every command works with
+`--model haiku` and `--model luna` when no `TYPESAFE_API_KEY` is set; `--model <selector>`
+passes the caller's selector unchanged to the command's one `Run`, which holds
+that one model; plan-anchor names no model in code, no call passes a model or
+a provider, and the wheel resolves the provider (owner ruling, phase j plan
+review, 2026-11-24).
+
+Lead rulings at phase j plan review, 2026-11-24: result lines have no
+plan-anchor record beside them (`request_id` encodes the ids); an
+`--answers-file` run opens no `Run` and writes no run file; a failed `Run`
+creation (the wheel refuses to open the `Run`) writes no run file and the
+command exits 2.
+
+Consequences: Reading an answer, or rescoring a tournament with `--results`,
+needs the sc-agent session log. A confirmation or repeat costs a Jev call even
+when the cache holds the answer. Coverage and diffs no longer meet dry-run
+files. REQ-011, REQ-013, REQ-038, REQ-076, REQ-083 to REQ-087.
