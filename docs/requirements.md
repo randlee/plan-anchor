@@ -230,11 +230,13 @@ Source: OPERATOR; `design/data-model-and-gating.md` §4. Status: shipped.
 
 ### Requirement Statement
 
-Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent. An item is one plan item a gate judges. A run file is the `anchor-runs/*.json` file written for one gate run; a dry-run run file is one marked `dry_run`. Coverage is the matrix of anchors by items that `jev_judge.py coverage` builds; a run-to-run difference is the verdicts changed, added or removed between two run files, as `jev_judge.py diff` reports them.
 
 **MUST statements:**
 
-- Coverage across items and run-to-run differences shall be computed by the script from run files, never asked of Jev. Dry-run run files already on disk shall be skipped.
+- Coverage across items shall be computed from run files rather than asked of Jev.
+- Run-to-run differences shall be computed from run files rather than asked of Jev.
+- Dry-run run files already on disk shall be skipped when coverage or run-to-run differences are computed.
 
 ### Rationale
 
