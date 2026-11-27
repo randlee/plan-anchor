@@ -6,6 +6,8 @@ on:
     paths:
       - "site/**"
       - "scripts/build-site.py"
+      - "scripts/build-examples.py"
+      - "plugins/sc-plan-anchor/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -33,6 +35,14 @@ jobs:
       # sources, never committed, so the deployed site cannot go stale.
       - name: Build site indexes
         run: python3 scripts/build-site.py
+      # Examples are rebuilt from their checked-in inputs with the current scripts (offline, fixture answers),
+      # so a deployed example always matches the code. The render needs the sc-compose CLI, as the tests do.
+      - name: Install pinned sc-compose CLI
+        run: python3 scripts/install_sc_compose_ci.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build examples
+        run: python3 scripts/build-examples.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
