@@ -15,7 +15,8 @@ artifacts and are never committed (site/examples/.gitignore).
 
 Provenance: the trace reads each statement's git provenance from the records' repository at the commit in
 inputs/source.json ({repository, commit}). --records-checkout DIR uses an existing checkout (HEAD must be that
-commit); otherwise a partial clone (--filter=blob:none, full history, as git log -S needs) is made or reused under
+commit); otherwise a full clone (git log -S reads every blob in history, which a partial clone would fetch one at a
+time) is made or reused under
 --cache (default ~/.cache/plan-anchor-examples) and that commit is checked out. Every statement of the traced records
 must be found in the files at that commit (git grep), else the build fails. --no-provenance builds offline (the tests).
 
@@ -117,7 +118,7 @@ def git(*argv: str, cwd: Path) -> subprocess.CompletedProcess:
 
 
 def records_checkout(inputs: Path, given: str, cache: Path) -> Path:
-    """The records' repository at inputs/source.json's commit: --records-checkout, else a cached partial clone."""
+    """The records' repository at inputs/source.json's commit: --records-checkout, else a cached full clone."""
     try:
         source = json.loads((inputs / "source.json").read_text(encoding="utf-8"))
         url, commit = source["repository"], source["commit"]
@@ -132,7 +133,7 @@ def records_checkout(inputs: Path, given: str, cache: Path) -> Path:
     repo = cache / url.rstrip("/").rsplit("/", 1)[-1]
     if not (repo / ".git").exists():
         repo.parent.mkdir(parents=True, exist_ok=True)
-        got = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none", "--no-checkout", url, str(repo)],
+        got = subprocess.run(["git", "clone", "--quiet", "--no-checkout", url, str(repo)],
                              capture_output=True, text=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"), check=False)
         if got.returncode != 0:
             die(f"could not clone {url}: {got.stderr.strip()[-500:]}")

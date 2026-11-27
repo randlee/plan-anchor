@@ -42,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       # The record-cleanup example reads git provenance from the records' public repository (inputs/source.json):
-      # build-examples.py makes a partial clone there; caching it avoids re-fetching the blobs git log -S reads.
+      # build-examples.py makes a full clone there (git log -S reads every blob); the cache saves re-cloning it.
       - uses: actions/cache@v4
         with:
           path: ~/.cache/plan-anchor-examples
