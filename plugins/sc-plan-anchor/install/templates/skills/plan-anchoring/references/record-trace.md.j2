@@ -15,6 +15,8 @@ description: Judge REQ, ADR and NFR records against the locked anchors with Jev 
 
 # Record trace
 
+**Cleaning up records.** To clean the records up (proposals the owner approves, then repair in waves), follow `references/record-cleanup.md`. This page defines the trace and the remedies it uses.
+
 ## When to use
 
 After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits. A run with `duplicates_pass: false` is not finished until a re-run shows `true`, or the remaining items are recorded as conflicts for the owner.

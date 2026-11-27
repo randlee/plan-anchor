@@ -57,7 +57,7 @@ class VersionSingleSourceOfTruthTests(unittest.TestCase):
             agents = ROOT / plugin / "install" / "harness" / harness / "agents"
             expected.append(f"{plugin}/install/harness/{harness}/registry.yaml")
             found_agents = sorted(agents.glob("*.md"))
-            self.assertEqual(len(found_agents), 3, harness)
+            self.assertEqual(len(found_agents), 4, harness)
             expected.extend(f.relative_to(ROOT).as_posix() for f in found_agents)
         for rel in expected:
             self.assertIn(rel, found)

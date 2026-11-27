@@ -489,6 +489,126 @@ class TraceOverlapTests(unittest.TestCase):
         self.assertIn("Duplicates: not run", page)
 
 
+def proposal(n_kind, records, changes=(), **extra):
+    return dict({"wave": 1, "kind": n_kind, "title": f"{n_kind} title", "records": list(records), "changes": list(changes),
+                 "justification": "Each obligation lives in one record.", "source": {"ref": "ANC-001", "quote": "copy them"},
+                 "improvement": "One record fewer to keep in step."}, **extra)
+
+
+PROPOSALS = {"schema": "plan-anchoring/record-cleanup-proposals/1", "proposals": [
+    proposal("consolidate", ["REQ-001", "ADR-002"], [{"record": "REQ-001", "before": "It shall log every copy."}],
+             title="Keep the logging rule in ADR-002", source={"ref": "ADR-002"}),
+    proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001"], title="Delete ADR-002"),
+    proposal("cut_excess", ["REQ-001"], [{"record": "REQ-001", "before": "The tool MUST copy the legacy crates.",
+                                          "after": "The tool MUST copy the crates."}], wave=2, title="Cut 'legacy'"),
+    proposal("keep_with_reason", ["NFR-003"], wave=2, title="Keep NFR-003: the page-load budget is product value")]}
+
+
+@unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
+class ProposedFixesTests(unittest.TestCase):
+    """The third tab: record-cleanup proposals as numbered panels with a copy icon, and the totals if all are approved."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        anchors = write(self.tmp, "anchors.json", record(anchor("ANC-001")))
+        answers = write(self.tmp, "answers.json", {"REQ-001/ANC-001": cell(serves=0.8), "ADR-002/ANC-001": cell(conflicts=0.7),
+                                                    "NFR-003/ANC-001": cell(),
+                                                    "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": ans(0.9)}})
+        code, out = run_cli(["trace", "--anchors", anchors, "--index", write(self.tmp, "core.json", CORE),
+                             "--index", write(self.tmp, "ui.json", UI), "--answers-file", answers, "--out-dir", str(Path(self.tmp) / "out")])
+        self.assertEqual(code, 0, out)
+        self.trace = out["data"]["trace_path"]
+
+    def report(self, *extra):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main(["--trace", self.trace, "--out", str(Path(self.tmp) / "report"), *extra])
+        return rc, json.loads(buf.getvalue())
+
+    def test_panels_are_numbered_with_a_copy_icon_and_totals(self):
+        rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(env["data"]["proposals"], 4)
+        self.assertEqual(env["data"]["totals"], {"records_before": 3, "records_after": 2, "statements_before": 3, "statements_after": 1,
+                                                 "duplicates": 1, "duplicates_cleared": 1, "conflicts": 1, "conflicts_resolved": 1})
+        self.assertEqual(env["data"]["warnings"], [])
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertIn('data-tab="tab-prop">Proposed fixes 4</button>', page)
+        tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
+        self.assertIn("Reply e.g.: approve 1-5, reject 6, change 7 to: &lt;text&gt;", tab)
+        self.assertIn("<tr><th scope=\"row\">Records</th><td>3</td><td>2</td></tr>", tab)
+        self.assertIn("<tr><th scope=\"row\">Statements</th><td>3</td><td>1</td></tr>", tab)
+        self.assertIn("<tr><th scope=\"row\">Duplicates</th><td>1</td><td>0</td></tr>", tab)
+        self.assertIn("<tr><th scope=\"row\">Conflicts</th><td>1</td><td>0</td></tr>", tab)
+        self.assertEqual(tab.count('title="Copy panel text"'), 4)
+        self.assertNotIn('title="Copy JSON"', tab)
+        for n, title in enumerate(["Keep the logging rule in ADR-002", "Delete ADR-002", "Cut 'legacy'",
+                                   "Keep NFR-003: the page-load budget is product value"], start=1):
+            self.assertIn(f'id="prop-{n}"', tab)
+            panel = Path(env["data"]["proposal_panels"][n - 1]).read_text(encoding="utf-8")
+            xml.dom.minidom.parseString(panel)
+            copied = xml.dom.minidom.parseString(panel).getElementsByTagName("button")[0].getAttribute("data-copy-text")
+            self.assertTrue(copied.startswith(f"{n}. {title} Wave "), copied[:80])  # XML folds the newlines to spaces
+        self.assertIn('data-copy-text="1. Keep the logging rule in ADR-002\nWave 1 · consolidate\nRecords: REQ-001, ADR-002\nChange: Delete from REQ-001', tab)
+        first = Path(env["data"]["proposal_panels"][0]).read_text(encoding="utf-8")
+        self.assertIn("Wave 1 · consolidate", first)
+        self.assertIn("Delete from REQ-001: “It shall log every copy.”", first)
+        for heading in ("Records", "Change", "Justification", "Source of truth", "Expected improvement"):
+            self.assertIn(f"<h3>{heading}</h3>", first)
+        self.assertIn("Records 3 → 3; statements 3 → 2; duplicates cleared 1 of 1; conflicts resolved 0 of 1", first)
+        second = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
+        self.assertIn("Delete record ADR-002 (1 statements).", second)
+        self.assertIn("ANC-001 — Owner: “copy them”", second)
+        third = Path(env["data"]["proposal_panels"][2]).read_text(encoding="utf-8")
+        self.assertIn("Wave 2 · cut excess", third)
+        self.assertIn("“The tool MUST copy the legacy crates.” → “The tool MUST copy the crates.”", third)
+
+    def test_without_proposals_the_tab_has_no_content(self):
+        rc, env = self.report()
+        self.assertEqual(rc, 0, env)
+        self.assertIsNone(env["data"]["proposals"])
+        self.assertIsNone(env["data"]["totals"])
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertIn('data-tab="tab-prop">Proposed fixes</button>', page)
+        tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
+        self.assertIn("No proposals yet", tab)
+        self.assertNotIn("trace-panel", tab)
+        self.assertNotIn("Reply e.g.", tab)
+
+    def test_quotes_the_trace_does_not_hold_are_warned_and_not_counted(self):
+        doc = {"schema": PROPOSALS["schema"], "proposals": [
+            proposal("delete", ["REQ-001"], [{"record": "REQ-001", "before": "A statement REQ-001 does not have."}],
+                     duplicates=["X/Y/0"])]}
+        rc, env = self.report("--proposals", write(self.tmp, "p.json", doc))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(env["data"]["totals"]["statements_after"], 3)
+        self.assertEqual(len(env["data"]["warnings"]), 2, env["data"]["warnings"])
+        panel = Path(env["data"]["proposal_panels"][0]).read_text(encoding="utf-8")
+        self.assertIn("<h3>Check before approving</h3>", panel)
+
+    def test_a_broken_proposals_file_is_refused_with_every_problem(self):
+        doc = {"schema": PROPOSALS["schema"], "proposals": [
+            proposal("cut_excess", ["REQ-001"], [{"record": "REQ-001", "before": "It shall log every copy.", "after": "It logs each copy."}]),
+            proposal("keep_with_reason", ["REQ-001"]),
+            proposal("propose_anchor", ["REQ-001"]),
+            proposal("rephrase", ["REQ-404"], [{"record": "REQ-404"}], wave=0)]}
+        rc, env = self.report("--proposals", write(self.tmp, "bad.json", doc))
+        self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
+        problems = "\n".join(env["data"]["problems"])
+        for text in ("proposal 1 change 1: after is not a cut", "proposal 2: keep_with_reason is only for a record no anchor covers",
+                     "proposal 3: propose_anchor must list its changes", "proposal 3: propose_anchor needs proposed_anchor",
+                     "proposal 4: wave must be", "proposal 4: kind must be", "proposal 4: record REQ-404 is not in the trace"):
+            self.assertIn(text, problems)
+        self.assertTrue(cr.is_cut("The tool MUST copy the legacy crates.", "The tool MUST copy the crates (REQ-009).", {"REQ-009"}))
+        rc, env = self.report("--proposals", write(self.tmp, "x.json", {"schema": "other"}))
+        self.assertEqual(env["error"]["code"], "PROPOSALS.INVALID")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main(["--anchors", "a.json", "--baseline-rev", "HEAD", "--proposals", "p.json", "--out", self.tmp])
+        self.assertEqual((rc, json.loads(buf.getvalue())["error"]["code"]), (2, "VALIDATION.INPUT"))
+
+
 STATEMENT_START = "The runtime crates are created by copying"
 
 if __name__ == "__main__":

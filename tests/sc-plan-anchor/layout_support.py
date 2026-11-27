@@ -44,7 +44,7 @@ SCRIPT_TEMPLATES = SKILL_SRC / "scripts"   # the *.py.j2 sources; SCRIPTS (below
 AGENT_TEMPLATES = TEMPLATES / "agents"
 TARGETS = ("claude", "codex", "cursor")
 TRACKERS = ("br", "bd")
-AGENTS = ("anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md")
+AGENTS = ("anchor-cleanup-proposer.md", "anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md")
 REQUIRE_SC_COMPOSE = os.environ.get("PLAN_ANCHOR_REQUIRE_SC_COMPOSE") == "1"
 TEST_TRACKER = os.environ.get("PLAN_ANCHOR_TEST_TRACKER", "br")
 if TEST_TRACKER not in TRACKERS:

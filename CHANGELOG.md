@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 — 2026-11-27
+
+- Add the record-cleanup workflow (`references/record-cleanup.md`): preflight on validated anchors and Raptor-compliant records; diagnose with `trace` and parallel background proposers while the owner reviews; an owner-approved "Proposed fixes" tab; repair per wave by background agents (Raptor schema, anchors, and judge-jev quality on modified records handed to judge-jev's fix workflow, never a stop); one `/sc-gh-stack` PR per wave, planned up front. `SKILL.md` gains its row; `references/record-trace.md` points to it.
+- Add the read-only `anchor-cleanup-proposer` agent (Claude `sonnet`, Codex `luna`, Cursor `composer`, background): given a trace slice, it returns proposals JSON (deletion by default, never rewording) and edits nothing.
+- `change_report.py --trace T --proposals P` adds a third tab, "Proposed fixes": the reply line ("Reply e.g.: approve 1-5, reject 6, change 7 to: <text>"), the totals if all are approved (records, statements, duplicates and conflicts before and after, computed from the trace), and one numbered panel per proposal (wave, kind, records, change, justification, source of truth, expected improvement) with a copy icon that copies the panel as plain text. A proposals file that breaks the small schema (`plan-anchoring/record-cleanup-proposals/1`), including a cut that rewords instead of deleting words, is refused with `PROPOSALS.INVALID` and every problem listed. Without `--proposals` the tab says there are no proposals yet. `templates/trace-panel.xhtml.j2` makes Copy JSON optional.
+
 ## 0.15.0 — 2026-11-26
 
 - Add `jev_judge.py trace` (from #157): judge REQ/ADR/NFR records against locked anchors with four Jev questions per cell, classify each cell (serves, related, exceeds, conflicts, none) in the script, and write `trace-<UTC>.json` with summary counts and optional reviewer annotations labelled as not Jev's. Records are read only through Raptor (`--source` runs Raptor's importer, `--index` takes a saved Raptor index, `--ids` restricts them); obligation statements are Raptor's, never extracted from text. Raptor is a dependency of `trace` only. `change_report.py --trace` renders the report (`templates/trace-report.html.j2`, `templates/trace-panel.xhtml.j2`); `references/record-trace.md`.
