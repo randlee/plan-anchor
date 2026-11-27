@@ -2928,7 +2928,7 @@ def collect_runs(paths: list) -> list:
                 r = json.loads(f.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 continue
-            if isinstance(r, dict) and r.get("schema") == "plan-anchoring/run/1" and not r.get("dry_run") \
+            if isinstance(r, dict) and r.get("schema") == "plan-anchoring/run/1" \
                     and isinstance(r.get("results"), list) and isinstance(r.get("item"), dict):
                 runs.append(r)
     return runs

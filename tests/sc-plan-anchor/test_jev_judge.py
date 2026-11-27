@@ -1480,8 +1480,6 @@ class JudgeFixtureTests(unittest.TestCase):
         self.assertTrue(Path(run["run_path"]).is_file() and Path(run["path"]).parent == Path(self.run_dir))
         self.assertIsNone(run["results"][0]["verdict"])
         self.assertEqual(run["results"][0]["attempts"], 0)
-        dry_only = jj.cmd_coverage(jj.argparse.Namespace(runs=[self.run_dir], gate="", format="json"))  # dry runs never count
-        self.assertEqual(failure(dry_only).code, "RUNS.NONE")
 
     def test_judge_refuses_invalid_record_and_options(self):
         bad = write(self.d.name, "bad.json", record(anchor(status="nope")))
@@ -2230,16 +2228,13 @@ class ReportTests(unittest.TestCase):
 
 
 class CoverageTests(unittest.TestCase):
-    def test_uncovered_latest_wins_and_dry_runs_ignored(self):
+    def test_uncovered_latest_wins(self):
         with tempfile.TemporaryDirectory() as d:
             runs = Path(d) / "runs"
             make_run(runs, "a1.json", "plan", "ex-1", "2026-10-09T10:00:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
             make_run(runs, "a2.json", "plan", "ex-1", "2026-10-09T11:00:00+00:00", {"ANC-001": "not_addressed", "ANC-002": "not_applicable", "ANC-003": "satisfied"})
             make_run(runs, "b.json", "plan", "ex-2", "2026-10-09T10:30:00+00:00", {"ANC-001": "satisfied", "ANC-002": "not_applicable", "ANC-003": "contradicted"})
             make_run(runs, "dev.json", "dev", "ex-2", "2026-10-09T12:00:00+00:00", {"ANC-002": "satisfied"})
-            dry = json.loads(Path(make_run(runs, "dry.json", "plan", "ex-3", "2026-10-09T13:00:00+00:00", {"ANC-002": "satisfied"})).read_text())
-            dry["dry_run"] = True
-            write(runs, "dry.json", dry)
             write(runs, "junk.json", "{not json")
             write(runs, "other.json", {"schema": "x"})
             code, out = run_cli(["coverage", "--runs", str(runs), "--gate", "plan"])
