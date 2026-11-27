@@ -230,6 +230,8 @@ Source: OPERATOR; `design/data-model-and-gating.md` §4. Status: shipped.
 
 ### Requirement Statement
 
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
+
 **MUST statements:**
 
 - Coverage across items and run-to-run differences shall be computed by the script from run files, never asked of Jev. Dry-run run files already on disk shall be skipped.
@@ -251,6 +253,8 @@ Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. St
 **Status:** shipped  
 
 ### Requirement Statement
+
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
 
 **MUST statements:**
 
@@ -544,6 +548,8 @@ Source: ANC-010, ANC-031. Status: shipped.
 
 ### Requirement Statement
 
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
+
 **MUST statements:**
 
 - `anchor-tuning` shall run as a dedicated Opus/Sol (Cursor: Grok at high effort) subagent of the planner that judges a candidate pool larger than production in parallel, ranks it and seals a smaller production set. The tuner's Jev queries shall go only through `jev_judge.py tournament`, which sends each one through sc-agent `send` so that it gets a row in the sc-agent session log; the tuner shall not call Jev any other way.
@@ -754,6 +760,8 @@ Source: CHANGELOG 0.3.0. Status: shipped.
 
 ### Requirement Statement
 
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
+
 **MUST statements:**
 
 - When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`, so that the second send is a new Jev call with its own session row and not a result-cache hit: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`. When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
@@ -873,6 +881,8 @@ Source: OPERATOR (issue #58, 0.8.6). Status: shipped.
 **Status:** planned  
 
 ### Requirement Statement
+
+Definitions: Redacted means the live TypeSafe key and bearer tokens are removed from every emitted value.
 
 **MUST statements:**
 

@@ -45,6 +45,14 @@ anchor and one item. Agents run the script once and return its result. See
 
 Facts stated during planning are lost as context compresses, and language models cannot count, gate reliably, or keep a request byte-identical. Putting the exact work in the script makes gating and coverage reproducible and unit-tested offline, while judgment stays with the session and Jev, which never sees more than one anchor and one item.
 
+### Alternatives Considered
+
+#### Alternative 1: Language models do the exact work
+
+**Description:** The session or its agents count, gate, compose requests and retry on their own.
+
+**Why Rejected:** Language models cannot count, gate reliably, or keep a request byte-identical.
+
 ### Consequences
 
 Gating and coverage are reproducible and unit-tested offline.
@@ -111,6 +119,20 @@ Full order in §4 of the data-model document.
 ### Rationale
 
 Answers to the questions in one request are independent, so relevance cannot gate the others inside Jev and has to be applied afterwards. A wavering relevance answer is not to be read as "does not apply", so only a confident relevance no counts as not applicable and weaker answers fall through.
+
+### Alternatives Considered
+
+#### Alternative 1: Relevance gates the other questions inside Jev
+
+**Description:** Jev skips the other questions when relevance is `no`.
+
+**Why Rejected:** Answers to the questions in one request are independent, so relevance cannot gate the others inside Jev.
+
+#### Alternative 2: Any relevance `no` is not applicable
+
+**Description:** A relevance `no` at any confidence makes the cell `not_applicable`.
+
+**Why Rejected:** A wavering relevance answer must not be read as "does not apply".
 
 ### Consequences
 
@@ -224,6 +246,14 @@ an input; `anchor_tuning_contract.py` rejects one.
 
 A planner that tunes its own questions tunes them toward a pass, so tuning is handed to a separate subagent whose only authority is the approved INTENT and anchors. For the same reason, a planner's claim that the plan is fine and the questions should be fixed is treated as untrusted context.
 
+### Alternatives Considered
+
+#### Alternative 1: The planner tunes its own questions
+
+**Description:** The planner that wrote the plan also tunes the questions that judge it.
+
+**Why Rejected:** A planner that tunes its own questions tunes them toward a pass.
+
 ### Consequences
 
 Leaf plan review waits for the sealed digest. A planner's "the
@@ -295,6 +325,14 @@ answers, `model_answered` or attempt counts.
 ### Rationale
 
 Every Jev query from every tool already goes through sc-agent send or send_batch and gets one session-log row keyed by its session_id, per the owner ruling of 2026-11-24. Run files, result lines and the tournament log were copying answers, model_answered and attempt counts that the row already holds, so plan-anchor keeps only what it derives and references the row instead.
+
+### Alternatives Considered
+
+#### Alternative 1: Copy answers into plan-anchor's records
+
+**Description:** Run files, result lines and the tournament log keep the request body, answers and attempt counts.
+
+**Why Rejected:** The session-log row already holds them.
 
 ### Consequences
 
