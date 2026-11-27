@@ -12,6 +12,7 @@ Rand (ANC-015, ANC-016, rule 0): "judge-jev and plan-anchor simply supply tool n
 |---|---|
 | S/decidr_client.py.j2 | re-render of j-4 `consumer.py.j2` with `client_name=plan-anchor, sitr=false, tool_version={{ version }}`; never hand-edited |
 | S/result.py.j2 | deleted (Ok/Err/Result/ToolError/err/run_main/utf8_stdio come from decidr_client) |
+| plugins/sc-plan-anchor/install.py | loads Result types from the plain decidr_client template, no longer from result.py.j2 |
 | S/jev_judge.py.j2 | CLI and plan-anchor domain logic: question sets, `decide`, triage, run files, batch request building, tournament scoring; `with_run`, `dry_run_sink`, `batch_verdict` |
 | S/change_report.py.j2 | run-file loading for `report`; `run/2` only |
 | S/anchor_tracker.py.j2, S/anchor_tuning_contract.py.j2, S/anchor_runner_contract.py.j2, S/plan_anchor_settings.py.j2 | import line only (result -> decidr_client); anchor_tuning_contract: evidence keys per Contracts |
@@ -98,7 +99,7 @@ Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`),
 
 | item | replaces (file:line) | deleted with it |
 |---|---|---|
-| import from decidr_client | JJ:118; S/anchor_tracker:92, anchor_tuning_contract:32, anchor_runner_contract:51, change_report:58, plan_anchor_settings:81 | S/result.py.j2 (110), T/test_result.py |
+| import from decidr_client | install.py:192-196 at cee4dc1 (`_result = _load_plain_script("result")` and the `Err, Ok, Result, ToolError, err, utf8_stdio` unpack now read from `_decidr_client`; the re-rendered decidr_client.py.j2 stays free of template syntax, TOOL_VERSION a literal); JJ:118; S/anchor_tracker:92, anchor_tuning_contract:32, anchor_runner_contract:51, change_report:58, plan_anchor_settings:81 | S/result.py.j2 (110), T/test_result.py; test_install.py:251 and :1062-1067 result.py cases |
 | `with_run` | per-call Run wiring in call_jev JJ:1655-1658 and _live_batch_results JJ:3294-3299; the 5 `remote_preflight` blocks JJ:1868-1871, :2433-2437, :2701-2705, :3346-3350, :4263-4267 (the client's gate decides) | `remote` param of judge_context; `ctx["live"]` |
 | `dry_run_sink` | judge dry-run run file JJ:2045-2050, :2149-2151 (`requests`, `totals`); tournament `TOURNAMENT_DRY_RESULTS` JJ:3595, :4239-4246; dry-run lines from `run_batch_job` JJ:3172-3173 | dry-run run files and dry-run result lines (REQ-083) |
 | `call_jev(run, body)` -> Reply | call_jev JJ:1653-1663 and judge_with_policy JJ:1666-1681 (at cee4dc1 it sends once and applies no size limit: the cap, halving and PLAN.TOO_LARGE went in the record trim 4d0c22f; REQ-008 'send a bead whole' holds because call_jev sends the body unchanged; REQ-077 is not on the base) | judge_with_policy; meta `attempts`, `retry_after_ms`; the `{"model","answers","usage","attempts"}` dict |
@@ -153,7 +154,7 @@ S/result.py.j2 (all); JJ:107 `hashlib` stays (canonical_digest, intent sha); JJ:
 
 1. Fixture runs open a real Run and send nothing (aligned with j-6); dry runs open no Run and import no wheel. The earlier "fixture runs open no Run" was lead advice, removed by the owner correction of 2026-11-26.
 2. Run files keep the `<gate>-` prefix so change_report's glob stays; uniqueness is the ULID, so the collision loop goes.
-3. Record conflicts to delete on develop (listed, not edited here): REQ-047 ', an `--answers-file` run included,' (fixture runs now use the wheel; J-5-13); ADR-006 'scripts/result.py: frozen Ok/Err dataclasses ...' and 'share result.py' and ADR-015 '(result.py, plan_anchor_paths.py)' name the deleted module (J-5-10; the design stands: Result types come from the generated decidr_client.py). With ANC-015: REQ-047's sentence on when `decidr_client.py` may import `sc_agent` (a cross-tool client rule); REQ-085's `cache=False` mechanics restate the wheel's cache rule.
+3. Record conflicts to delete on develop (listed, not edited here): REQ-047 ', an `--answers-file` run included,' (fixture runs now use the wheel; J-5-13); ADR-006 'scripts/result.py: frozen Ok/Err dataclasses ...' and 'share result.py' and ADR-015 'only the two scripts whose templates have no template syntax (`result.py`, `plan_anchor_paths.py`)' -> delete 'two' and the parenthetical (J-5-10; the design stands: Result types come from the generated decidr_client.py); ADR-015 'imports it lazily only for live calls (ADR-006)' -> delete 'only for live calls (ADR-006)' (J-5-13). With ANC-015: REQ-047's sentence on when `decidr_client.py` may import `sc_agent` (a cross-tool client rule); REQ-085's `cache=False` mechanics restate the wheel's cache rule.
 
 ## Lead decisions (2026-11-26, rule 0)
 
@@ -172,4 +173,4 @@ S/result.py.j2 (all); JJ:107 `hashlib` stays (canonical_digest, intent sha); JJ:
 ## Budget
 
 Rust: 0 (phase total unchanged by j-5). Python production (S/*.j2 minus the generated decidr_client.py.j2), rough: deletions about -520 (result.py.j2 110, jev_judge about 410 per Deletions), restructure additions about +120 (with_run, dry_run_sink, run_recorded_batch body, run_answers, run/2 entries, signature edits), restructure net about -400 (<= 0). New capability about +3 (`add --dry-run`). decidr_client.py.j2 is regenerated (653 -> about 700, j-4's count, not plan-anchor's).
-Plan-qa-4 findings applied: J-5-01, 06, 07, 08, 09, 10, 12, 13. J-5-05 closed: owner ruling (REQ-PA-0010 skip statement deleted, #159) - dry runs write no run file; the skip is back-compat (ANC-002/003) and is deleted with its test. The beads (agt-j-5, agt-j-5.group-dev) are the plan; this file mirrors them.
+Lint (dev/sanity/QA): `python -m unittest discover -s tests/sc-plan-anchor && python scripts/check_version_sync.py`. Plan-qa-4 findings applied: J-5-01, 06-10, 12, 13 (r2: install.py, ADR-015 lazily clause), J-6-09 j-5 part. J-5-05 closed: owner ruling (REQ-PA-0010 skip statement deleted, #159). The beads (agt-j-5, agt-j-5.group-dev) are the plan; this file mirrors them.
