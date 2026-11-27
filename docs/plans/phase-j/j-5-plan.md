@@ -87,7 +87,6 @@ def write_run(run: dict, path: pathlib.Path) -> str
 def run_answers(run: dict) -> Result[dict[str, dict[str, Any]], ClientError]
     # report's read of a run/2 file's answers: decidr_client.answers_for([{"request_id": f"{anchor_id}#{i}", "session_id": s,
     #   "project": run["project"]} for each result's session_ids]); fixture runs: the file's own `fixture_answers`
-def collect_runs(paths: list) -> list      # unchanged signature, JJ:2921; keeps only run/2 files that are not dry runs (REQ-010)
 def canonical_digest(value: Any) -> str      # sha256 of json.dumps(value, sort_keys=True, separators=(",", ":")); plan-anchor's tune-contract digest
 ```
 
@@ -123,8 +122,8 @@ Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`),
 | `redact_secrets` | `BEARER_RE` JJ:180, `redact_sensitive` JJ:208-222 (uses at :226, :297, :3284, :3373, :3391, :3574) | both |
 | CLI `--model/--timeout/--max-workers` default None | JJ:4304-4306, :4342, :4348, :4383-4384, :4449-4450, :4466-4467, :4551-4553 | `DEFAULT_MODEL` JJ:123, `getattr(..., DEFAULT_MODEL)` JJ:1833, timeout defaults JJ:1834, :1920 |
 | `batch_log_path` by run_id | JJ:3310-3316 | `stamp()` JJ:237-238 |
-| `collect_runs` | JJ:2921-2934 (coverage, diff) reading any run file | dry-run and non-run/2 files are skipped by schema and `dry_run`, never parsed further (REQ-010, ANC-002) |
-| change_report run/2 | S/change_report.py.j2:405 glob reads any `{gate}-*.json` | non-run/2 files are skipped by schema, never parsed further |
+| `collect_runs` reads run/2 | JJ:2921-2934 | the `dry_run` skip JJ:2931 and its test (test_jev_judge.py:1483 'dry runs never count'); dry runs write no run file (REQ-083), skipping old ones is back-compat (ANC-002, ANC-003; owner ruling, REQ-PA-0010 skip statement deleted on develop #159) |
+| change_report run/2 | S/change_report.py.j2:405 glob reads any `{gate}-*.json` | the `dry_run` skip at :410 and its test assertion (test_change_report.py:274); no skip of non-run/2 files (no back-compat until SQLite 1.0, ANC-002) |
 
 New capability (counted separately): `add --dry-run` (REQ-083 names every `--dry-run`; `add --rubric` sends today with no dry run).
 
@@ -166,11 +165,11 @@ S/result.py.j2 (all); JJ:107 `hashlib` stays (canonical_digest, intent sha); JJ:
 - Greps (empty): the Goal grep; `grep -rn 'jev-batch-result/1\|plan-anchoring/run/1' plugins` (empty), and `grep -rln 'jev-batch-result/1' tests` lists only T/test_tournament.py (test_v1_stream_is_refused); `grep -rn 'general_log\|seams=' plugins` (tests only, ANC-016).
 - T/test_run_scoped.py::RunScopedCommandTests (sc_agent.testing.fake_open_run; deterministic, no sleep/threads/key/HOME): `test_each_live_command_opens_one_run` (8 commands), `test_intentional_resends_pass_cache_false_per_call` (judge, check-fixtures, rubric, add --rubric; one Run each), `test_model_timeout_workers_pass_through_unchanged` (haiku, luna, jev, None), `test_dry_run_imports_no_wheel_and_sends_nothing` (`sys.modules["sc_agent"] = None`), `test_fixture_run_opens_a_run_sends_nothing_and_writes_like_live`, `test_failed_send_session_id_recorded`, `test_dry_run_redacts_bearer_without_wheel`, `test_dry_run_writes_nothing_under_anchor_runs`, `test_dry_run_out_inside_anchor_runs_is_refused`, `test_open_run_err_sends_nothing`, `test_auth_error_aborts_remaining_jobs`, `test_run_file_named_by_run_id_with_session_ids_and_no_answers`, `test_batch_lines_equal_wheel_schema_keys` (schema via importlib.resources), `test_batch_verdict_fills_three_fields`, `test_redaction_uses_client_redact_secrets`.
 - T/test_tournament.py: `test_rescore_reads_answers_by_session_id` (`--results`, fake session_rows), `test_fixture_tournament_scores_in_memory_answers`, `test_history_evidence_names_session_ids`, `test_v1_stream_is_refused`.
-- T/test_change_report.py: `test_report_reads_run2_answers_from_session_rows`, `test_non_run2_files_skipped`.
+- T/test_change_report.py: `test_report_reads_run2_answers_from_session_rows`.
 - Whole suite: `python3 -m pytest tests/sc-plan-anchor -q` green; tests/integration against the j-4 prerelease wheel: haiku and luna with `TYPESAFE_API_KEY` unset.
-- T/test_jev_judge.py `test_coverage_skips_dry_run_and_non_run2_files` (REQ-010).
+- coverage skips nothing because dry runs write no run file
 
 ## Budget
 
 Rust: 0 (phase total unchanged by j-5). Python production (S/*.j2 minus the generated decidr_client.py.j2), rough: deletions about -520 (result.py.j2 110, jev_judge about 410 per Deletions), restructure additions about +120 (with_run, dry_run_sink, run_recorded_batch body, run_answers, run/2 entries, signature edits), restructure net about -400 (<= 0). New capability about +3 (`add --dry-run`). decidr_client.py.j2 is regenerated (653 -> about 700, j-4's count, not plan-anchor's).
-Plan-qa-4 findings applied: J-5-01, 05, 06, 07, 08, 09, 10, 12, 13. The beads (agt-j-5, agt-j-5.group-dev) are the plan; this file mirrors them.
+Plan-qa-4 findings applied: J-5-01, 06, 07, 08, 09, 10, 12, 13. J-5-05 closed: owner ruling (REQ-PA-0010 skip statement deleted, #159) - dry runs write no run file; the skip is back-compat (ANC-002/003) and is deleted with its test. The beads (agt-j-5, agt-j-5.group-dev) are the plan; this file mirrors them.
