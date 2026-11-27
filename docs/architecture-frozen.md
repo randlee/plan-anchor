@@ -51,8 +51,8 @@ Decision:
   byte-identical to a fresh install of that tracker, lock and settings
   included, in both directions. `install.py` is the only code that knows
   both trackers: it carries its own selection and settings code and imports
-  only the two scripts whose templates have no template syntax
-  (`result.py`, `plan_anchor_paths.py`).
+  only the script whose template has no template syntax
+  (`plan_anchor_paths.py`).
 - **Plugin.** The marketplace plugin's only skill is `plan-anchor-installer`;
   it registers no agents (see Single-tracker installs for why). The skill runs `uv run
   "${CLAUDE_PLUGIN_ROOT}/install.py"`. The installer reads its package files
@@ -77,8 +77,7 @@ Decision:
   metadata declares PyYAML, sc-compose and Python 3.11 or newer; dependency
   bounds live in `install.py`. It does not install the live-call dependency:
   callers install the `sc-decidr` wheel separately, as documented in
-  [README.md](../README.md). The generated `decidr_client.py` records its wheel
-  version and imports it lazily only for live calls (ADR-006).
+  [README.md](../README.md).
 - **Destination.** `--dest` is any folder: a repository, a folder inside one,
   or a parent folder of many repositories (a non-repository with no `.beads/`
   needs `--tracker` or a settings file, else `TRACKER.REQUIRED`). Global
