@@ -4,7 +4,7 @@ Base: plan-anchor `origin/plan/phase-j` @ cee4dc1. `JJ:N` = `plugins/sc-plan-anc
 
 ## Goal
 
-Rand (ANC-015, ANC-016, rule 0): "judge-jev and plan-anchor simply supply tool name and follow the rules established for all decidr based tools"; "derivative tools should defer to the default tool rules and not use injection path for production code (test only)". Measurable: plan-anchor sends only through the rendered j-4 client on one `open_run(...)` per live command (plus one `cache=False` Run where a resend is required, see Rule-7 item 1); `batch`, `bead-batch`, `tournament` write `jev-batch-result/2` lines only; run files hold `session_ids`, not answers (REQ-013, REQ-086); and these greps over `S/*.j2` minus `decidr_client.py.j2` are empty: `from result |redact_sensitive|BEARER_RE|DEFAULT_MODEL|remote_preflight|total_attempts|fixture_attempt|questions_digest|BATCH_MAX_WORKERS|retry_count|model_answered|raw_response|jev-batch-result/1|stamp\(|general_log`.
+Rand (ANC-015, ANC-016, rule 0): "judge-jev and plan-anchor simply supply tool name and follow the rules established for all decidr based tools"; "derivative tools should defer to the default tool rules and not use injection path for production code (test only)". Measurable: plan-anchor sends only through the rendered j-4 client on one `open_run(...)` per live command, with required resends passing `cache=False` on the call (upstream dependency: j-3/j-4 add per-call `cache=`); `batch`, `bead-batch`, `tournament` write `jev-batch-result/2` lines only; run files hold `session_ids`, not answers (REQ-013, REQ-086); and these greps over `S/*.j2` minus `decidr_client.py.j2` are empty: `from result |redact_sensitive|BEARER_RE|DEFAULT_MODEL|remote_preflight|total_attempts|fixture_attempt|questions_digest|BATCH_MAX_WORKERS|retry_count|model_answered|raw_response|jev-batch-result/1|stamp\(|general_log`.
 
 ## Layout
 
@@ -34,17 +34,15 @@ Rand (ANC-015, ANC-016, rule 0): "judge-jev and plan-anchor simply supply tool n
 from decidr_client import Err, Ok, Result, ToolError, err, run_main, utf8_stdio, ClientError, Reply, from_tool_error, typed_answer, NoulAnswer, ChoiceAnswer, ScoreAnswer, BoxAnswer
 
 def with_run(args: argparse.Namespace,
-             command: Callable[[Any, Any], Result[dict, ClientError]], *,
-             resend: bool = False) -> Result[dict, ClientError]
-    # dry run or --answers-file: command(None, None); the wheel is never imported (REQ-016, REQ-047).
+             command: Callable[[Any], Result[dict, ClientError]]) -> Result[dict, ClientError]
+    # dry run or --answers-file: command(None); the wheel is never imported (REQ-016, REQ-047).
     # live: with decidr_client.open_run(model=args.model, project=args.project, timeout_secs=args.timeout,
-    #                                   workers=args.max_workers, repeat=args.repeat) as run  (Err -> returned, nothing sent)
-    #       and, when resend, a second open_run(..., cache=False) as fresh: command(run, fresh if resend else None)
+    #                                   workers=args.max_workers, repeat=args.repeat) as run: command(run)  (Err -> returned, nothing sent)
 def dry_run_sink(args: argparse.Namespace, run_dir: pathlib.Path) -> Result[Callable[[Mapping[str, Any]], None], ClientError]
     # writes each would-send request, redact_secrets'd, as one JSON line to --out or stdout;
     # --out inside run_dir: Err VALIDATION.INPUT (REQ-083)
-def call_jev(run: Any, body: Mapping[str, Any]) -> Result[Reply, ClientError]
-    # decidr_client.call_result(run, body, abort_on=frozenset({"auth"}), consent_what="The anchor statement and the item text")
+def call_jev(run: Any, body: Mapping[str, Any], *, cache: bool | None = None) -> Result[Reply, ClientError]
+    # decidr_client.call_result(run, body, cache=cache, abort_on=frozenset({"auth"}), consent_what="The anchor statement and the item text")
 def batch_verdict(job: decidr_client.BatchJob, settings: decidr_client.BatchSettings,
                   answers: Mapping[str, Any] | None) -> tuple[str | None, float | None, str | None]
     # (verdict, round(min_confidence, 3), leaning) from decide(answers, job.roles, settings.threshold, job.kind)
@@ -63,11 +61,11 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
 def write_run(run: dict, path: pathlib.Path) -> str
 def run_answers(run: dict) -> Result[dict[str, dict[str, Any]], ClientError]
     # report's read of a run/2 file's answers: decidr_client.answers_for([{"request_id": f"{anchor_id}#{i}", "session_id": s,
-    #   "project": run["project"]} for each result's session_ids]); fixture runs: the file's own fixture answers (Rule-7 item 2)
+    #   "project": run["project"]} for each result's session_ids]); fixture runs: the file's own `fixture_answers`
 def canonical_digest(value: Any) -> str      # sha256 of json.dumps(value, sort_keys=True, separators=(",", ":")); plan-anchor's tune-contract digest
 ```
 
-Signature changes (no new names): `judge_context(args, rec, *, triage=False)` (drops `remote`), `ask_jev_once(args, run, body, questions, fixture, fixture_keys) -> Result[Reply, ClientError]`, `_first_answer(ctx, a, qs, body, fixture_key) -> Result[Reply, ClientError]`, `ask_triage(ctx, a, qs, deferred, item, fixture_key, entry) -> Result[None, ClientError]`, `judge_entries(ctx, prepared, item, fixture_key) -> Result[list, ClientError]`, `_rubric_judgement(args, run, fresh, body, qs, fixture, cid, threshold, lint_errors) -> Result[tuple[list[Reply], dict], ClientError]`, `batch_log_path(run_dir: str, run_name: str, run_id: str) -> Result[pathlib.Path, ClientError]`. `ctx["run"]`, `ctx["fresh"]` carry the Runs inside the judge family. `cmd_judge`, `cmd_check_fixtures`, `cmd_dedupe`, `cmd_rubric`, `cmd_add`, `cmd_batch`, `cmd_bead_batch`, `cmd_tournament` keep `(args) -> Result[dict, ClientError]` and call `with_run`.
+Signature changes (no new names): `judge_context(args, rec, *, triage=False)` (drops `remote`), `ask_jev_once(args, run, body, questions, fixture, fixture_keys) -> Result[Reply, ClientError]`, `_first_answer(ctx, a, qs, body, fixture_key) -> Result[Reply, ClientError]`, `ask_triage(ctx, a, qs, deferred, item, fixture_key, entry) -> Result[None, ClientError]`, `judge_entries(ctx, prepared, item, fixture_key) -> Result[list, ClientError]`, `_rubric_judgement(args, run, body, qs, fixture, cid, threshold, lint_errors) -> Result[tuple[list[Reply], dict], ClientError]`, `batch_log_path(run_dir: str, run_name: str, run_id: str) -> Result[pathlib.Path, ClientError]`. `ctx["run"]` carries the Run inside the judge family. `cmd_judge`, `cmd_check_fixtures`, `cmd_dedupe`, `cmd_rubric`, `cmd_add`, `cmd_batch`, `cmd_bead_batch`, `cmd_tournament` keep `(args) -> Result[dict, ClientError]` and call `with_run`.
 
 Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`), `INPUT.MALFORMED` (a non-/2 result line, a non-run/2 run file), and the client's `AUTH.CREDENTIALS`, `POLICY.REMOTE_JUDGE_DISABLED`, `DEPENDENCY.SC_DECIDR`, `CANCELED` passed through.
 
@@ -91,8 +89,8 @@ Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`),
 | `cmd_tournament` | JJ:4195-4196 worker cap; fixture answers via `answers_out`, `--results` answers via `decidr_client.answers_for` | `BATCH_MAX_WORKERS` use |
 | `assemble_run` run/2 | JJ:2119-2152 | `model_answered`, `model_requested`, `requests`, `totals`; `run_id` from `stamp()` |
 | result entries | JJ:2038, :2081-2082, :2089, :2094, :2725-2729, :2453/:2458 | `answers`, `answers_second`, `answers_third`, `usage`, `attempts`, `triage_attempts`; each entry gains `session_ids` |
-| near-threshold resend on `ctx["fresh"]` | JJ:2061-2079 | the two `total_attempts` merges |
-| rubric confirmations 2-3 on `fresh` | `_rubric_ask` JJ:2568-2575, `_rubric_judgement` JJ:2578-2605 | `attempts` accounting |
+| near-threshold resend `call_jev(..., cache=False)` | JJ:2061-2079 | the two `total_attempts` merges |
+| rubric confirmations 2-3 `cache=False` | `_rubric_ask` JJ:2568-2575, `_rubric_judgement` JJ:2578-2605 | `attempts` accounting |
 | `write_run(run, path)` | JJ:2155-2166 | collision loop |
 | `run_answers` | `triage_lines` JJ:2838 reading `r["answers"]` | — |
 | `canonical_digest` local | JJ:3110-3112 delegating to `decidr_client.questions_digest` (deleted in j-4) | — |
@@ -101,7 +99,9 @@ Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`),
 | `batch_log_path` by run_id | JJ:3310-3316 | `stamp()` JJ:237-238 |
 | change_report run/2 | S/change_report.py.j2:405 glob reads any `{gate}-*.json` | non-run/2 files are skipped by schema, never parsed further |
 
-New capability (counted separately): `add --dry-run` (REQ-083 names every `--dry-run`; `add --rubric` sends today with no dry run); the `cache=False` second Run (Rule-7 item 1).
+New capability (counted separately): `add --dry-run` (REQ-083 names every `--dry-run`; `add --rubric` sends today with no dry run).
+
+Upstream dependency: j-3/j-4 add per-call `cache=` (`Run.send`/`send_batch`, `call_result`; about +4 Rust, planned there, not here). Lead decision 2026-11-26 (rule 0).
 
 ## External contracts (examples)
 
@@ -125,14 +125,14 @@ S/result.py.j2 (all); JJ:107 `hashlib` stays (canonical_digest, intent sha); JJ:
 
 - Build: `sc-compose render` of `consumer.py.j2` into S/decidr_client.py.j2 matches the j-4 prerelease byte for byte; `python3 scripts/check_version_sync.py`; installer renders all templates.
 - Greps (empty): the Goal grep; `grep -rn 'jev-batch-result/1\|plan-anchoring/run/1' plugins tests`; `grep -rn 'general_log\|seams=' plugins` (tests only, ANC-016).
-- T/test_run_scoped.py::RunScopedCommandTests (sc_agent.testing.fake_open_run; deterministic, no sleep/threads/key/HOME): `test_each_live_command_opens_one_run` (8 commands), `test_confirming_commands_open_one_fresh_run_with_cache_false` (judge, check-fixtures, rubric, add --rubric), `test_model_timeout_workers_pass_through_unchanged` (haiku, luna, jev, None), `test_dry_run_and_fixture_import_no_wheel_and_send_nothing` (`sys.modules["sc_agent"] = None`), `test_dry_run_writes_nothing_under_anchor_runs`, `test_dry_run_out_inside_anchor_runs_is_refused`, `test_open_run_err_sends_nothing`, `test_auth_error_aborts_remaining_jobs`, `test_run_file_named_by_run_id_with_session_ids_and_no_answers`, `test_batch_lines_equal_wheel_schema_keys` (schema via importlib.resources), `test_batch_verdict_fills_three_fields`, `test_redaction_uses_client_redact_secrets`.
+- T/test_run_scoped.py::RunScopedCommandTests (sc_agent.testing.fake_open_run; deterministic, no sleep/threads/key/HOME): `test_each_live_command_opens_one_run` (8 commands), `test_intentional_resends_pass_cache_false_per_call` (judge, check-fixtures, rubric, add --rubric; one Run each), `test_model_timeout_workers_pass_through_unchanged` (haiku, luna, jev, None), `test_dry_run_and_fixture_import_no_wheel_and_send_nothing` (`sys.modules["sc_agent"] = None`), `test_dry_run_writes_nothing_under_anchor_runs`, `test_dry_run_out_inside_anchor_runs_is_refused`, `test_open_run_err_sends_nothing`, `test_auth_error_aborts_remaining_jobs`, `test_run_file_named_by_run_id_with_session_ids_and_no_answers`, `test_batch_lines_equal_wheel_schema_keys` (schema via importlib.resources), `test_batch_verdict_fills_three_fields`, `test_redaction_uses_client_redact_secrets`.
 - T/test_tournament.py: `test_rescore_reads_answers_by_session_id` (`--results`, fake session_rows), `test_fixture_tournament_scores_in_memory_answers`, `test_history_evidence_names_session_ids`, `test_v1_stream_is_refused`.
 - T/test_change_report.py: `test_report_reads_run2_answers_from_session_rows`, `test_non_run2_files_skipped`.
 - Whole suite: `python3 -m pytest tests/sc-plan-anchor -q` green; tests/integration against the j-4 prerelease wheel: haiku and luna with `TYPESAFE_API_KEY` unset.
 
 ## Budget
 
-Rust: 0 (phase total unchanged by j-5). Python production (S/*.j2 minus the generated decidr_client.py.j2), rough: deletions about -520 (result.py.j2 110, jev_judge about 410 per Deletions), restructure additions about +120 (with_run, dry_run_sink, run_recorded_batch body, run_answers, run/2 entries, signature edits), restructure net about -400 (<= 0). New capability about +8 (`add --dry-run`, fresh Run). decidr_client.py.j2 is regenerated (653 -> about 700, j-4's count, not plan-anchor's).
+Rust: 0 (phase total unchanged by j-5). Python production (S/*.j2 minus the generated decidr_client.py.j2), rough: deletions about -520 (result.py.j2 110, jev_judge about 410 per Deletions), restructure additions about +120 (with_run, dry_run_sink, run_recorded_batch body, run_answers, run/2 entries, signature edits), restructure net about -400 (<= 0). New capability about +3 (`add --dry-run`). decidr_client.py.j2 is regenerated (653 -> about 700, j-4's count, not plan-anchor's).
 
 ## Plan decisions (no question to Rand)
 
@@ -140,7 +140,7 @@ Rust: 0 (phase total unchanged by j-5). Python production (S/*.j2 minus the gene
 2. Run files keep the `<gate>-` prefix so change_report's glob stays; uniqueness is the ULID, so the collision loop goes.
 3. Record conflicts with ANC-015 to delete on develop (listed, not edited here): REQ-047's sentence on when `decidr_client.py` may import `sc_agent` (a cross-tool client rule); REQ-085's `cache=False` mechanics restate the wheel's cache rule.
 
-## Rule-7 items
+## Lead decisions (2026-11-26, rule 0)
 
-1. Per-send cache bypass. Check: REQ-076 and REQ-085 require the confirming/rubric resends with `cache=False`; j-3 plan `RunArgs.cache: Option<bool>` is Run-level only (no per-send override), though j1-bead NOTES (Lead 2026-11-24) asked for a per-call `cache=` kwarg. Proposed: open a second `cache=False` Run for those commands (0 Rust, this plan); alternative: `cache=` on `Run.send`/`send_batch` and `call_result` (+~4 Rust in j-3/j-4).
-2. Fixture run answers. Check: REQ-013 "A run file shall not contain Jev's answers"; a fixture run has no session rows, so `report` on it could show no triage answers. Proposed: fixture run files keep the fixture answers (they are not Jev's), under `fixture_answers`.
+1. Per-send cache: resends pass `cache=False` on the call for judge, check-fixtures, rubric, add --rubric; the per-call `cache=` is j-3/j-4's work (upstream dependency). No second Run.
+2. Fixture run files carry `fixture_answers` (not Jev's answers; REQ-013 untouched).
