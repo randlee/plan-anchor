@@ -1,7 +1,7 @@
 # sc-plan-anchor architecture decisions
 
 **Status:** Active  
-**Version:** 1.0.0  
+**Version:** 0.14.0  
 **Created:** 2026-10-17  
 **Last Updated:** 2026-11-26  
 **Owner:** Rand Lee  
@@ -41,6 +41,10 @@ The main session owns capture, approval and triage. Jev answers independent type
 anchor and one item. Agents run the script once and return its result. See
 §1 of the call-graph document.
 
+### Rationale
+
+Facts stated during planning are lost as context compresses, and language models cannot count, gate reliably, or keep a request byte-identical. Putting the exact work in the script makes gating and coverage reproducible and unit-tested offline, while judgment stays with the session and Jev, which never sees more than one anchor and one item.
+
 ### Consequences
 
 Gating and coverage are reproducible and unit-tested offline.
@@ -67,6 +71,10 @@ The request is `state.anchor {id, statement, scope}`,
 `state.item {id, title, text}` and the gate's question set. Intent and source
 metadata are not sent, so each sprint must stand alone as a fresh developer
 would read it. Prose is never cut.
+
+### Rationale
+
+Jev's accuracy falls as unrelated text grows: a planted contradiction deep in a long request scored 0.46 against 0.79 near the top, so the request carries only the anchor, the item and the questions. Prose is never cut because cutting it to fit removed evidence Jev relied on. Gaps in cross-sprint context then surface as not_addressed or underspecified verdicts and are fixed in the sprint text itself.
 
 ### Consequences
 
@@ -99,6 +107,10 @@ threshold is asked again and must agree, else the cell is `underspecified`
 (`unstable`); `--no-confirm` turns this off. The re-ask is sent with
 `cache=False`, so it is a new Jev call and not a result-cache hit (ADR-PA-0017).
 Full order in §4 of the data-model document.
+
+### Rationale
+
+Answers to the questions in one request are independent, so relevance cannot gate the others inside Jev and has to be applied afterwards. A wavering relevance answer is not to be read as "does not apply", so only a confident relevance no counts as not applicable and weaker answers fall through.
 
 ### Consequences
 
@@ -138,6 +150,10 @@ or a `.beads/` that does not fit it (`TRACKER.MISMATCH` in a `br` install,
 `--tracker`. `resolve` prints the tracker in JSON; the calling agent sets
 `$ANCHOR_TRACKER` from it.
 
+### Rationale
+
+Consumers use either br or bd, which do not share a storage format, and bd needs a Dolt backend the skill cannot provision, so the tracker is chosen once per repository rather than guessed per call or swapped on failure. Selecting it once keeps anchor storage and both gates tracker-neutral.
+
 ### Consequences
 
 Anchor storage and both gates are tracker-neutral. REQ-PA-0021 to
@@ -166,6 +182,10 @@ path, version, model and hash once, and every invocation and result is one
 fenced JSON object; agent inputs carry validated identifiers, never command
 strings. Which `jev_judge.py` an agent may run is ADR-015's trust rule (the
 nearest per-folder install). See §5 of the call-graph document.
+
+### Rationale
+
+Claude Code, Codex and Cursor differ in launch syntax and model names, so each harness gets its own agents and registry. Letting each agent search install paths and validate itself duplicated trust logic, so path, version, model and hash are resolved once by a single runner instead of by the agents.
 
 ### Consequences
 
@@ -200,6 +220,10 @@ failures reach it only through a checked-in `sc-compose` template, and it
 returns exactly `plan_violation` or `question_defect`. No desired verdict is
 an input; `anchor_tuning_contract.py` rejects one.
 
+### Rationale
+
+A planner that tunes its own questions tunes them toward a pass, so tuning is handed to a separate subagent whose only authority is the approved INTENT and anchors. For the same reason, a planner's claim that the plan is fine and the questions should be fixed is treated as untrusted context.
+
 ### Consequences
 
 Leaf plan review waits for the sealed digest. A planner's "the
@@ -233,6 +257,10 @@ or normalizes plans. Anchor and question records live in the tracker
 `anchor_tracker.py` resolves (ADR-PA-0004), which the installer selects; installed
 text names only that tracker's commands.
 
+### Rationale
+
+Real plans are not written in the fixed shape the earlier plan parser accepted; on atm-core's phase-bi both discovery commands refused the plan. The calling agent wrote the plan and knows its medium, so having it supply the text lets any plan format work and keeps the plan format and the anchor tracker independent choices.
+
 ### Consequences
 
 Any plan format works, and the plan's format and the anchor
@@ -263,6 +291,10 @@ Plan-anchor's records hold only what it derives (verdicts, leaning,
 rankings) and its own ids (`anchor_id`, `candidate_id`, repeat), and reference
 the `session_id` of each query they used. They never copy the composed request body, Jev's
 answers, `model_answered` or attempt counts.
+
+### Rationale
+
+Every Jev query from every tool already goes through sc-agent send or send_batch and gets one session-log row keyed by its session_id, per the owner ruling of 2026-11-24. Run files, result lines and the tournament log were copying answers, model_answered and attempt counts that the row already holds, so plan-anchor keeps only what it derives and references the row instead.
 
 ### Consequences
 
