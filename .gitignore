@@ -234,3 +234,4 @@ site/examples/*/report.html
 site/examples/*/report.json
 site/examples/*/report/
 site/examples/*/trace.json
+site/examples/*/record-trace.md

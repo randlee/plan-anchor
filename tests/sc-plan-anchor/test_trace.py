@@ -24,6 +24,10 @@ OVERLAP_NO = {"type": "choice", "choice": "no", "confidence": 1.0, "probabilitie
 REAL = json.loads((Path(__file__).parent / "fixtures" / "trace_overlap.json").read_text(encoding="utf-8"))
 
 
+HISTORY = {"record": "ADR-002", "statement": "Runtime crates must be written from scratch.", "commit": "abc1234",
+           "date": "2026-01-02", "summary": "Add ADR-002 before the copy anchor was stated."}
+
+
 def ans(yes: float) -> dict:
     rest = round((1 - yes) / 2, 6)
     return {"type": "choice", "choice": "yes" if yes >= 0.5 else "no", "confidence": max(yes, 1 - yes),
@@ -211,19 +215,29 @@ class TraceTests(unittest.TestCase):
     def test_annotations_merge_only_into_yellow_and_red(self):
         notes = write(self.tmp, "notes.json", [
             {"record": "ADR-002", "anchor": "ANC-001", "clauses": ["written from scratch"], "what": "Forbids the copy.",
-             "remedy": "Copy instead.", "jev_disputed": False},
+             "remedy": "Copy instead.", "jev_disputed": False, "provenance": [HISTORY],
+             "stale": {"record": "ADR-002", "statement": "Runtime crates must be written from scratch.", "reason": "Older than ANC-001."}},
             {"record": "REQ-001", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": True},
-            {"record": "REQ-404", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": False}])
+            {"record": "REQ-404", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": False},
+            {"duplicate": "REQ-001/ADR-002/0", "what": "x", "remedy": "y", "no_provenance": "not a git checkout"}])
         code, out = self.trace({"ADR-002/ANC-001": cell(conflicts=0.9), "*": cell(serves=0.9)}, "--annotations", notes, "--no-overlap")
         self.assertEqual(code, 0, out)
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
         by = {c["record"]: c for c in trace["cells"]}
         note = by["ADR-002"]["annotation"]
-        self.assertEqual(note["provenance"], "reviewer-agent")
-        self.assertEqual(note["provenance_label"], "written by a reviewer agent, not Jev")
+        self.assertEqual(note["author"], "anchor-cleanup-proposer")
+        self.assertEqual(note["author_label"], "written by the anchor-cleanup-proposer agent, not Jev")
         self.assertEqual(note["remedy"], "Copy instead.")
+        self.assertEqual(note["provenance"], [HISTORY])
+        self.assertEqual(note["stale"]["reason"], "Older than ANC-001.")
         self.assertNotIn("annotation", by["REQ-001"])
-        self.assertEqual(len(out["data"]["warnings"]), 2)
+        self.assertEqual(len(out["data"]["warnings"]), 3)
+
+    def test_malformed_annotations_are_refused(self):
+        for bad in ([{"record": "ADR-002", "anchor": "ANC-001", "provenance": [{"record": "ADR-002"}]}],
+                    [{"record": "ADR-002", "anchor": "ANC-001", "duplicate": "A/B/0"}], [{"duplicate": 3}]):
+            code, out = self.trace({"*": cell()}, "--annotations", write(self.tmp, "bad.json", bad), "--no-overlap")
+            self.assertEqual((code, out["error"]["code"]), (2, "INPUT.MALFORMED"), bad)
 
     def test_no_locked_anchor_is_a_typed_error(self):
         self.anchors = write(self.tmp, "anchors.json", record(anchor("ANC-001", status="proposed")))
@@ -300,8 +314,8 @@ class TraceTests(unittest.TestCase):
         self.assertIn("Forbids the copy.", red)
         self.assertIn("Copy instead.", red)
         self.assertIn("Reviewer disputes Jev: Forbids the copy.", red)
-        self.assertIn("reviewer text, not Jev", red)
-        self.assertNotIn("reviewer text, not Jev", green)
+        self.assertIn("anchor-cleanup-proposer text, not Jev", red)
+        self.assertNotIn("anchor-cleanup-proposer text, not Jev", green)
         for heading in ("What conflicts", "Proposed remedy", "Anchor", "Record statements"):
             self.assertIn(f"<h3>{heading}</h3>", red)
         self.assertLess(red.index("What conflicts"), red.index("Proposed remedy"))
@@ -453,8 +467,13 @@ class TraceOverlapTests(unittest.TestCase):
         self.assertIn('class="tab active" role="tab" data-tab="tab-grid">Anchors × Records</button>', page)
         self.assertIn('id="tab-dup" hidden', page)
         self.assertEqual(env["data"]["duplicates"], 7)
-        self.assertEqual(page.count('<tr class="hdr" data-panel="dup-'), 7)
-        self.assertIn('<td>ADR-SAG-0021 restates REQ-SAG-0003</td><td>When `&lt;CLI&gt;_LOG_ROOT` is set and non-empty', page)
+        dups = page[page.index("<h2>Duplicated statements</h2>"):page.index("<h3>Possible duplicates</h3>")]
+        possible = page[page.index("<h3>Possible duplicates</h3>"):page.index("<h2>Fully restated records")]
+        self.assertEqual(dups.count('<tr class="hdr" data-panel="dup-'), 7)
+        self.assertEqual(possible.count('<tr class="hdr" data-panel="dup-'), 2, "possible duplicates are listed, with no badge")
+        self.assertNotIn("correct: Correcting duplicates", possible)
+        self.assertRegex(dups, r'<td>ADR-SAG-0021 restates REQ-SAG-0003</td><td>[1-9]\d*</td><td>When `&lt;CLI&gt;_LOG_ROOT` is set and non-empty')
+        self.assertNotIn("<td>0</td>", dups, "statement numbers on the page start at 1")
         self.assertIn("<td>0.98</td>", page)
         self.assertIn("7 duplicate statements must be corrected", page)
         self.assertEqual(page.count('#correcting-duplicates">correct: Correcting duplicates</a>'), 7)
@@ -498,7 +517,7 @@ def proposal(n_kind, records, changes=(), **extra):
 PROPOSALS = {"schema": "plan-anchoring/record-cleanup-proposals/1", "level": "conservative",
              "not_proposed": [{"slice": "duplicates of NFR-003", "reason": "proposer timed out"}], "proposals": [
     proposal("consolidate", ["REQ-001", "ADR-002"], [{"record": "REQ-001", "before": "It shall log every copy."}],
-             title="Keep the logging rule in ADR-002", source={"ref": "ADR-002"}),
+             title="Keep the logging rule in ADR-002", source={"ref": "ADR-002"}, duplicates=["ADR-002/REQ-001/1"]),
     proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001"], resolution="cut",
              title="Delete ADR-002"),
     proposal("cut_excess", ["REQ-001"], [{"record": "REQ-001", "before": "The tool MUST copy the legacy crates.",
@@ -534,8 +553,12 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertEqual(rc, 0, env)
         self.assertEqual(env["data"]["proposals"], 4)
         self.assertEqual(env["data"]["totals"], {"records_before": 3, "records_after": 2, "statements_before": 3, "statements_after": 1,
-                                                 "duplicates": 1, "duplicates_cleared": 1, "conflicts": 1, "conflicts_resolved": 1})
-        self.assertEqual(env["data"]["warnings"], [])
+                                                 "duplicates": 1, "duplicates_cleared": 1, "conflicts": 1, "conflicts_resolved": 1,
+                                                 "exceeds": 0, "exceeds_cleared": 0})
+        # Proposal 1 keeps the rule in ADR-002 and proposal 2 deletes ADR-002: the two disagree until harmonized.
+        clash = "proposals 1 and 2 disagree: 2 deletes ADR-002, which 1 cites as its source of truth"
+        self.assertEqual(env["data"]["warnings"], [clash])
+        self.assertEqual(env["data"]["uncovered"], [])
         page = Path(env["data"]["html"]).read_text(encoding="utf-8")
         self.assertIn('data-tab="tab-prop">Proposed fixes 4</button>', page)
         tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
@@ -586,7 +609,7 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertNotIn("Reply e.g.", tab)
 
     def test_quotes_the_trace_does_not_hold_are_warned_and_not_counted(self):
-        doc = {"schema": PROPOSALS["schema"], "proposals": [
+        doc = {"schema": PROPOSALS["schema"], "level": "standard", "proposals": [
             proposal("delete", ["REQ-001"], [{"record": "REQ-001", "before": "A statement REQ-001 does not have."}],
                      duplicates=["X/Y/0"])]}
         rc, env = self.report("--proposals", write(self.tmp, "p.json", doc))
@@ -651,11 +674,12 @@ class ProposedFixesTests(unittest.TestCase):
     def test_red_and_yellow_cells_without_an_annotation_are_listed_not_refused(self):
         rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS))
         self.assertEqual(rc, 0, env)
-        self.assertEqual(env["data"]["unannotated_cells"], ["ADR-002/ANC-001"])
+        self.assertEqual(env["data"]["unannotated_cells"], ["ADR-002/ANC-001", "ADR-002/REQ-001/1"])
         page = Path(env["data"]["html"]).read_text(encoding="utf-8")
         tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
-        self.assertIn("<h3>Cells without a reviewer annotation (1)</h3>", tab)
-        self.assertIn("<li>ADR-002/ANC-001</li>", tab)
+        self.assertIn("<h3>Cells and duplicates without an annotation with git history (2)</h3>", tab)
+        self.assertIn('<li><a href="#cell-ADR-002-ANC-001" data-panel="cell-ADR-002-ANC-001">ADR-002 × ANC-001 (conflicts)</a></li>', tab)
+        self.assertIn('data-panel="dup-ADR-002-REQ-001">ADR-002 restates REQ-001 statement 2</a></li>', tab)
         red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
         self.assertIn("No reviewer annotation yet.", red)
 
@@ -664,7 +688,11 @@ class ProposedFixesTests(unittest.TestCase):
         proposer = {"success": True, "error": None, "metadata": {"correlation_id": "wave-1-red"}, "data": {
             "proposals": [PROPOSALS["proposals"][1]],
             "annotations": [{"record": "ADR-002", "anchor": "ANC-001", "clauses": ["Runtime crates must be written from scratch."],
-                             "what": "Forbids the copy the anchor asks for.", "remedy": "Delete ADR-002.", "jev_disputed": False}]}}
+                             "what": "Forbids the copy the anchor asks for.", "remedy": "Delete ADR-002.", "jev_disputed": False,
+                             "provenance": [HISTORY], "stale": {"record": "ADR-002", "statement": HISTORY["statement"],
+                                                                "reason": "Added before the copy anchor; the anchor is newer."}},
+                            {"duplicate": "ADR-002/REQ-001/1", "clauses": [], "what": "Both log every copy.",
+                             "remedy": "Keep it in ADR-002.", "jev_disputed": False, "no_provenance": "the records were never committed"}]}}
         notes = write(self.tmp, "annotations.json", proposer["data"]["annotations"])
         code, out = run_cli([*self.trace_argv, "--annotations", notes])
         self.assertEqual(code, 0, out)
@@ -678,8 +706,85 @@ class ProposedFixesTests(unittest.TestCase):
         red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
         self.assertNotIn("No reviewer annotation yet.", red)
         for text in ("“Runtime crates must be written from scratch.”", "Forbids the copy the anchor asks for.", "Delete ADR-002.",
-                     "reviewer text, not Jev"):
+                     "anchor-cleanup-proposer text, not Jev", "<h3>History (git)</h3>",
+                     "ADR-002 “Runtime crates must be written from scratch.” — abc1234 2026-01-02: Add ADR-002",
+                     "<h3>Stale</h3>", "Added before the copy anchor; the anchor is newer.", "Proposals: 2"):
             self.assertIn(text, red)
+        pair = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["pair_panels"])
+        for text in ("REQ-001 statement 2 (0.90)", "Proposals: 1", "Both log every copy.", "None found: the records were never committed",
+                     "The matching copy in the item is not identified"):
+            self.assertIn(text, pair)
+
+    def test_cross_reference_harmony_decisions_and_coverage(self):
+        answers = write(self.tmp, "answers2.json", {"REQ-001/ANC-001": cell(serves=0.8, exceeds=0.8), "ADR-002/ANC-001": cell(conflicts=0.7),
+                                                     "NFR-003/ANC-001": cell(),
+                                                     "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": ans(0.9)}})
+        argv = list(self.trace_argv)
+        argv[argv.index("--answers-file") + 1] = answers
+        code, out = run_cli(argv)
+        self.assertEqual(code, 0, out)
+        self.trace = out["data"]["trace_path"]
+        keep = proposal("consolidate", ["REQ-001", "ADR-002"],
+                        [{"record": "REQ-001", "before": "It shall log every copy.", "keeps": "Runtime crates must be written from scratch."}],
+                        source={"ref": "ADR-002", "commit": "abc1234"}, duplicates=["ADR-002/REQ-001/1"], cells=["REQ-001/ANC-001"])
+        cut = proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001", "REQ-001/ANC-001"], resolution="cut")
+        doc = {"schema": PROPOSALS["schema"], "level": "standard", "proposals": [keep, cut],
+               "not_proposed": [{"slice": "unanchored", "reason": "proposer timed out"}]}
+        rc, env = self.report("--proposals", write(self.tmp, "x.json", doc), "--guidance-url", "record-trace.md#correcting-duplicates")
+        self.assertEqual(rc, 0, env)
+        self.assertEqual((env["data"]["totals"]["exceeds"], env["data"]["totals"]["exceeds_cleared"]), (1, 1), "a cell two proposals claim counts once")
+        self.assertIn("proposals 1 and 2 disagree: 2 deletes ADR-002 statement 1, which 1 keeps", env["data"]["warnings"])
+        self.assertEqual(env["data"]["uncovered"], ["NFR-003"], "an unanchored record with no proposal and no listed not_proposed item")
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertIn('href="record-trace.md#correcting-duplicates"', page)
+        self.assertIn("<tr><th scope=\"row\">Exceeds</th><td>1</td><td>0</td></tr>", page)
+        self.assertIn("<h3>Not covered by a proposal (1)</h3>", page)
+        first = Path(env["data"]["proposal_panels"][0]).read_text(encoding="utf-8")
+        for text in ('<a href="#rec-REQ-001" data-panel="rec-REQ-001">REQ-001</a>', "<h3>Clears</h3>",
+                     '<a href="#cell-REQ-001-ANC-001" data-panel="cell-REQ-001-ANC-001">REQ-001 × ANC-001 (exceeds)</a>',
+                     'data-panel="dup-ADR-002-REQ-001">ADR-002 restates REQ-001 statement 2 (duplicate)</a>',
+                     "Keeps: “Runtime crates must be written from scratch.”", "ADR-002 — commit abc1234",
+                     "Other proposals changing these records: 2", "exceeds cleared 1 of 1", "<h3>Check before approving</h3>"):
+            self.assertIn(text, first)
+        cellp = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-REQ-001-ANC-001" in x)
+        self.assertIn("Proposals: 1, 2", cellp)
+        pair = Path(env["data"]["pair_panels"][0]).read_text(encoding="utf-8")
+        self.assertIn("Kept copy (proposal 1): “Runtime crates must be written from scratch.”", pair)
+        self.assertIn("<td>ADR-002 restates REQ-001</td><td>2</td><td>It shall log every copy.</td><td>0.90</td><td>1</td>", page,
+                      "the Duplicates row numbers the statement from 1 and names the proposals")
+
+        # Harmonized: the conflict is resolved by a proposed anchor, nothing deletes what 1 keeps; the owner's decisions are shown.
+        anchor_fix = proposal("resolve_conflict", ["ADR-002"], cells=["ADR-002/ANC-001"], resolution="propose_anchor",
+                              proposed_anchor="Runtime crates are written from scratch.", harmonized_with=[1])
+        doc = dict(doc, proposals=[dict(keep, harmonized_with=[2]), anchor_fix],
+                   not_proposed=[{"slice": "unanchored", "reason": "proposer timed out", "items": ["NFR-003"]}],
+                   dropped=[{"title": "Delete REQ-001", "correlation_id": "wave-1-dups", "reason": "merged into 1"}],
+                   approvals={"reply": "approve 1, change 2 to: keep the copy rule", "decisions": [
+                       {"panel": 1, "status": "approved"}, {"panel": 2, "status": "changed", "text": "keep the copy rule"}]})
+        rc, env = self.report("--proposals", write(self.tmp, "h.json", doc))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual((env["data"]["warnings"], env["data"]["uncovered"]), ([], []))
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        for text in ("<h3>Owner reply</h3>", "approve 1, change 2 to: keep the copy rule", "<h3>Dropped or merged by the lead</h3>",
+                     "Delete REQ-001 (wave-1-dups): merged into 1"):
+            self.assertIn(text, page)
+        second = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
+        for text in ("<h3>Owner decision</h3>", "changed: keep the copy rule", "Harmonized with: 1",
+                     "Approving applies the changes above now; the proposed anchor is added only if the owner also approves its text."):
+            self.assertIn(text, second)
+        self.assertNotIn("Check before approving", second)
+
+    def test_aggressive_keep_of_an_unanchored_record_needs_code_or_an_owner_quote(self):
+        keep = proposal("keep_with_reason", ["NFR-003"], source={"ref": "NFR-003"})
+        doc = {"schema": PROPOSALS["schema"], "level": "aggressive", "proposals": [keep]}
+        rc, env = self.report("--proposals", write(self.tmp, "k.json", doc))
+        self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
+        self.assertIn("keep_with_reason at aggressive needs evidence", env["data"]["problems"][0])
+        for evidence in ({"code": "src/page.rs:load"}, {"source": {"ref": "NFR-003", "quote": "pages must load in a second"}}):
+            rc, env = self.report("--proposals", write(self.tmp, "k.json", dict(doc, proposals=[dict(keep, **evidence)])))
+            self.assertEqual(rc, 0, env)
+        rc, env = self.report("--proposals", write(self.tmp, "k.json", {"schema": PROPOSALS["schema"], "proposals": [keep]}))
+        self.assertIn("level must be one of", env["data"]["problems"][0], "the level is the owner's; there is no default")
 
 
 STATEMENT_START = "The runtime crates are created by copying"

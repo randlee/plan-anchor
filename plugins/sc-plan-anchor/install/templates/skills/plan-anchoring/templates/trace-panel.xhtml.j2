@@ -35,7 +35,13 @@ defaults:
 {% if b.note %}
   <p class="small">{{ b.note | e }}</p>
 {% endif %}
-{% if b.list %}
+{% if b.links %}
+  <ul>
+{% for x in b.links %}
+    <li>{% if x.panel %}<a href="#{{ x.panel | e }}" data-panel="{{ x.panel | e }}">{{ x.text | e }}</a>{% else %}{{ x.text | e }}{% endif %}</li>
+{% endfor %}
+  </ul>
+{% elif b.list %}
   <ul>
 {% for x in b.items %}
     <li>{{ x | e }}</li>

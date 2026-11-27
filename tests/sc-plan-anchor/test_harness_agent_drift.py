@@ -72,6 +72,22 @@ class HarnessAgentDriftTests(unittest.TestCase):
                 explain("registry.yaml", "claude", baseline, harness, normalized[harness]),
             )
 
+    def test_cleanup_proposer_hook_allows_only_read_only_git(self):
+        """The Claude proposer may run Bash only for git log, git blame and git show (its PreToolUse hook)."""
+        import json, shutil, subprocess, yaml
+        if shutil.which("bash") is None:
+            self.skipTest("the hook command runs under bash")
+        text = (HARNESS / "claude" / "agents" / "anchor-cleanup-proposer.md").read_text(encoding="utf-8")
+        header = yaml.safe_load(text.split("---\n")[1])
+        [entry] = header["hooks"]["PreToolUse"]
+        self.assertEqual(entry["matcher"], "Bash")
+        command = entry["hooks"][0]["command"]
+        for cmd, code in (('git log -S"retry 5 times" -- docs', 0), ("git -C repo blame docs/REQ-1.md", 0), ("git show abc:docs/x.md", 0),
+                          ("git log; rm -rf x", 2), ("git log --output=x", 2), ("git push", 2), ("git show $(id)", 2), ("cat x", 2)):
+            got = subprocess.run(["bash", "-c", command], input=json.dumps({"tool_input": {"command": cmd}}),
+                                 capture_output=True, text=True, check=False)
+            self.assertEqual(got.returncode, code, cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

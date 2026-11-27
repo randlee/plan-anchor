@@ -8,7 +8,10 @@ artifacts and are never committed (site/examples/.gitignore).
 
   record-cleanup  jev_judge.py trace --index --ids --anchors --answers-file (fixture answers: no network), with
                   --annotations inputs/annotations.json when that file exists, then
-                  change_report.py --trace --proposals --out site/examples/record-cleanup/
+                  change_report.py --trace --proposals --out site/examples/record-cleanup/. The inputs are copied
+                  into the scratch repository root first, so the trace records them as inputs/<file>, never as
+                  build-machine paths, and the rendered references/record-trace.md is written beside the report
+                  as the target of its "Correcting duplicates" links.
 
 Needs the sc-compose CLI on PATH (the scripts are rendered with it, and change_report renders the report with
 it), as the tests do. Usage: python3 scripts/build-examples.py [--out DIR]
@@ -102,7 +105,9 @@ def run(argv: list, cwd: Path) -> dict:
     return envelope["data"]
 
 
-def record_cleanup(scripts: Path, scratch: Path, out_root: Path, inputs: Path) -> dict:
+def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: Path) -> dict:
+    inputs = scratch / "inputs"
+    shutil.copytree(source_inputs, inputs)
     annotations = inputs / "annotations.json"
     example = out_root / "record-cleanup"
     example.mkdir(parents=True, exist_ok=True)
@@ -112,12 +117,14 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path, inputs: Path) -
                  "--answers-file", str(inputs / "answers.json"), "--out-dir", str(runs),
                  "--repository-root", str(scratch),
                  *(["--annotations", str(annotations)] if annotations.is_file() else [])], scratch)
-    for stale in ("report.html", "report.json", "trace.json"):
+    for stale in ("report.html", "report.json", "trace.json", "record-trace.md"):
         (example / stale).unlink(missing_ok=True)
     shutil.rmtree(example / "report", ignore_errors=True)
     shutil.copyfile(trace["trace_path"], example / "trace.json")
+    shutil.copyfile(scripts.parent / "references" / "record-trace.md", example / "record-trace.md")
     report = run([str(scripts / "change_report.py"), "--trace", str(example / "trace.json"),
                   "--proposals", str(inputs / "proposals.json"), "--out", str(example), "--name", "report",
+                  "--guidance-url", "record-trace.md#correcting-duplicates",
                   "--title", "Record cleanup example: sc-agent records against phase-j anchors",
                   "--repository-root", str(scratch)], scratch)
     return {"trace": trace, "report": report}
@@ -136,8 +143,8 @@ def main() -> int:
         built = record_cleanup(scripts, scratch, out_root, inputs)
     t, r = built["trace"], built["report"]
     print(f"record-cleanup: {t['cells']} cells, {t['overlap']} overlap statements, "
-          f"{r.get('proposals')} proposals, {len(r.get('unannotated_cells') or [])} red or yellow cells without a reviewer "
-          f"annotation -> {out_root / 'record-cleanup' / 'report.html'}")
+          f"{r.get('proposals')} proposals, {len(r.get('unannotated_cells') or [])} red or yellow cells and duplicates without "
+          f"an annotation with git history -> {out_root / 'record-cleanup' / 'report.html'}")
     return 0
 
 

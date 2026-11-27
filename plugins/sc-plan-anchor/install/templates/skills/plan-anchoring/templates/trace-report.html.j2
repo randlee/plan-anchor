@@ -30,6 +30,10 @@ defaults:
   level: ""
   not_proposed: []
   unannotated_cells: []
+  possible_rows: []
+  uncovered: []
+  dropped: []
+  owner_reply: ""
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -137,15 +141,27 @@ defaults:
 {% endif %}
 {% if dup_rows %}
       <table class="dups">
-        <thead><tr><th scope="col">Pair</th><th scope="col">Statement</th><th scope="col">Confidence</th><th scope="col">Action</th></tr></thead>
+        <thead><tr><th scope="col">Pair</th><th scope="col">#</th><th scope="col">Statement</th><th scope="col">Confidence</th><th scope="col">Proposals</th><th scope="col">Action</th></tr></thead>
         <tbody>
 {% for d in dup_rows %}
-          <tr class="hdr" data-panel="{{ d.dom | e }}"><td>{{ d.pair | e }}</td><td>{{ d.statement | e }}</td><td>{{ d.confidence | e }}</td><td><a href="{{ guidance_url | e }}">correct: Correcting duplicates</a></td></tr>
+          <tr class="hdr" data-panel="{{ d.dom | e }}"><td>{{ d.pair | e }}</td><td>{{ d.number | e }}</td><td>{{ d.statement | e }}</td><td>{{ d.confidence | e }}</td><td>{{ d.proposals | e }}</td><td><a href="{{ guidance_url | e }}">correct: Correcting duplicates</a></td></tr>
 {% endfor %}
         </tbody>
       </table>
 {% else %}
       <p class="small">No duplicated statements.</p>
+{% endif %}
+{% if possible_rows %}
+      <h3>Possible duplicates</h3>
+      <p class="small">Jev was not confident enough to call these duplicates. They do not count toward duplicates_pass; read each pair before acting.</p>
+      <table class="dups">
+        <thead><tr><th scope="col">Pair</th><th scope="col">#</th><th scope="col">Statement</th><th scope="col">Confidence</th><th scope="col">Proposals</th></tr></thead>
+        <tbody>
+{% for d in possible_rows %}
+          <tr class="hdr" data-panel="{{ d.dom | e }}"><td>{{ d.pair | e }}</td><td>{{ d.number | e }}</td><td>{{ d.statement | e }}</td><td>{{ d.confidence | e }}</td><td>{{ d.proposals | e }}</td></tr>
+{% endfor %}
+        </tbody>
+      </table>
 {% endif %}
       <h2>Fully restated records (deletion candidates)</h2>
       <p class="small">{{ fully_restated_action | e }}</p>
@@ -183,11 +199,32 @@ defaults:
 {% endfor %}
       </ul>
 {% endif %}
+{% if owner_reply %}
+      <h3>Owner reply</h3>
+      <p class="quote">{{ owner_reply | e }}</p>
+{% endif %}
 {% if unannotated_cells %}
-      <h3>Cells without a reviewer annotation ({{ unannotated_cells | length }})</h3>
-      <p class="small">Every red and yellow cell needs one before the report goes to the owner (references/record-cleanup.md).</p>
+      <h3>Cells and duplicates without an annotation with git history ({{ unannotated_cells | length }})</h3>
+      <p class="small">Every red and yellow cell and every duplicate needs one, or a stated reason no history was found, before the report goes to the owner (references/record-cleanup.md).</p>
       <ul>
 {% for x in unannotated_cells %}
+        <li><a href="#{{ x.panel | e }}" data-panel="{{ x.panel | e }}">{{ x.text | e }}</a></li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% if uncovered %}
+      <h3>Not covered by a proposal ({{ uncovered | length }})</h3>
+      <p class="small">Each must end in a proposal or a not_proposed entry; nothing is kept by omission.</p>
+      <ul>
+{% for x in uncovered %}
+        <li>{{ x | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% if dropped %}
+      <h3>Dropped or merged by the lead</h3>
+      <ul>
+{% for x in dropped %}
         <li>{{ x | e }}</li>
 {% endfor %}
       </ul>

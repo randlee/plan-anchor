@@ -68,6 +68,14 @@ class RecordCleanupExampleTests(unittest.TestCase):
         self.assertEqual(sorted(r["id"] for r in self.trace["records"]), sorted(ids))
         self.assertEqual(len(self.trace["cells"]), len(ids) * len(locked))
 
+    def test_no_build_machine_path_and_the_guidance_link_resolves(self):
+        text = (self.built / "trace.json").read_text(encoding="utf-8") + self.page
+        for root in {str(ROOT), str(Path(tempfile.gettempdir()).resolve()), tempfile.gettempdir(), "file://"}:
+            self.assertNotIn(root, text)
+        self.assertEqual({r["index"] for r in self.trace["records"]}, {"inputs/raptor-sc-agent.json"})
+        self.assertIn('href="record-trace.md#correcting-duplicates"', self.page)
+        self.assertIn("## Correcting duplicates", (self.built / "record-trace.md").read_text(encoding="utf-8"))
+
     def test_readme_names_the_page_the_examples_index_links(self):
         readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
         page = re.search(r"^\*\*Page:\*\*\s*\[[^\]]*\]\(([^)\s]+)\)", readme, re.MULTILINE)
@@ -86,30 +94,34 @@ class RecordCleanupAnnotationsTests(unittest.TestCase):
         shutil.copytree(EXAMPLE / "inputs", self.inputs)
         (self.inputs / "annotations.json").unlink(missing_ok=True)
 
-    def red_and_yellow(self, built: Path) -> list:
+    def red_yellow_and_duplicates(self, built: Path) -> tuple:
         trace = json.loads((built / "trace.json").read_text(encoding="utf-8"))
-        return [c for c in trace["cells"] if c["class"] in ("exceeds", "conflicts")]
+        return ([c for c in trace["cells"] if c["class"] in ("exceeds", "conflicts")],
+                [o for o in trace["overlap"] if o["class"] == "duplicate"])
 
-    def test_without_annotations_every_red_and_yellow_cell_is_listed(self):
+    def test_without_annotations_every_red_and_yellow_cell_and_duplicate_is_listed(self):
         built = build(self.tmp / "without", "--inputs", str(self.inputs))
-        cells = self.red_and_yellow(built)
+        cells, dups = self.red_yellow_and_duplicates(built)
         self.assertGreaterEqual(len(cells), 1)
-        self.assertFalse(any("annotation" in c for c in cells))
+        self.assertFalse(any("annotation" in c for c in cells + dups))
         page = (built / "report.html").read_text(encoding="utf-8")
-        self.assertIn(f"<h3>Cells without a reviewer annotation ({len(cells)})</h3>", page)
+        self.assertIn(f"<h3>Cells and duplicates without an annotation with git history ({len(cells) + len(dups)})</h3>", page)
 
     def test_with_annotations_they_are_merged_and_nothing_is_listed(self):
-        cells = self.red_and_yellow(build(self.tmp / "first", "--inputs", str(self.inputs)))
-        notes = [{"record": c["record"], "anchor": c["anchor"], "clauses": [], "what": f"test annotation {c['record']}/{c['anchor']}",
-                  "remedy": "test remedy", "jev_disputed": False} for c in cells]
+        cells, dups = self.red_yellow_and_duplicates(build(self.tmp / "first", "--inputs", str(self.inputs)))
+        common = {"clauses": [], "remedy": "test remedy", "jev_disputed": False, "no_provenance": "test: no history"}
+        notes = [dict(common, record=c["record"], anchor=c["anchor"], what=f"test annotation {c['record']}/{c['anchor']}") for c in cells]
+        notes += [dict(common, duplicate=f"{o['item']}/{o['partner']}/{o['statement_index']}", what="test duplicate") for o in dups]
         (self.inputs / "annotations.json").write_text(json.dumps(notes), encoding="utf-8")
         built = build(self.tmp / "with", "--inputs", str(self.inputs))
-        self.assertTrue(all(c["annotation"]["provenance"] == "reviewer-agent" for c in self.red_and_yellow(built)))
+        cells2, dups2 = self.red_yellow_and_duplicates(built)
+        self.assertTrue(all(x["annotation"]["author"] == "anchor-cleanup-proposer" for x in cells2 + dups2))
         page = (built / "report.html").read_text(encoding="utf-8")
-        self.assertNotIn("Cells without a reviewer annotation", page)
+        self.assertNotIn("without an annotation with git history", page)
         self.assertNotIn("No reviewer annotation yet.", page)
         c = cells[0]
         self.assertIn(f"test annotation {c['record']}/{c['anchor']}", page)
+        self.assertIn("None found: test: no history", page)
 
 
 if __name__ == "__main__":

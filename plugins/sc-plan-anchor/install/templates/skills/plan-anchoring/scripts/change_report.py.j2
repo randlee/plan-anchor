@@ -27,8 +27,12 @@ Inputs
                        page templates/trace-report.html.j2); --anchors and --baseline-rev are then not used
   --fields P,...       with --trace: show only these record/anchor field paths (RECORD_FIELDS, ANCHOR_PANEL_FIELDS)
   --proposals P        with --trace: record-cleanup proposals (references/record-cleanup.md) as numbered panels on a
-                       third tab, "Proposed fixes", with the totals if all are approved and the red and yellow cells
-                       with no reviewer annotation (also data.unannotated_cells)
+                       third tab, "Proposed fixes", with the totals if all are approved, the cross-reference and
+                       disagreements between proposals, the owner's decisions, dropped proposals, and the items with no
+                       proposal (data.uncovered)
+  --guidance-url U     with --trace: the Correcting duplicates link (default: the installed references/record-trace.md)
+                       Every --trace report lists the red and yellow cells and duplicates with no annotation carrying git
+                       history (data.unannotated_cells)
   --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
                        in DIR/<name>/
 
@@ -761,15 +765,40 @@ def trace_anchor_vars(anchor: dict, keep: Optional[set] = None) -> dict:
             "copy_json": _dump(anchor)}
 
 
-def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
+ANNOTATION_NOTE = "anchor-cleanup-proposer text, not Jev"
+
+
+def annotated(note: Optional[dict]) -> bool:
+    """An annotation is complete with its git history, or with the stated reason none was found."""
+    return bool(note) and bool(note.get("provenance") or note.get("no_provenance"))
+
+
+def history_blocks(note: dict) -> List[dict]:
+    """The annotation's git provenance (when each statement came in, by which commit) and which side is stale."""
+    rows = [f"{x['record']} “{_norm(x['statement'])}” — {x['commit']} {x['date']}: {x['summary']}" for x in note.get("provenance") or []]
+    if not rows:
+        rows = [f"None found: {note['no_provenance']}" if note.get("no_provenance") else "Not determined yet."]
+    out = [{"heading": "History (git)", "note": ANNOTATION_NOTE, "items": rows, "list": len(rows) > 1}]
+    stale = note.get("stale")
+    if stale:
+        out.append({"heading": "Stale", "items": [f"{stale['record']} “{_norm(stale['statement'])}”: {stale['reason']}"]})
+    return out
+
+
+def numbers(ns: Sequence[int]) -> str:
+    return ", ".join(str(n) for n in sorted(set(ns)))
+
+
+def trace_cell_vars(c: dict, anchor: dict, record: dict, props: Sequence[int] = ()) -> dict:
     note, cls, stm = c.get("annotation") or {}, c["class"], statements(record)
-    blocks = []
+    blocks = [{"items": [f"Proposals: {numbers(props)}"]}] if props else []
     if cls in TRACE_DETAIL:
         what = ("Reviewer disputes Jev: " if note.get("jev_disputed") else "") + note.get("what", "")
         blocks.append({"heading": f"What {cls}", "items": [f"“{x}”" for x in note.get("clauses", [])], "list": True,
                        "note": "" if note else "No reviewer annotation yet."})
         if note:
-            blocks += [{"items": [what]}, {"heading": "Proposed remedy", "note": "reviewer text, not Jev", "items": [note.get("remedy", "")]}]
+            blocks += [{"items": [what]}, {"heading": "Proposed remedy", "note": ANNOTATION_NOTE, "items": [note.get("remedy", "")]}]
+            blocks += history_blocks(note)
     blocks.append({"heading": "Anchor", "items": [anchor["statement"], f"Owner: “{anchor['quote']}”", f"Scope: {anchor['scope']}"]})
     blocks.append({"heading": "Record statements", "items": stm or [(record.get("obligations") or {}).get("note") or "No obligation statements."],
                    "list": bool(stm)})
@@ -781,17 +810,36 @@ def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
             "blocks": blocks, "copy_json": _dump(c), "context_text": "\n".join(context)}
 
 
-def trace_pair_vars(item: dict, partner: dict, duplicates: List[dict]) -> dict:
-    """One duplicate pair's side panel: the duplicated statements with Jev's confidence, then each record's statements
-    (an ADR's decision), shown by the record panel's own field list."""
-    dup = [f"{partner['id']} statement {o['statement_index']} ({o['confidence']:.2f}): {o['statement']}" for o in duplicates]
-    blocks = [{"heading": "Duplicated statements", "items": dup, "list": True}]
+def dup_key(o: dict) -> str:
+    return f"{o['item']}/{o['partner']}/{o['statement_index']}"
+
+
+def trace_pair_vars(item: dict, partner: dict, entries: List[dict], by_dup: Optional[Dict[str, List[int]]] = None,
+                    keeps: Optional[Dict[str, List[str]]] = None) -> dict:
+    """One overlap pair's side panel: each duplicated (then possibly duplicated) statement, numbered from 1, with the
+    proposals naming it, the item's kept copy and its annotation; then each record's statements, by the record panel's
+    own field list."""
+    blocks = []
+    for cls, heading in (("duplicate", "Duplicated statement"), ("possible", "Possibly duplicated statement")):
+        for o in (o for o in entries if o["class"] == cls):
+            key, note = dup_key(o), o.get("annotation") or {}
+            items = [f"{partner['id']} statement {o['statement_index'] + 1} ({o['confidence']:.2f}): {o['statement']}"]
+            if (by_dup or {}).get(key):
+                items.append(f"Proposals: {numbers(by_dup[key])}")
+            items += (keeps or {}).get(key) or ["The matching copy in the item is not identified: no consolidate proposal names it with keeps."]
+            if note:
+                items.append(("Reviewer disputes Jev: " if note.get("jev_disputed") else "") + note.get("what", ""))
+            blocks.append({"heading": heading, "items": items, "list": True,
+                           "note": "" if note or cls == "possible" else "No reviewer annotation yet."})
+            if note:
+                blocks.append({"heading": "Proposed remedy", "note": ANNOTATION_NOTE, "items": [note.get("remedy", "")]})
+                blocks += history_blocks(note)
     for r in (item, partner):
         blocks.append({"heading": " ".join(filter(None, [r["id"], (r.get("raptor") or {}).get("title")])), "items": []})
         blocks += trace_record_vars(r, PAIR_FIELDS)["blocks"]
     return {"dom": dom_id("dup", f"{item['id']}-{partner['id']}"), "cls": "duplicate", "title": f"{item['id']} restates {partner['id']}",
             "subtitle": " · ".join(filter(None, (short_repo(item), short_repo(partner)))), "blocks": blocks,
-            "copy_json": _dump(duplicates)}
+            "copy_json": _dump(entries)}
 
 
 # ---------------------------------------------------------------- record-cleanup proposals (references/record-cleanup.md)
@@ -802,6 +850,7 @@ PROPOSAL_KINDS = {"delete": "delete", "consolidate": "consolidate", "cut_excess"
                   "keep_with_reason": "keep with reason"}
 LEVELS = ("aggressive", "standard", "conservative")
 RESOLUTIONS = ("cut", "reconcile", "propose_anchor")
+DECISIONS = ("approved", "rejected", "changed")
 CODE_RE = re.compile(r"\S+:\S+(?: \S+:\S+)*")
 REPLY_HINT = "Reply e.g.: approve 1-5, reject 6, change 7 to: <text>"
 WORD_RE = re.compile(r"[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*")
@@ -841,13 +890,29 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
     if not isinstance(doc, dict) or doc.get("schema") != PROPOSALS_SCHEMA or not isinstance(doc.get("proposals"), list):
         return [f"schema must be {PROPOSALS_SCHEMA} with a proposals array"]
     out = []
-    level = doc.get("level", "standard")
+    level = doc.get("level")
     if level not in LEVELS:
-        out.append(f"level must be one of {', '.join(LEVELS)}")
+        out.append(f"level must be one of {', '.join(LEVELS)}: the level the owner passed or answered (references/record-cleanup.md, Levels)")
     skipped = doc.get("not_proposed", [])
-    if not isinstance(skipped, list) or not all(isinstance(x, dict) and isinstance(x.get("slice"), str)
-                                                and isinstance(x.get("reason"), str) for x in skipped):
-        out.append("not_proposed must be a list of {slice, reason}")
+    if not isinstance(skipped, list) or not all(isinstance(x, dict) and isinstance(x.get("slice"), str) and isinstance(x.get("reason"), str)
+                                                and _str_list(x.get("items", [])) for x in skipped):
+        out.append("not_proposed must be a list of {slice, reason, items (the keys of the slice)}")
+    dropped = doc.get("dropped", [])
+    if not isinstance(dropped, list) or not all(isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("title", "correlation_id", "reason"))
+                                                for x in dropped):
+        out.append("dropped must be a list of {title, correlation_id, reason}")
+    count = len(doc["proposals"])
+    approvals = doc.get("approvals")
+    if approvals is not None:
+        decisions = approvals.get("decisions") if isinstance(approvals, dict) else None
+        if not isinstance(approvals, dict) or not isinstance(approvals.get("reply"), str) or not isinstance(decisions, list):
+            out.append("approvals must be {reply: the owner's words verbatim, decisions: [{panel, status, text}]}")
+        else:
+            for d in decisions:
+                if not isinstance(d, dict) or not _panel(d.get("panel"), count) or d.get("status") not in DECISIONS \
+                        or d["status"] == "changed" and not (isinstance(d.get("text"), str) and d["text"].strip()):
+                    out.append(f"approvals decision {d!r}: panel must be a proposal number, status one of {', '.join(DECISIONS)}, "
+                               "and a changed decision carries the owner's text")
     for n, p in enumerate(doc["proposals"], start=1):
         if not isinstance(p, dict):
             out.append(f"proposal {n} must be an object")
@@ -861,8 +926,13 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
             if not isinstance(p.get(key), str) or not p[key].strip():
                 out.append(f"proposal {n}: {key} must be a non-empty string")
         src = p.get("source")
-        if not isinstance(src, dict) or not isinstance(src.get("ref"), str) or not src["ref"].strip():
-            out.append(f"proposal {n}: source must be an object with ref (an anchor or record id)")
+        if not isinstance(src, dict) or not isinstance(src.get("ref"), str) or not src["ref"].strip() \
+                or not all(isinstance(src.get(k, ""), str) for k in ("quote", "commit")):
+            out.append(f"proposal {n}: source must be an object with ref (an anchor or record id) and optional quote and commit strings")
+            src = {}
+        harmonized = p.get("harmonized_with", [])
+        if not isinstance(harmonized, list) or not all(_panel(m, count) and m != n for m in harmonized):
+            out.append(f"proposal {n}: harmonized_with must list other proposal numbers")
         recs = p.get("records")
         if not isinstance(recs, list) or not recs or not all(isinstance(r, str) for r in recs):
             out.append(f"proposal {n}: records must be a non-empty list of record ids")
@@ -882,6 +952,10 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
             if changes:
                 out.append(f"proposal {n}: keep_with_reason changes nothing; move the changes to another proposal")
             covered = [r for r in recs if r in records and r not in no_relation]
+            evidence = CODE_RE.fullmatch(str(p.get("code") or "")) or str(src.get("quote") or "").strip()
+            if level == "aggressive" and not covered and not evidence:
+                out.append(f"proposal {n}: keep_with_reason at aggressive needs evidence that is not the proposer's prose: "
+                           "code (\"file:symbol\") or the owner's words in source.quote; otherwise the record is deleted")
             if covered and level == "aggressive":
                 out.append(f"proposal {n}: keep_with_reason is refused at aggressive for a record an anchor covers ({', '.join(covered)})")
             elif covered and not CODE_RE.fullmatch(str(p.get("code") or "")):
@@ -904,6 +978,8 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
                 out.append(f"{where}: record must be one of the proposal's records")
                 continue
             before, after = c.get("before"), c.get("after")
+            if not isinstance(c.get("keeps", ""), str):
+                out.append(f"{where}: keeps must be the kept statement, quoted exactly")
             if before is None and after is not None:
                 out.append(f"{where}: after needs before (the statement it changes)")
             elif before is not None and not isinstance(before, str) or after is not None and not isinstance(after, str):
@@ -913,6 +989,63 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
                     out.append(f"{where}: after rewords before; rewording is rare and needs reword_justification")
                 elif kind == "resolve_conflict" and resolution == "cut":
                     out.append(f"{where}: resolution cut only deletes words; a rewording is resolution reconcile")
+    return out
+
+
+def _str_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) for x in value)
+
+
+def _panel(value: Any, count: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= count
+
+
+def find_statement(records: Dict[str, dict], ids: Sequence[str], text: str) -> Optional[Tuple[str, int]]:
+    """(record, index) of the statement ``text`` quotes among ``ids``' statements."""
+    for rid in ids:
+        i = statement_index(records[rid], text) if rid in records else None
+        if i is not None:
+            return rid, i
+    return None
+
+
+def proposal_cross(proposals: List[Tuple[int, dict]], records: Dict[str, dict]) -> Tuple[Dict[int, List[int]], List[Tuple[int, int, str]]]:
+    """The cross-reference (proposals sharing a record) and every disagreement (n, m, text): proposal m deletes a
+    statement proposal n keeps (a change's keeps) or the record n cites as its source of truth."""
+    touched, whole, cut, kept, relies = {}, {}, {}, {}, {}
+    for n, p in proposals:
+        touched[n] = set(p.get("records", [])) | {c["record"] for c in p.get("changes", [])}
+        whole[n] = {c["record"] for c in p.get("changes", []) if c.get("before") is None}
+        cut[n] = {find_statement(records, [c["record"]], c["before"]) for c in p.get("changes", [])
+                  if c.get("before") is not None and c.get("after") is None} - {None}
+        kept[n] = {find_statement(records, p.get("records", []), c["keeps"]) for c in p.get("changes", []) if c.get("keeps")} - {None}
+        ref = p["source"]["ref"]
+        relies[n] = {ref} if ref in records and ref not in whole[n] else set()
+    xref = {n: [m for m, _ in proposals if m != n and touched[n] & touched[m]] for n, _ in proposals}
+    clashes = []
+    for n, _ in proposals:
+        for m, _ in proposals:
+            if m == n:
+                continue
+            for rid, i in sorted(kept[n]):
+                if rid in whole[m] or (rid, i) in cut[m]:
+                    clashes.append((n, m, f"proposals {n} and {m} disagree: {m} deletes {rid} statement {i + 1}, which {n} keeps"))
+            for rid in sorted(relies[n] & whole[m]):
+                clashes.append((n, m, f"proposals {n} and {m} disagree: {m} deletes {rid}, which {n} cites as its source of truth"))
+    return xref, clashes
+
+
+def coverage(t: dict, proposals: List[Tuple[int, dict]], not_proposed: List[dict]) -> List[str]:
+    """Red and yellow cells, duplicates and unanchored records that end in neither a proposal nor a not_proposed entry."""
+    listed = {k for _, p in proposals for k in p.get("cells", []) + p.get("duplicates", [])}
+    listed |= {k for x in not_proposed for k in x.get("items", [])}
+    named = {r for _, p in proposals for r in p.get("records", [])}
+    deleted = {c["record"] for _, p in proposals for c in p.get("changes", []) if c.get("before") is None}
+    out = [f"{c['record']}/{c['anchor']}" for c in t["cells"]
+           if c["class"] in TRACE_DETAIL and f"{c['record']}/{c['anchor']}" not in listed and c["record"] not in deleted]
+    out += [dup_key(o) for o in t.get("overlap") or [] if o.get("class") == "duplicate" and dup_key(o) not in listed
+            and not {o["item"], o["partner"]} & deleted]
+    out += [r for r in (t.get("summary") or {}).get("records_with_no_relation") or [] if r not in named and r not in listed]
     return out
 
 
@@ -941,22 +1074,46 @@ def proposal_effect(proposals: List[dict], t: dict, records: Dict[str, dict]) ->
                       or o["item"] in deleted or o["partner"] in deleted or o["statement_index"] in cut.get(o["partner"], ()))
     conflicts = [c for c in t["cells"] if c["class"] == "conflicts"]
     resolved = sum(1 for c in conflicts if f"{c['record']}/{c['anchor']}" in cells_keys or c["record"] in deleted)
+    exceeds = [c for c in t["cells"] if c["class"] == "exceeds"]
+    exceeds_cleared = sum(1 for c in exceeds if f"{c['record']}/{c['anchor']}" in cells_keys or c["record"] in deleted)
     known_cells = {f"{c['record']}/{c['anchor']}" for c in t["cells"] if c["class"] in TRACE_DETAIL}
-    known_dups = {f"{o['item']}/{o['partner']}/{o['statement_index']}" for o in dups}
+    known_dups = {dup_key(o) for o in t.get("overlap") or [] if o.get("class") in ("duplicate", "possible")}
     warnings += [f"cell {k} is not an exceeds or conflicts cell of the trace" for k in sorted(cells_keys - known_cells)]
-    warnings += [f"duplicate {k} is not a duplicate in the trace" for k in sorted(dup_keys - known_dups)]
+    warnings += [f"duplicate {k} is not a duplicate or possible duplicate in the trace" for k in sorted(dup_keys - known_dups)]
     return {"records_before": len(records), "records_after": len(records) - len(deleted),
             "statements_before": sum(counts.values()), "statements_after": after,
             "duplicates_cleared": dup_cleared, "duplicates": len(dups),
-            "conflicts_resolved": resolved, "conflicts": len(conflicts)}, warnings
+            "conflicts_resolved": resolved, "conflicts": len(conflicts),
+            "exceeds_cleared": exceeds_cleared, "exceeds": len(exceeds)}, warnings
 
 
 def effect_line(e: dict) -> str:
     return (f"Records {e['records_before']} → {e['records_after']}; statements {e['statements_before']} → {e['statements_after']}; "
-            f"duplicates cleared {e['duplicates_cleared']} of {e['duplicates']}; conflicts resolved {e['conflicts_resolved']} of {e['conflicts']}")
+            f"duplicates cleared {e['duplicates_cleared']} of {e['duplicates']}; conflicts resolved {e['conflicts_resolved']} of {e['conflicts']}; "
+            f"exceeds cleared {e['exceeds_cleared']} of {e['exceeds']}")
 
 
-def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict]) -> dict:
+def clears_links(p: dict, t: dict) -> List[dict]:
+    """The cells and duplicates a proposal names, each linked to its side panel (plain text when the trace has none)."""
+    cells = {f"{c['record']}/{c['anchor']}": c for c in t["cells"]}
+    dups = {dup_key(o): o for o in t.get("overlap") or []}
+    out = []
+    for k in p.get("cells", []):
+        c = cells.get(k)
+        out.append({"text": f"{c['record']} × {c['anchor']} ({c['class']})", "panel": dom_id("cell", f"{c['record']}-{c['anchor']}")}
+                   if c and c["class"] not in ("none", "error") else {"text": k, "panel": ""})
+    for k in p.get("duplicates", []):
+        o = dups.get(k)
+        out.append({"text": f"{o['item']} restates {o['partner']} statement {o['statement_index'] + 1} ({o['class']})",
+                    "panel": dom_id("dup", f"{o['item']}-{o['partner']}")} if o else {"text": k, "panel": ""})
+    return out
+
+
+APPROVAL_ANCHOR = "Approving applies the changes above now; the proposed anchor is added only if the owner also approves its text."
+
+
+def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict], xref: Sequence[int] = (), clashes: Sequence[str] = (),
+                  decision: Optional[dict] = None) -> dict:
     """One numbered "Proposed fixes" panel in the trace panel layout; its copy icon copies the panel as plain text."""
     changes, reworded = [], []
     for c in p.get("changes", []):
@@ -970,25 +1127,41 @@ def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict]) -> dict:
         else:
             changes.append(f"Reword {rid}: “{_norm(before)}” → “{_norm(after)}”")
             reworded.append(f"{rid}: {_norm(c['reword_justification'])}")
+        if c.get("keeps"):
+            changes.append(f"Keeps: “{_norm(c['keeps'])}”")
     if p.get("resolution"):
         changes.insert(0, f"Resolution: {p['resolution'].replace('_', ' ')}.")
     if p["kind"] == "keep_with_reason":
         changes.append("No change." + (f" Documents the code at {p['code']}." if p.get("code") else ""))
     if p.get("proposed_anchor"):
         changes.append(f"Proposed anchor for the owner: “{_norm(p['proposed_anchor'])}”")
+        changes.append(APPROVAL_ANCHOR)
     src = p["source"]
     effect, warnings = proposal_effect([(n, p)], t, records)
-    blocks = [{"heading": "Records", "items": [", ".join(p["records"])]},
+    clears = clears_links(p, t)
+    blocks = [{"heading": "Records", "items": [", ".join(p["records"])],
+               "links": [{"text": r, "panel": dom_id("rec", r)} for r in p["records"]]},
               {"heading": "Change", "items": changes, "list": len(changes) > 1},
               {"heading": "Justification", "items": [p["justification"]]},
-              {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner: “{src['quote']}”" if src.get("quote") else "")]},
+              {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner: “{src['quote']}”" if src.get("quote") else "")
+                                                       + (f" — commit {src['commit']}" if src.get("commit") else "")]},
               {"heading": "Expected improvement", "items": [p["improvement"], effect_line(effect)]}]
+    if clears:
+        blocks.insert(2, {"heading": "Clears", "items": [x["text"] for x in clears], "links": clears})
     if reworded:
         blocks.insert(2, {"heading": "Rewording (rare; justified)", "items": reworded, "list": len(reworded) > 1})
+    if decision:
+        blocks.insert(0, {"heading": "Owner decision", "items": [decision["status"] + (f": {decision['text']}" if decision.get("text") else "")]})
+    if xref:
+        blocks.append({"items": [f"Other proposals changing these records: {numbers(xref)}"]})
+    if p.get("harmonized_with"):
+        blocks.append({"items": [f"Harmonized with: {numbers(p['harmonized_with'])}"]})
+    warnings = list(warnings) + list(clashes)
     if warnings:
         blocks.append({"heading": "Check before approving", "items": warnings, "list": True})
     title, subtitle = f"{n}. {p['title']}", f"Wave {p['wave']} · {PROPOSAL_KINDS[p['kind']]}"
-    context = [title, subtitle, *[f"{b['heading']}: {b['items'][0]}" if len(b["items"]) == 1
+    context = [title, subtitle, *[b["items"][0] if not b.get("heading") and len(b["items"]) == 1
+                                  else f"{b['heading']}: {b['items'][0]}" if len(b["items"]) == 1
                                   else "\n".join([f"{b['heading']}:", *(f"- {x}" for x in b["items"])]) for b in blocks]]
     return {"dom": f"prop-{n}", "cls": "proposal", "title": title, "subtitle": subtitle, "blocks": blocks,
             "copy_json": "", "copy_label": "Copy panel text", "context_text": "\n".join(context)}
@@ -1021,7 +1194,20 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                        "Fix every problem in data.problems (references/record-cleanup.md, Proposals file) and rerun.",
                        data={"problems": problems})
         proposals = list(enumerate(loaded.value["proposals"], start=1))
-        level, not_proposed = loaded.value.get("level", "standard"), loaded.value.get("not_proposed", [])
+        level, not_proposed = loaded.value["level"], loaded.value.get("not_proposed", [])
+        dropped, approvals = loaded.value.get("dropped", []), loaded.value.get("approvals")
+    else:
+        dropped, approvals = [], None
+    by_cell: Dict[str, List[int]] = {}
+    by_dup: Dict[str, List[int]] = {}
+    keeps: Dict[str, List[str]] = {}
+    for n, p in proposals or []:
+        for k in p.get("cells", []):
+            by_cell.setdefault(k, []).append(n)
+        for k in p.get("duplicates", []):
+            by_dup.setdefault(k, []).append(n)
+            keeps.setdefault(k, []).extend(f"Kept copy (proposal {n}): “{_norm(c['keeps'])}”"
+                                           for c in p.get("changes", []) if p["kind"] == "consolidate" and c.get("keeps"))
     binary = find_sc_compose()
     if isinstance(binary, Err):
         return binary
@@ -1044,7 +1230,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                 c = cells.get((r["id"], a["id"]), {"class": "none"})
                 dom = ""
                 if c["class"] not in ("none", "error"):
-                    jobs.append(trace_cell_vars(c, anchors[a["id"]], records[r["id"]]))
+                    jobs.append(trace_cell_vars(c, anchors[a["id"]], records[r["id"]], by_cell.get(f"{r['id']}/{a['id']}", ())))
                     dom = jobs[-1]["dom"]
                 row["cells"].append({"anchor": a["id"], "cls": c["class"], "dom": dom})
             grid.append(row)
@@ -1055,33 +1241,45 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                 return text
             sections.append(text.value)
             panel_paths.append(target.as_posix())
-        dup_rows, pair_panels = [], []
+        dup_rows, possible_rows, pair_panels = [], [], []
         pairs: dict = {}
         for o in t.get("overlap") or []:
-            if o["class"] == "duplicate":
+            if o["class"] in ("duplicate", "possible"):
                 pairs.setdefault((o["item"], o["partner"]), []).append(o)
         for (item, partner), duplicates in sorted(pairs.items()):
-            variables = trace_pair_vars(records[item], records[partner], duplicates)
+            variables = trace_pair_vars(records[item], records[partner], duplicates, by_dup, keeps)
             target = panels_dir / f"{name}-{variables['dom']}.xhtml"
             text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
             if isinstance(text, Err):
                 return text
             sections.append(text.value)
             pair_panels.append(target.as_posix())
-            dup_rows += [{"pair": variables["title"], "statement": o["statement"], "confidence": f"{o['confidence']:.2f}",
-                          "dom": variables["dom"]} for o in duplicates]
+            for o in duplicates:
+                (dup_rows if o["class"] == "duplicate" else possible_rows).append(
+                    {"pair": variables["title"], "number": str(o["statement_index"] + 1), "statement": o["statement"],
+                     "confidence": f"{o['confidence']:.2f}", "dom": variables["dom"],
+                     "proposals": numbers(by_dup.get(dup_key(o), [])) or "-"})
         prop_sections, prop_panels, totals, warnings = [], [], None, []
+        xref, clashes = proposal_cross(proposals or [], records)
+        decided = {d["panel"]: d for d in (approvals or {}).get("decisions", [])}
         for n, p in proposals or []:
-            variables = proposal_vars(n, p, t, records)
+            variables = proposal_vars(n, p, t, records, xref.get(n, ()), [x for a, b, x in clashes if n in (a, b)], decided.get(n))
             target = panels_dir / f"{name}-{variables['dom']}.xhtml"
             text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
             if isinstance(text, Err):
                 return text
             prop_sections.append(text.value)
             prop_panels.append(target.as_posix())
+        uncovered = None
         if proposals is not None:
             totals, warnings = proposal_effect(proposals, t, records)
-        unannotated = [f"{c['record']}/{c['anchor']}" for c in t["cells"] if c["class"] in TRACE_DETAIL and not c.get("annotation")]
+            warnings += [x for _, _, x in clashes]
+            uncovered = coverage(t, proposals, not_proposed)
+        gaps = [(f"{c['record']}/{c['anchor']}", f"{c['record']} × {c['anchor']} ({c['class']})", dom_id("cell", f"{c['record']}-{c['anchor']}"))
+                for c in t["cells"] if c["class"] in TRACE_DETAIL and not annotated(c.get("annotation"))]
+        gaps += [(dup_key(o), f"{o['item']} restates {o['partner']} statement {o['statement_index'] + 1}", dom_id("dup", f"{o['item']}-{o['partner']}"))
+                 for o in t.get("overlap") or [] if o["class"] == "duplicate" and not annotated(o.get("annotation"))]
+        unannotated = [k for k, _, _ in gaps]
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -1095,16 +1293,16 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                     {"label": "Requested ids Raptor did not serve", "value": "; ".join(f"{x['id']}: {x['reason']}" for x in t.get("not_served", [])) or "-"},
                     {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"}]
         shell = {"title": args.title or f"Records x anchors ({len(t['records'])} x {len(t['anchors'])})",
-                 "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what/remedy text in red and yellow panels is written by a reviewer agent, not Jev.",
+                 "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what, remedy and history text in red, yellow and duplicate panels comes from the anchor-cleanup-proposer agents' annotations, not Jev.",
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                  "anchor_cols": [{"id": a["id"], "statement": a["statement"], "dom": dom_id("anc", a["id"])} for a in t["anchors"]],
                  "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
-                 "overlap_run": "yes" if t.get("overlap") is not None else "", "dup_rows": dup_rows,
+                 "overlap_run": "yes" if t.get("overlap") is not None else "", "dup_rows": dup_rows, "possible_rows": possible_rows,
                  "dup_count": str(len(dup_rows)), "fully_restated": (t.get("summary") or {}).get("fully_restated") or [],
                  "no_relation": (t.get("summary") or {}).get("records_with_no_relation") or [],
                  "dup_message": (t.get("actions") or {}).get("duplicates") or "",
                  "fully_restated_action": (t.get("actions") or {}).get("fully_restated") or "",
-                 "guidance_url": (SKILL_DIR / "references" / "record-trace.md").as_uri() + "#correcting-duplicates",
+                 "guidance_url": args.guidance_url or (SKILL_DIR / "references" / "record-trace.md").as_uri() + "#correcting-duplicates",
                  "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False),
                  "proposals_run": "yes" if proposals is not None else "", "proposal_count": str(len(prop_sections)),
                  "proposal_sections": prop_sections, "reply_hint": REPLY_HINT,
@@ -1112,8 +1310,12 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                      {"label": "Records", "before": str(totals["records_before"]), "after": str(totals["records_after"])},
                      {"label": "Statements", "before": str(totals["statements_before"]), "after": str(totals["statements_after"])},
                      {"label": "Duplicates", "before": str(totals["duplicates"]), "after": str(totals["duplicates"] - totals["duplicates_cleared"])},
-                     {"label": "Conflicts", "before": str(totals["conflicts"]), "after": str(totals["conflicts"] - totals["conflicts_resolved"])}],
-                 "proposal_warnings": warnings, "level": level, "unannotated_cells": unannotated,
+                     {"label": "Conflicts", "before": str(totals["conflicts"]), "after": str(totals["conflicts"] - totals["conflicts_resolved"])},
+                     {"label": "Exceeds", "before": str(totals["exceeds"]), "after": str(totals["exceeds"] - totals["exceeds_cleared"])}],
+                 "proposal_warnings": warnings, "level": level,
+                 "unannotated_cells": [{"text": text, "panel": dom} for _, text, dom in gaps],
+                 "uncovered": uncovered or [], "dropped": [f"{x['title']} ({x['correlation_id']}): {x['reason']}" for x in dropped],
+                 "owner_reply": (approvals or {}).get("reply", ""),
                  "not_proposed": [f"{x['slice']}: {x['reason']}" for x in not_proposed]}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
@@ -1122,7 +1324,8 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"]),
                "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
-               "warnings": warnings, "level": level or None, "not_proposed": not_proposed, "unannotated_cells": unannotated})
+               "warnings": warnings, "level": level or None, "not_proposed": not_proposed, "unannotated_cells": unannotated,
+               "uncovered": uncovered, "dropped": dropped, "approvals": approvals})
 
 
 # ---------------------------------------------------------------- command
@@ -1307,6 +1510,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline-rev", default="", help="git revision holding anchors.json before the round (required unless --trace)")
     p.add_argument("--trace", default="", help="render this `jev_judge.py trace` file instead of a change report")
     p.add_argument("--proposals", default="", help="with --trace: record-cleanup proposals JSON shown on the Proposed fixes tab")
+    p.add_argument("--guidance-url", default="", help="with --trace: where the Duplicates rows link for Correcting duplicates "
+                   "(default: the installed references/record-trace.md)")
     p.add_argument("--fields", default="", help="with --trace: comma-separated field paths record and anchor panels show (default all listed)")
     p.add_argument("--plan-dir", default="", help="plan folder holding anchor-runs/ (default: the folder holding --anchors)")
     p.add_argument("--gate", choices=("plan", "dev"), default="plan")
