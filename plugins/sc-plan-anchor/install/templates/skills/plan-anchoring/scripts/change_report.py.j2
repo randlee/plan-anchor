@@ -698,6 +698,7 @@ RECORD_FIELDS = (("Statements", "statements"), ("Requirement", "requirement_stat
                  ("Related", "dependencies.related"), ("Superseded by", "superseded_by"))
 ANCHOR_PANEL_FIELDS = (("Statement", "statement", "statement"), ("Owner said", "quote", "quote"), ("Scope", "scope"),
                  ("Deterministic check", "deterministic_check"), ("Kind", "kind"), ("Stated by", "stated_by"), ("Stated on", "stated_at"))
+PAIR_FIELDS = {"statements", "decision.text"}  # a duplicate pair panel shows each record's statements, or an ADR's decision
 MODALS = {"Must": "MUST", "MustNot": "MUST NOT", "Shall": "SHALL", "ShallNot": "SHALL NOT", "Should": "SHOULD", "May": "MAY"}
 
 
@@ -777,22 +778,17 @@ def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
             "blocks": blocks, "copy_json": _dump(c), "context_text": "\n".join(context)}
 
 
-def trace_overlap_vars(t: dict) -> dict:
-    """The Overlap panel: duplicated statements grouped by record pair, then the two deletion-candidate lists."""
-    pairs, labels = {}, {}
-    for o in t["overlap"]:
-        if o["class"] == "duplicate":
-            key = labels.setdefault(f"{o['item']} restates {o['partner']}", f"p{len(labels)}")
-            pairs.setdefault(key, []).append(f"{o['partner']} statement {o['statement_index']} ({o['confidence']:.2f}): {o['statement']}")
-    summary = t.get("summary") or {}
-    fields = [(label, key) for label, key in labels.items()]
-    fields += [("Deletion candidates: every statement restated in another record", "fully_restated"),
-               ("Deletion candidates: no relation to any anchor (when the anchors cover every capability)", "records_with_no_relation")]
-    possible = sum(1 for o in t["overlap"] if o["class"] == "possible")
-    return {"dom": "overlap", "title": "Overlap",
-            "subtitle": f"{sum(len(v) for v in pairs.values())} duplicated statements, {possible} possible, of {len(t['overlap'])} asked",
-            "blocks": field_blocks(dict(summary, **pairs), fields),
-            "copy_json": _dump({"overlap": t["overlap"], **{k: summary.get(k) for k in ("per_record", "fully_restated", "records_with_no_relation")}})}
+def trace_pair_vars(item: dict, partner: dict, duplicates: List[dict]) -> dict:
+    """One duplicate pair's side panel: the duplicated statements with Jev's confidence, then each record's statements
+    (an ADR's decision), shown by the record panel's own field list."""
+    dup = [f"{partner['id']} statement {o['statement_index']} ({o['confidence']:.2f}): {o['statement']}" for o in duplicates]
+    blocks = [{"heading": "Duplicated statements", "items": dup, "list": True}]
+    for r in (item, partner):
+        blocks.append({"heading": " ".join(filter(None, [r["id"], (r.get("raptor") or {}).get("title")])), "items": []})
+        blocks += trace_record_vars(r, PAIR_FIELDS)["blocks"]
+    return {"dom": dom_id("dup", f"{item['id']}-{partner['id']}"), "cls": "duplicate", "title": f"{item['id']} restates {partner['id']}",
+            "subtitle": " · ".join(filter(None, (short_repo(item), short_repo(partner)))), "blocks": blocks,
+            "copy_json": _dump(duplicates)}
 
 
 def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
@@ -843,13 +839,21 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                 return text
             sections.append(text.value)
             panel_paths.append(target.as_posix())
-        overlap_section, overlap_panel = "", None
-        if t.get("overlap") is not None:
-            target = panels_dir / f"{name}-overlap.xhtml"
-            text = render(binary.value, "trace-panel.xhtml.j2", trace_overlap_vars(t), target, scratch, run)
+        dup_rows, pair_panels = [], []
+        pairs: dict = {}
+        for o in t.get("overlap") or []:
+            if o["class"] == "duplicate":
+                pairs.setdefault((o["item"], o["partner"]), []).append(o)
+        for (item, partner), duplicates in sorted(pairs.items()):
+            variables = trace_pair_vars(records[item], records[partner], duplicates)
+            target = panels_dir / f"{name}-{variables['dom']}.xhtml"
+            text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
             if isinstance(text, Err):
                 return text
-            overlap_section, overlap_panel = text.value, target.as_posix()
+            sections.append(text.value)
+            pair_panels.append(target.as_posix())
+            dup_rows += [{"pair": variables["title"], "statement": o["statement"], "confidence": f"{o['confidence']:.2f}",
+                          "dom": variables["dom"]} for o in duplicates]
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -867,13 +871,18 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                  "anchor_cols": [{"id": a["id"], "statement": a["statement"], "dom": dom_id("anc", a["id"])} for a in t["anchors"]],
                  "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
-                 "overlap_section": overlap_section,
+                 "overlap_run": "yes" if t.get("overlap") is not None else "", "dup_rows": dup_rows,
+                 "dup_count": str(len(dup_rows)), "fully_restated": (t.get("summary") or {}).get("fully_restated") or [],
+                 "no_relation": (t.get("summary") or {}).get("records_with_no_relation") or [],
+                 "dup_message": (t.get("actions") or {}).get("duplicates") or "",
+                 "fully_restated_action": (t.get("actions") or {}).get("fully_restated") or "",
+                 "guidance_url": (SKILL_DIR / "references" / "record-trace.md").as_uri() + "#correcting-duplicates",
                  "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False)}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
-    return Ok({"html": page.as_posix(), "panels": panel_paths, "overlap_panel": overlap_panel, "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
+    return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"])})
 
 

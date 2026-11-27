@@ -3419,6 +3419,11 @@ TRACE_EXCEEDS_MIN = 0.6     # a related record with P(exceeds=yes) at or above t
 TRACE_DUPLICATE_MIN = 0.6   # overlap: Jev answers yes with confidence at or above this: the statement is a duplicate
 TRACE_POSSIBLE_MIN = 0.4    # overlap: yes with confidence at or above this (below the duplicate threshold): possible
 OVERLAP_CANDIDATE = "overlap"
+# What the caller must do with the overlap results; the tool never chooses which copy to keep (references/record-trace.md).
+OVERLAP_ACTIONS = {
+    "duplicates": "{n} duplicate statements must be corrected: keep each obligation in one record and delete the other copy. "
+                  "See Correcting duplicates in references/record-trace.md.",
+    "fully_restated": "Fully restated: delete this record unless it holds an obligation no other record states."}
 OVERLAP_CRITERIA = {
     "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
     "no": "item.text does not state this obligation.",
@@ -3859,12 +3864,17 @@ def cmd_trace(args) -> Result[dict, ClientError]:
                 overlap.append({"item": job.item_id, "partner": partner, "statement_index": i, "statement": statement,
                                 "choice": answer.choice, "confidence": answer.confidence, "session_id": reply[1],
                                 "class": overlap_class(answer.choice, answer.confidence, thresholds["duplicate"], thresholds["possible"])})
+                if overlap[-1]["class"] == "duplicate":
+                    overlap[-1]["action"] = "correct"
         overlap.sort(key=lambda o: (o["item"], o["partner"], o["statement_index"]))
     answered = [r for r in replies.value + overlap_replies if not isinstance(r, ClientError)]
     judged = [c for c in cells if c["class"] != "error"]
     summary = trace_summary(judged, records.value, anchors)
+    actions, to_correct = None, 0
     if overlap is not None:
         summary.update(overlap_summary(overlap, records.value))
+        to_correct = sum(1 for o in overlap if o["class"] == "duplicate")
+        actions = dict(OVERLAP_ACTIONS, duplicates=OVERLAP_ACTIONS["duplicates"].format(n=to_correct) if to_correct else None)
     trace = {
         "schema": TRACE_SCHEMA, "generated_at": now_utc().isoformat(timespec="seconds"),
         "anchors_path": args.anchors, "model": args.model, "model_answered": sorted({r[2] for r in answered if r[2]}),
@@ -3876,7 +3886,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         "raptor": source["raptor"], "repositories": source["repositories"], "not_served": source["not_served"],
         "records": [{k: r[k] for k in ("id", "kind", "repository", "index", "raptor", "obligations", "diagnostics")}
                     for r in records.value],
-        "cells": cells, "overlap": overlap, "summary": summary, "warnings": warnings,
+        "cells": cells, "overlap": overlap, "actions": actions, "summary": summary, "warnings": warnings,
     }
     path = out_dir / f"{name}.json"
     try:
@@ -3884,6 +3894,8 @@ def cmd_trace(args) -> Result[dict, ClientError]:
     except OSError as exc:
         return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
     data = {"trace_path": str(path), "cells": len(cells), "overlap": None if overlap is None else len(overlap),
+            "duplicates_pass": None if overlap is None else not to_correct, "duplicates_to_correct": None if overlap is None else to_correct,
+            "message": actions and actions["duplicates"],
             "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
             "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
     if failures:

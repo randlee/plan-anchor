@@ -17,7 +17,7 @@ description: Judge REQ, ADR and NFR records against the locked anchors with Jev 
 
 ## When to use
 
-After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits.
+After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits. A run with `duplicates_pass: false` is not finished until a re-run shows `true`, or the remaining items are recorded as conflicts for the owner.
 
 ## Command
 
@@ -49,7 +49,9 @@ The script classifies each cell from P(yes); Jev is never asked for counts.
 
 After the cells, `trace` asks which records restate each other (`--no-overlap` turns it off). Candidate pairs come from the cells: in each anchor column, every pair of records whose cells are not `none`, deduplicated; in a pair the lower id is the item. One request per item: `state.item` is the record as text (id and title, its statement paragraph or an ADR's context, then each statement), and each partner's statements are choice questions `<partner id, - as _>_s<i>`: does the item already state this obligation (yes, no, unclear)? Statements are Raptor's: a REQ/NFR's statement list; an ADR's decision as one block, since Raptor serves no statements for decisions. The requests go through the same batch path, consent rule and `--answers-file` as the cells, in a second batch, because the pairs depend on the cells' answers; a dry run therefore shows no overlap requests.
 
-The script classifies each answer: `yes` with confidence >= 0.6 is a duplicate statement, `yes` >= 0.4 possible, otherwise none (`--duplicate-threshold`, `--possible-threshold`). `overlap` lists every answer as `{item, partner, statement_index, statement, choice, confidence, session_id, class}`; `summary.per_record` gives each record's `statements_restated` and `statements_total`, and `summary.fully_restated` the records every statement of which is a duplicate in another record. The report's Overlap panel lists the duplicated statements by record pair with their confidence, then two deletion-candidate lists: `fully_restated` and `records_with_no_relation`. Read both records before deleting either.
+The script classifies each answer: `yes` with confidence >= 0.6 is a duplicate statement, `yes` >= 0.4 possible, otherwise none (`--duplicate-threshold`, `--possible-threshold`). `overlap` lists every answer as `{item, partner, statement_index, statement, choice, confidence, session_id, class}`; `summary.per_record` gives each record's `statements_restated` and `statements_total`, and `summary.fully_restated` the records every statement of which is a duplicate in another record. The report page has two tabs. It opens on "Anchors × Records" (the grid). "Duplicates" lists the duplicated statements by record pair (pair, statement, confidence; a row opens a side panel with both records' statements), then the deletion candidates: "Fully restated records" (`fully_restated`). The only deletion candidates are duplicates: duplicate statements and records fully restated elsewhere. `records_with_no_relation` is shown on the Anchors × Records tab as "Not covered by any anchor", for information only; it is never a deletion candidate and does not affect `duplicates_pass`. With at least one duplicate the tab label carries a red "(!)" badge and the count; with none it reads "Duplicates 0"; with `--no-overlap` the tab says not run. The trace JSON keeps the two reports apart: `cells` and `overlap`.
+
+The output pushes the caller to correct, never chooses the correction: every duplicate entry carries `action: "correct"`; `data.duplicates_to_correct` counts them and `data.duplicates_pass` is `false` while there is one (exit stays 0; `null` with `--no-overlap`); `data.message` and the top of the Duplicates tab say "N duplicate statements must be corrected: keep each obligation in one record and delete the other copy. See Correcting duplicates in references/record-trace.md." Each row links to that section. The trace's `actions` holds this wording and the fully-restated wording: "Fully restated: delete this record unless it holds an obligation no other record states." Which copy to keep is the caller's judgement, by the rules below.
 
 ## Correcting duplicates
 
@@ -63,6 +65,12 @@ Choose the one home for each duplicated statement, in this order:
 4. Between two REQs, keep the statement in the record whose title and subject it belongs to. If that does not decide it, keep it in the record with the higher judge-jev score.
 
 The correction is a deletion. Remove the duplicate statement. Add only the id of the record that keeps it, and only where the remaining text would not read without it. Do not reword the kept statement in the same pass. A record left with no statements is deleted.
+
+Only duplicates are deletion candidates: duplicate statements, and records fully restated elsewhere (delete such a record unless it holds an obligation no other record states).
+
+- Anchors capture intent, not every required detail. REQ/ADR records are added to fill gaps in required coverage. For example, an anchor may set SQLite behaviour while the records still have to specify details it does not mention, such as WAL mode or no WAL. A record can be necessary without any anchor of its own.
+- So a record not covered by any anchor is never deleted for that reason. A cell marked "exceeds" may be required detail rather than over-specification, and the caller judges which.
+- Deleting a record for lack of an anchor is only reasonable once the project declares its anchor set complete. Until then, only duplicates are corrected.
 
 The agent running the deduplication makes these choices itself. The one exception is when the two copies differ in meaning: that is a conflict, not a duplicate, and goes to the owner with both texts quoted.
 
@@ -85,6 +93,8 @@ Errors (exit 2): `ANCHOR.NONE_LOCKED`, `DEPENDENCY.RAPTOR`, `RAPTOR.NO_INVENTORY
 ## Interpretation
 
 - Red: the record contradicts the owner. Fix the record (or ask the owner), then re-trace.
-- Yellow: the record adds constraints the anchor did not ask for. Keep them only if another authority asks for them.
-- A record with no relation to any anchor is not a deletion candidate: anchors capture what the owner stated, not every capability. Treat "unrelated" as "delete" only when the anchors are known to cover every capability.
+- Yellow: the record adds constraints the anchor did not ask for.
+- Anchors capture intent, not every required detail. REQ/ADR records are added to fill gaps in required coverage. For example, an anchor may set SQLite behaviour while the records still have to specify details it does not mention, such as WAL mode or no WAL. A record can be necessary without any anchor of its own.
+- So a record not covered by any anchor is never deleted for that reason. A cell marked "exceeds" may be required detail rather than over-specification, and the caller judges which.
+- Deleting a record for lack of an anchor is only reasonable once the project declares its anchor set complete. Until then, only duplicates are corrected.
 - Annotations are a reviewer's reading. When `jev_disputed` is true the reviewer disagrees with Jev's class; read the record before acting.

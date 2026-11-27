@@ -327,6 +327,10 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(page.count('class="rec hdr" data-panel="rec-'), 3)
         self.assertEqual(page.count('class="anc hdr" data-panel="anc-'), 1)
         self.assertIn("c-none", page)
+        grid = page[page.index('id="tab-grid"'):page.index('id="tab-dup"')]
+        self.assertIn("<h3>Not covered by any anchor</h3>", grid)
+        self.assertIn("<li>NFR-003</li>", grid)
+        self.assertNotIn("NFR-003", page[page.index('id="tab-dup"'):page.index('id="side"')], "not a deletion candidate")
         with contextlib.redirect_stdout(io.StringIO()):
             cr.main(["--trace", out["data"]["trace_path"], "--out", str(Path(self.tmp) / "report"), "--name", "only", "--fields", "statements"])
         only = (Path(self.tmp) / "report" / "only" / "only-rec-REQ-001.xhtml").read_text(encoding="utf-8")
@@ -404,6 +408,11 @@ class TraceOverlapTests(unittest.TestCase):
         self.assertEqual(per["REQ-SAG-0010"], {"statements_restated": 0, "statements_total": 1})
         self.assertEqual(trace["summary"]["fully_restated"], ["REQ-SAG-0008"])
         self.assertEqual(trace["summary"]["records_with_no_relation"], [])
+        self.assertEqual((out["data"]["duplicates_pass"], out["data"]["duplicates_to_correct"]), (False, 7))
+        self.assertEqual(out["data"]["message"], "7 duplicate statements must be corrected: keep each obligation in one record and "
+                                                 "delete the other copy. See Correcting duplicates in references/record-trace.md.")
+        self.assertEqual({o.get("action") for o in trace["overlap"] if o["class"] == "duplicate"}, {"correct"})
+        self.assertNotIn("action", by[("ADR-SAG-0021", "REQ-SAG-0003", 5)], "a possible duplicate is not an action")
         code, out = self.run_trace("--answers-file", self.answers(), "--duplicate-threshold", "0.99")
         self.assertEqual(code, 0, out)
         self.assertEqual(out["data"]["summary"]["fully_restated"], [], "REQ-SAG-0008 statements 0 and 1 are below 0.99")
@@ -414,6 +423,7 @@ class TraceOverlapTests(unittest.TestCase):
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
         self.assertIsNone(trace["overlap"])
         self.assertNotIn("fully_restated", trace["summary"])
+        self.assertIsNone(out["data"]["duplicates_pass"])
         code, out = self.run_trace("--answers-file", self.answers(overlap=False))
         self.assertEqual((code, out["error"]["code"]), (2, "FIXTURE.MISSING"), "with overlap on, the overlap requests are sent")
         self.assertIn("/overlap", out["error"]["message"])
@@ -426,27 +436,57 @@ class TraceOverlapTests(unittest.TestCase):
         self.assertIn("not formed", out["data"]["overlap"])
         self.assertFalse(self.out.exists())
 
-    @unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
-    def test_report_has_an_overlap_section(self):
-        code, out = self.run_trace("--answers-file", self.answers())
+    def render(self, *extra, answers=None):
+        code, out = self.run_trace("--answers-file", answers or self.answers(), *extra)
         self.assertEqual(code, 0, out)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = cr.main(["--trace", out["data"]["trace_path"], "--out", str(Path(self.tmp) / "report")])
         env = json.loads(buf.getvalue())
         self.assertEqual(rc, 0, env)
-        panel = Path(env["data"]["overlap_panel"]).read_text(encoding="utf-8")
-        xml.dom.minidom.parseString(panel)
-        self.assertIn("<h3>ADR-SAG-0021 restates REQ-SAG-0003</h3>", panel)
-        self.assertIn("<h3>ADR-SAG-0021 restates REQ-SAG-0008</h3>", panel)
-        self.assertNotIn("restates REQ-SAG-0010", panel)
-        self.assertIn("REQ-SAG-0003 statement 1 (0.98): When `&lt;CLI&gt;_LOG_ROOT` is set", panel)
-        self.assertIn("7 duplicated statements, 2 possible, of 16 asked", panel)
-        self.assertIn("<h3>Deletion candidates: every statement restated in another record</h3>", panel)
-        self.assertIn("<p>REQ-SAG-0008</p>", panel)
-        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
-        self.assertIn('id="overlap"', page)
-        self.assertLess(page.index('id="overlap"'), page.index('id="summary"'))
+        return env, Path(env["data"]["html"]).read_text(encoding="utf-8")
+
+    @unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
+    def test_duplicates_tab_shows_a_badge_with_the_count(self):
+        env, page = self.render()
+        self.assertIn('data-tab="tab-dup">Duplicates <span class="badge">(!)</span> 7</button>', page)
+        self.assertIn('class="tab active" role="tab" data-tab="tab-grid">Anchors × Records</button>', page)
+        self.assertIn('id="tab-dup" hidden', page)
+        self.assertEqual(env["data"]["duplicates"], 7)
+        self.assertEqual(page.count('<tr class="hdr" data-panel="dup-'), 7)
+        self.assertIn('<td>ADR-SAG-0021 restates REQ-SAG-0003</td><td>When `&lt;CLI&gt;_LOG_ROOT` is set and non-empty', page)
+        self.assertIn("<td>0.98</td>", page)
+        self.assertIn("7 duplicate statements must be corrected", page)
+        self.assertEqual(page.count('#correcting-duplicates">correct: Correcting duplicates</a>'), 7)
+        self.assertIn("Fully restated: delete this record unless it holds an obligation no other record states.", page)
+        self.assertNotIn("Serves no anchor", page)
+        self.assertIn("<h2>Fully restated records (deletion candidates)</h2>", page)
+        self.assertIn("<li>REQ-SAG-0008</li>", page)
+        self.assertNotIn("Records serving no anchor", page)
+        self.assertEqual(len(env["data"]["pair_panels"]), 2)
+        pair = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["pair_panels"] if "REQ-SAG-0008" in x)
+        xml.dom.minidom.parseString(pair)
+        self.assertIn("ADR-SAG-0021 restates REQ-SAG-0008", pair)
+        self.assertIn("The wheel MUST NOT depend on the `sc-observability` Python package.", pair)
+        self.assertIn("<h3>Decision</h3>", pair, "the ADR side shows its decision")
+        self.assertIn('id="dup-ADR-SAG-0021-REQ-SAG-0008"', page, "the row's panel is in the shared side panel")
+
+    @unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
+    def test_duplicates_tab_without_duplicates_has_no_badge(self):
+        no = json.loads(Path(self.answers()).read_text(encoding="utf-8"))
+        for item, a in REAL["answers"].items():
+            no[f"{item}/overlap"] = {q: OVERLAP_NO for q in a["answers"]}
+        code, out = self.run_trace("--answers-file", write(self.tmp, "no.json", no))
+        self.assertEqual((out["data"]["duplicates_pass"], out["data"]["duplicates_to_correct"], out["data"]["message"]), (True, 0, None))
+        _, page = self.render(answers=write(self.tmp, "no.json", no))
+        self.assertIn('data-tab="tab-dup">Duplicates 0</button>', page)
+        self.assertNotIn('class="badge"', page)
+        self.assertIn("No duplicated statements.", page)
+        self.assertNotIn("must be corrected", page)
+        _, page = self.render("--no-overlap", answers=self.answers(overlap=False))
+        self.assertIn('data-tab="tab-dup">Duplicates</button>', page)
+        self.assertNotIn('class="badge"', page)
+        self.assertIn("Duplicates: not run", page)
 
 
 STATEMENT_START = "The runtime crates are created by copying"
