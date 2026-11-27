@@ -29,6 +29,7 @@ Status: accepted (amended for 0.12.1). Date: 2026-10-09.
 
 ### Context
 
+Plan-anchor must decide which work the script does and which the session and Jev do.
 Facts stated during planning are lost as context compresses, and
 language models cannot count, gate reliably, or keep a request byte-identical.
 
