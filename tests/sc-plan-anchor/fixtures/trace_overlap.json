@@ -1,0 +1,473 @@
+{
+ "_source": "Real records, requests and Jev answers from the trace-overlap prototype run of 2026-11-26 against sc-agent's records (req2.jsonl lines 6, 7, 3 and out2.jsonl). The Raptor index is rebuilt from those requests: REQ statement lists as Raptor served them, each ADR's context and decision text as one block; REQ-SAG-0008 and REQ-SAG-0010 were only partners, so only their statements are known.",
+ "index": {
+  "metadata": {
+   "repository": "urn:raptor:repo:sc-agent",
+   "generated": "2026-11-26T00:00:00+00:00",
+   "files": 1,
+   "records": 5
+  },
+  "requirements": [
+   {
+    "id": "REQ-SAG-0003",
+    "title": "Log locations and retention",
+    "requirement_statement": {
+     "text": "Definitions: sc-agent is the crates and CLIs of this repository. A CLI is one of the command-line programs decidr or sitr; `<cli>` is its name in lower case and `<CLI>` in upper case. A Logger is an sc-observability logger that a caller passes to a CLI's library entry point. The general log is the diagnostic log of one entry point (ADR-SAG-0021); decidr's is `decidr.log.jsonl` and sitr's is `sitr.log.jsonl`. A session log is the record of every session; a session is one model request with its own ULID `session_id`, and every send of that request, including busy resends, belongs to it. A link record ties one run to one session (REQ-SAG-0005). A run log is the file of link records that sits beside a session log in the same directory. To remove a log is to rotate, prune or delete it. The generated client is the Python module a consumer renders from the sc-decidr wheel's sc-compose template (REQ-SAG-0018). The client name is the consumer's product name, a constant in the generated client, and equals its `agent_role` (REQ-SAG-0004), such as `plan-anchor` or `judge-jev`. The client Logger is the Logger the generated client obtains from the wheel under the client name (REQ-SAG-0008). `<CLIENT>_LOG_ROOT` is the environment variable named by the client name uppercased with hyphens replaced by underscores. The default session files are the session files REQ-SAG-0005 names for an agent role. The client's logs are the general log the client Logger writes and the default session files.",
+     "statements": [
+      {
+       "modal": "Must",
+       "text": "With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`."
+      },
+      {
+       "modal": "Must",
+       "text": "When `<CLI>_LOG_ROOT` is set and non-empty, that CLI MUST use its value in place of `~/.sc-agent`."
+      },
+      {
+       "modal": "Must",
+       "text": "When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs."
+      },
+      {
+       "modal": "Must",
+       "text": "Session logs MUST be written under `~/.sc-agent/sessions/` (REQ-SAG-0005)."
+      },
+      {
+       "modal": "Must",
+       "text": "A session log MUST remain in `~/.sc-agent/sessions/` whatever its age."
+      },
+      {
+       "modal": "Must",
+       "text": "A run log MUST remain in `~/.sc-agent/sessions/` whatever its age."
+      },
+      {
+       "modal": "Must",
+       "text": "sc-agent MUST NOT contain code that removes a general log."
+      },
+      {
+       "modal": "Must",
+       "text": "sc-agent MUST NOT remove a session log."
+      },
+      {
+       "modal": "Must",
+       "text": "sc-agent MUST NOT remove a run log."
+      }
+     ]
+    }
+   },
+   {
+    "id": "REQ-SAG-0008",
+    "title": "",
+    "requirement_statement": {
+     "text": "",
+     "statements": [
+      {
+       "modal": "Must",
+       "text": "The Rust API MUST accept an injected general Logger."
+      },
+      {
+       "modal": "Must",
+       "text": "When a Python caller requests a named Logger, the wheel MUST return a Logger built from the linked crate."
+      },
+      {
+       "modal": "Must",
+       "text": "The wheel MUST NOT depend on the `sc-observability` Python package."
+      }
+     ]
+    }
+   },
+   {
+    "id": "REQ-SAG-0010",
+    "title": "",
+    "requirement_statement": {
+     "text": "",
+     "statements": [
+      {
+       "modal": "Must",
+       "text": "The source code of this project MUST NOT call any sleep function."
+      }
+     ]
+    }
+   }
+  ],
+  "decisions": [
+   {
+    "id": "ADR-SAG-0021",
+    "title": "One sc-observability Logger per process, owned by the entry point; general logs and session logs in separate trees",
+    "context": {
+     "text": "sc-agent logs through sc-observability. The `decidr` CLI, the `sitr` CLI and the sc-decidr wheel already link the sc-observability crate. Two kinds of log exist: the general log (diagnostics, searched for issues) and session logs (the long-term record of every model query and response, analysed later and loaded into SQLite, ADR-SAG-0002)."
+    },
+    "decision": {
+     "text": "**One Logger per process, owned by the entry point.** The entry point is the CLI's `main`, or, for a Python app, its sc-compose generated client.\n- The entry point obtains one sc-observability `Logger`, keeps it for the life of the process and gives it to each Run it creates (ADR-SAG-0019 decision 14); the Run passes it to every decision call, flushes it after each call and on exit, and never shuts down a Logger it borrowed.\n- The generated client has no close operation.\n- Library code never builds a Logger of its own while one is injected, and never forwards records to Python `logging`.\n\n**The wheel exposes the crate's Logger.** The sc-decidr wheel returns the sc-observability crate's `Logger` to Python, named by the caller.\n- Python may write its own records to it and gives it to the Run of its sc-decidr calls;\n- Rust receives its own Logger object back, so no record crosses a bridge and the process has one queue.\n- The wheel has no dependency on the `sc-observability` Python package.\n\n**Products.** sc-agent ships three products. sc-observability is a crate linked into each, not a product.\n\n| Product | Contains |\n|---|---|\n| `decidr` CLI | decidr, sc-observability |\n| `sitr` CLI | sitr, sc-observability |\n| sc-decidr wheel | the decidr and sitr Python APIs, sc-observability |\n\nThere is one Python wheel.\n- A Python process that loads sc-agent has one copy of sc-observability and one Logger, which it injects into decidr and sitr calls alike.\n- Installing the wheel always installs both APIs, whichever one the caller uses.\n\n**Defaults.** With no Logger injected, sc-agent uses the default sc-observability Logger, which writes the general log to disk at the paths below.\n- Every decision and sitr call is logged, so with nothing configured every log lands under `~/.sc-agent/` for a full audit.\n- A caller that wants another general-log sink (a database, nothing) changes the sink of the Logger it injects; that is the caller's responsibility.\n\n**Session log.** The session log is always on and is not configurable. sc-agent writes every session row in Rust through its session sink.\n- No Logger sits between sc-agent and the session sink, and the session sink never receives a general-log record.\n- A session sink of the same kind, opened on the run log, appends one link record `{run_id, session_id, cached}` to the run log, `runs.jsonl` beside `sessions.jsonl`, for every query that writes a session row (`cached: false`) and for every cache hit (`cached: true`); the run log is always on and never rotated or pruned either.\n- The session row carries no `run_id`: runs and sessions are many-to-many, because a cache hit serves a later run from an older session.\n- Each session row carries `provider` and `usage` (`null` when the reply reports none), `model_requested` (the resolved model id) and `model_answered` (the model id the response reported, `null` when no response arrived), and has no start or end time.\n- Callers inject no session Logger and cannot replace the session sink.\n\n**Paths.** The log root is `~/.sc-agent`.\n- One function returns a CLI's log root: its `<CLI>_LOG_ROOT` environment override when set and non-empty (used by tests), else `~/.sc-agent`.\n- The CLIs and the wheel call that function; nothing else computes a log path.\n- The wheel's `sc_agent.session_rows(session_ids, *, agent_role, project=None)` is the one reader of the session-log layout: it finds the log root with the same function used to write session rows and returns, as an ok value, a map from each requested `session_id` to its row; a missing id returns `session.not_found` (category `validation`) naming the ids.\n- A generated client reads session rows only through it and has no log-root argument (NFR-SAG-0004).\n\n- Session logs are `~/.sc-agent/sessions/<repo>/<agent_role>/<project>/sessions.jsonl`, and each one's run log is `runs.jsonl` in the same directory.\n\n| Entry point | General log | Session logs |\n|---|---|---|\n| `decidr` CLI | `logs/decidr.log.jsonl` | `sessions/<repo>/<agent_role>/<project>/sessions.jsonl` |\n| `sitr` CLI | `logs/sitr.log.jsonl` | none |\n| `plan-anchor` (generated client) | `logs/plan-anchor.log.jsonl` | `sessions/<repo>/plan-anchor/<project>/sessions.jsonl` |\n| `judge-jev` (generated client) | `logs/judge-jev.log.jsonl`, holding its decidr and sitr records | `sessions/<repo>/judge-jev/<project>/sessions.jsonl` |\n\nA wheel is not an entry point and has no row: it writes to the Logger its caller injects.\n- Every entry point has a row and every cell is filled.\n- The table is updated when an entry point is added.\n\n**Session identity.**\n\n- `agent_role` is the agent or app making the request.\n- A generated client hardcodes it to its product name; it is not a user setting.\n- `tool` and `tool_version` name the program that sent the query and its version: the generated client's name, or `decidr` (REQ-SAG-0004).\n- They are carried by the Run the query is sent through (ADR-SAG-0019 decision 14).\n- `project` is the project/phase, resolved by the configuration lookup of ADR-SAG-0020 (`--project`, `SC_PROJECT`, then the config files).\n- It is required and has no default; a session without one is refused with a typed error naming every place it can be set.\n- Usage, help and errors call it \"project/phase\".\n\n**Errors.** An error is logged once, in Rust, with the same id and fields whatever the harness, so the general logs can be searched with one set of terms.\n- It is logged again only when an outer layer adds information that helps debugging.\n- A failed `log.write` or `log.flush` returns the Logger's failure as an error value; nothing else handles it.\n- A successful decision remains in its session row when general logging fails; the call returns the log error rather than that decision value."
+    }
+   },
+   {
+    "id": "ADR-SAG-0004",
+    "title": "Crate layering and error values",
+    "context": {
+     "text": "sc-agent will launch decision models, LLMs, CLI agents and SDK agents. Each needs shared types, configuration, secrets, HTTP and logging, but not each other's code."
+    },
+    "decision": {
+     "text": "`sc-agent` is the bottom layer: the provider tables, `send` and `send_batch`, resends, keys, configuration, errors, logging paths and session rows.\n- `sc-treesitter` (tree-sitter extraction) is over `sc-agent`.\n- On top: `decidr` (the decision CLI), `sitr` (the tree-sitter CLI) and `sc-agent-py` (the one wheel, holding the decidr and sitr APIs).\n- CLI agents and SDK agents get their own crates later.\n- Errors are discriminated unions: every call returns `Result<T, E>`, and `E` carries the error info: at least an id and a message.\n- A layer that changes an error keeps the lower error's id and message (REQ-SAG-0002).\n- An error may carry more fields.\n- Whether a crate has its own error type or shares one is not specified."
+    }
+   }
+  ],
+  "diagnostics": {
+   "issues": []
+  }
+ },
+ "requests": {
+  "ADR-SAG-0021": {
+   "state": {
+    "item": {
+     "id": "ADR-SAG-0021",
+     "title": "One sc-observability Logger per process, owned by the entry point; general logs and session logs in separate trees",
+     "text": "ADR-SAG-0021: One sc-observability Logger per process, owned by the entry point; general logs and session logs in separate trees\nsc-agent logs through sc-observability. The `decidr` CLI, the `sitr` CLI and the sc-decidr wheel already link the sc-observability crate. Two kinds of log exist: the general log (diagnostics, searched for issues) and session logs (the long-term record of every model query and response, analysed later and loaded into SQLite, ADR-SAG-0002).\n- **One Logger per process, owned by the entry point.** The entry point is the CLI's `main`, or, for a Python app, its sc-compose generated client.\n- The entry point obtains one sc-observability `Logger`, keeps it for the life of the process and gives it to each Run it creates (ADR-SAG-0019 decision 14); the Run passes it to every decision call, flushes it after each call and on exit, and never shuts down a Logger it borrowed.\n- The generated client has no close operation.\n- Library code never builds a Logger of its own while one is injected, and never forwards records to Python `logging`.\n\n**The wheel exposes the crate's Logger.** The sc-decidr wheel returns the sc-observability crate's `Logger` to Python, named by the caller.\n- Python may write its own records to it and gives it to the Run of its sc-decidr calls;\n- Rust receives its own Logger object back, so no record crosses a bridge and the process has one queue.\n- The wheel has no dependency on the `sc-observability` Python package.\n\n**Products.** sc-agent ships three products. sc-observability is a crate linked into each, not a product.\n\n| Product | Contains |\n|---|---|\n| `decidr` CLI | decidr, sc-observability |\n| `sitr` CLI | sitr, sc-observability |\n| sc-decidr wheel | the decidr and sitr Python APIs, sc-observability |\n\nThere is one Python wheel.\n- A Python process that loads sc-agent has one copy of sc-observability and one Logger, which it injects into decidr and sitr calls alike.\n- Installing the wheel always installs both APIs, whichever one the caller uses.\n\n**Defaults.** With no Logger injected, sc-agent uses the default sc-observability Logger, which writes the general log to disk at the paths below.\n- Every decision and sitr call is logged, so with nothing configured every log lands under `~/.sc-agent/` for a full audit.\n- A caller that wants another general-log sink (a database, nothing) changes the sink of the Logger it injects; that is the caller's responsibility.\n\n**Session log.** The session log is always on and is not configurable. sc-agent writes every session row in Rust through its session sink.\n- No Logger sits between sc-agent and the session sink, and the session sink never receives a general-log record.\n- A session sink of the same kind, opened on the run log, appends one link record `{run_id, session_id, cached}` to the run log, `runs.jsonl` beside `sessions.jsonl`, for every query that writes a session row (`cached: false`) and for every cache hit (`cached: true`); the run log is always on and never rotated or pruned either.\n- The session row carries no `run_id`: runs and sessions are many-to-many, because a cache hit serves a later run from an older session.\n- Each session row carries `provider` and `usage` (`null` when the reply reports none), `model_requested` (the resolved model id) and `model_answered` (the model id the response reported, `null` when no response arrived), and has no start or end time.\n- Callers inject no session Logger and cannot replace the session sink.\n\n**Paths.** The log root is `~/.sc-agent`.\n- One function returns a CLI's log root: its `<CLI>_LOG_ROOT` environment override when set and non-empty (used by tests), else `~/.sc-agent`.\n- The CLIs and the wheel call that function; nothing else computes a log path.\n- The wheel's `sc_agent.session_rows(session_ids, *, agent_role, project=None)` is the one reader of the session-log layout: it finds the log root with the same function used to write session rows and returns, as an ok value, a map from each requested `session_id` to its row; a missing id returns `session.not_found` (category `validation`) naming the ids.\n- A generated client reads session rows only through it and has no log-root argument (NFR-SAG-0004).\n\n- Session logs are `~/.sc-agent/sessions/<repo>/<agent_role>/<project>/sessions.jsonl`, and each one's run log is `runs.jsonl` in the same directory.\n\n| Entry point | General log | Session logs |\n|---|---|---|\n| `decidr` CLI | `logs/decidr.log.jsonl` | `sessions/<repo>/<agent_role>/<project>/sessions.jsonl` |\n| `sitr` CLI | `logs/sitr.log.jsonl` | none |\n| `plan-anchor` (generated client) | `logs/plan-anchor.log.jsonl` | `sessions/<repo>/plan-anchor/<project>/sessions.jsonl` |\n| `judge-jev` (generated client) | `logs/judge-jev.log.jsonl`, holding its decidr and sitr records | `sessions/<repo>/judge-jev/<project>/sessions.jsonl` |\n\nA wheel is not an entry point and has no row: it writes to the Logger its caller injects.\n- Every entry point has a row and every cell is filled.\n- The table is updated when an entry point is added.\n\n**Session identity.**\n\n- `agent_role` is the agent or app making the request.\n- A generated client hardcodes it to its product name; it is not a user setting.\n- `tool` and `tool_version` name the program that sent the query and its version: the generated client's name, or `decidr` (REQ-SAG-0004).\n- They are carried by the Run the query is sent through (ADR-SAG-0019 decision 14).\n- `project` is the project/phase, resolved by the configuration lookup of ADR-SAG-0020 (`--project`, `SC_PROJECT`, then the config files).\n- It is required and has no default; a session without one is refused with a typed error naming every place it can be set.\n- Usage, help and errors call it \"project/phase\".\n\n**Errors.** An error is logged once, in Rust, with the same id and fields whatever the harness, so the general logs can be searched with one set of terms.\n- It is logged again only when an outer layer adds information that helps debugging.\n- A failed `log.write` or `log.flush` returns the Logger's failure as an error value; nothing else handles it.\n- A successful decision remains in its session row when general logging fails; the call returns the log error rather than that decision value."
+    }
+   },
+   "questions": {
+    "REQ_SAG_0003_s0": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s1": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: When `<CLI>_LOG_ROOT` is set and non-empty, that CLI MUST use its value in place of `~/.sc-agent`.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s2": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s3": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: Session logs MUST be written under `~/.sc-agent/sessions/` (REQ-SAG-0005).",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s4": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: A session log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s5": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: A run log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s6": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: sc-agent MUST NOT contain code that removes a general log.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s7": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: sc-agent MUST NOT remove a session log.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0003_s8": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0003?\nOBLIGATION: sc-agent MUST NOT remove a run log.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0008_s0": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: The Rust API MUST accept an injected general Logger.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0008_s1": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: When a Python caller requests a named Logger, the wheel MUST return a Logger built from the linked crate.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0008_s2": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: The wheel MUST NOT depend on the `sc-observability` Python package.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    }
+   }
+  },
+  "REQ-SAG-0003": {
+   "state": {
+    "item": {
+     "id": "REQ-SAG-0003",
+     "title": "Log locations and retention",
+     "text": "REQ-SAG-0003: Log locations and retention\nDefinitions: sc-agent is the crates and CLIs of this repository. A CLI is one of the command-line programs decidr or sitr; `<cli>` is its name in lower case and `<CLI>` in upper case. A Logger is an sc-observability logger that a caller passes to a CLI's library entry point. The general log is the diagnostic log of one entry point (ADR-SAG-0021); decidr's is `decidr.log.jsonl` and sitr's is `sitr.log.jsonl`. A session log is the record of every session; a session is one model request with its own ULID `session_id`, and every send of that request, including busy resends, belongs to it. A link record ties one run to one session (REQ-SAG-0005). A run log is the file of link records that sits beside a session log in the same directory. To remove a log is to rotate, prune or delete it. The generated client is the Python module a consumer renders from the sc-decidr wheel's sc-compose template (REQ-SAG-0018). The client name is the consumer's product name, a constant in the generated client, and equals its `agent_role` (REQ-SAG-0004), such as `plan-anchor` or `judge-jev`. The client Logger is the Logger the generated client obtains from the wheel under the client name (REQ-SAG-0008). `<CLIENT>_LOG_ROOT` is the environment variable named by the client name uppercased with hyphens replaced by underscores. The default session files are the session files REQ-SAG-0005 names for an agent role. The client's logs are the general log the client Logger writes and the default session files.\n- With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`.\n- When `<CLI>_LOG_ROOT` is set and non-empty, that CLI MUST use its value in place of `~/.sc-agent`.\n- When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs.\n- Session logs MUST be written under `~/.sc-agent/sessions/` (REQ-SAG-0005).\n- A session log MUST remain in `~/.sc-agent/sessions/` whatever its age.\n- A run log MUST remain in `~/.sc-agent/sessions/` whatever its age.\n- sc-agent MUST NOT contain code that removes a general log.\n- sc-agent MUST NOT remove a session log.\n- sc-agent MUST NOT remove a run log."
+    }
+   },
+   "questions": {
+    "REQ_SAG_0008_s0": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: The Rust API MUST accept an injected general Logger.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0008_s1": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: When a Python caller requests a named Logger, the wheel MUST return a Logger built from the linked crate.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    },
+    "REQ_SAG_0008_s2": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0008?\nOBLIGATION: The wheel MUST NOT depend on the `sc-observability` Python package.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    }
+   }
+  },
+  "ADR-SAG-0004": {
+   "state": {
+    "item": {
+     "id": "ADR-SAG-0004",
+     "title": "Crate layering and error values",
+     "text": "ADR-SAG-0004: Crate layering and error values\nsc-agent will launch decision models, LLMs, CLI agents and SDK agents. Each needs shared types, configuration, secrets, HTTP and logging, but not each other's code.\n- `sc-agent` is the bottom layer: the provider tables, `send` and `send_batch`, resends, keys, configuration, errors, logging paths and session rows.\n- `sc-treesitter` (tree-sitter extraction) is over `sc-agent`.\n- On top: `decidr` (the decision CLI), `sitr` (the tree-sitter CLI) and `sc-agent-py` (the one wheel, holding the decidr and sitr APIs).\n- CLI agents and SDK agents get their own crates later.\n- Errors are discriminated unions: every call returns `Result<T, E>`, and `E` carries the error info: at least an id and a message.\n- A layer that changes an error keeps the lower error's id and message (REQ-SAG-0002).\n- An error may carry more fields.\n- Whether a crate has its own error type or shares one is not specified."
+    }
+   },
+   "questions": {
+    "REQ_SAG_0010_s0": {
+     "type": "choice",
+     "instructions": "Does item.text already state this obligation from REQ-SAG-0010?\nOBLIGATION: The source code of this project MUST NOT call any sleep function.",
+     "criteria": {
+      "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+      "no": "item.text does not state this obligation.",
+      "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."
+     }
+    }
+   }
+  }
+ },
+ "answers": {
+  "ADR-SAG-0021": {
+   "answers": {
+    "REQ_SAG_0003_s0": {
+     "choice": "yes",
+     "confidence": 0.97,
+     "probabilities": {
+      "no": 0.02,
+      "unclear": 0.0,
+      "yes": 0.98
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s1": {
+     "choice": "yes",
+     "confidence": 0.98,
+     "probabilities": {
+      "no": 0.01,
+      "unclear": 0.0,
+      "yes": 0.99
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s2": {
+     "choice": "yes",
+     "confidence": 0.85,
+     "probabilities": {
+      "no": 0.08,
+      "unclear": 0.02,
+      "yes": 0.9
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s3": {
+     "choice": "yes",
+     "confidence": 0.96,
+     "probabilities": {
+      "no": 0.03,
+      "unclear": 0.0,
+      "yes": 0.97
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s4": {
+     "choice": "yes",
+     "confidence": 0.49,
+     "probabilities": {
+      "no": 0.29,
+      "unclear": 0.05,
+      "yes": 0.66
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s5": {
+     "choice": "yes",
+     "confidence": 0.52,
+     "probabilities": {
+      "no": 0.27,
+      "unclear": 0.05,
+      "yes": 0.68
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s6": {
+     "choice": "no",
+     "confidence": 0.68,
+     "probabilities": {
+      "no": 0.79,
+      "unclear": 0.14,
+      "yes": 0.07
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s7": {
+     "choice": "no",
+     "confidence": 0.61,
+     "probabilities": {
+      "no": 0.74,
+      "unclear": 0.18,
+      "yes": 0.08
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0003_s8": {
+     "choice": "yes",
+     "confidence": 0.18,
+     "probabilities": {
+      "no": 0.39,
+      "unclear": 0.16,
+      "yes": 0.45
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0008_s0": {
+     "choice": "yes",
+     "confidence": 0.91,
+     "probabilities": {
+      "no": 0.05,
+      "unclear": 0.01,
+      "yes": 0.94
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0008_s1": {
+     "choice": "yes",
+     "confidence": 0.94,
+     "probabilities": {
+      "no": 0.03,
+      "unclear": 0.01,
+      "yes": 0.96
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0008_s2": {
+     "choice": "yes",
+     "confidence": 1.0,
+     "probabilities": {
+      "no": 0.0,
+      "unclear": 0.0,
+      "yes": 1.0
+     },
+     "type": "choice"
+    }
+   },
+   "session_id": "01M8DH3FHTX6VFDNMR4PNW1M2E"
+  },
+  "REQ-SAG-0003": {
+   "answers": {
+    "REQ_SAG_0008_s0": {
+     "choice": "no",
+     "confidence": 0.35,
+     "probabilities": {
+      "no": 0.57,
+      "unclear": 0.2,
+      "yes": 0.23
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0008_s1": {
+     "choice": "no",
+     "confidence": 0.82,
+     "probabilities": {
+      "no": 0.88,
+      "unclear": 0.07,
+      "yes": 0.05
+     },
+     "type": "choice"
+    },
+    "REQ_SAG_0008_s2": {
+     "choice": "no",
+     "confidence": 0.98,
+     "probabilities": {
+      "no": 0.99,
+      "unclear": 0.01,
+      "yes": 0.0
+     },
+     "type": "choice"
+    }
+   },
+   "session_id": "01M8DH3FHTXSPWW8358RXR9H36"
+  },
+  "ADR-SAG-0004": {
+   "answers": {
+    "REQ_SAG_0010_s0": {
+     "choice": "no",
+     "confidence": 1.0,
+     "probabilities": {
+      "no": 1.0,
+      "unclear": 0.0,
+      "yes": 0.0
+     },
+     "type": "choice"
+    }
+   },
+   "session_id": "01M8DH3FHTH9RFSVX23NY59NAY"
+  }
+ }
+}

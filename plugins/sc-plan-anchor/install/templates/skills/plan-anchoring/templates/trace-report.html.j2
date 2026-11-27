@@ -13,6 +13,7 @@ required_variables:
 defaults:
   subtitle: ""
   summary_copy_json: ""
+  overlap_section: ""
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -99,6 +100,10 @@ defaults:
 {% endfor %}
     </div>
   </div>
+
+{% if overlap_section %}
+{{ overlap_section | safe }}
+{% endif %}
 
   <section class="summary-block" id="summary">
     <div class="section-head">

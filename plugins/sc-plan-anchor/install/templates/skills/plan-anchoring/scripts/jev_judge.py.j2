@@ -61,8 +61,9 @@ Subcommands
   bead-batch      high layer: item beads x an anchor's question bead (and its open candidate children) as batch
                   request lines (--emit prints them), then the low layer; reads beads only
   trace           records (REQ/ADR/NFR, read only through Raptor; DEPENDENCY.RAPTOR without it) x locked anchors:
-                  four Jev questions per cell, classified here as serves, related, exceeds, conflicts or none; writes
-                  trace-<UTC>.json (render: change_report.py --trace)
+                  four Jev questions per cell, classified here as serves, related, exceeds, conflicts or none; then
+                  (--overlap, default on) which statements of records sharing an anchor column another already states;
+                  writes trace-<UTC>.json (render: change_report.py --trace)
   tournament      run one anchor's question tournament through the low layer (oracle x candidate bundles x repeats) and
                   score it; writes result_vars.json for the anchor-tuning agent; data.accepted; never writes beads
 
@@ -3415,6 +3416,13 @@ TRACE_CANDIDATE = "trace"
 TRACE_CONFLICT_MIN = 0.5    # P(conflicts=yes) at or above this: conflicts, whatever the other answers
 TRACE_RELATION_MIN = 0.6    # P(serves=yes) or P(relates=yes) at or above this: the record touches the anchor
 TRACE_EXCEEDS_MIN = 0.6     # a related record with P(exceeds=yes) at or above this: exceeds
+TRACE_DUPLICATE_MIN = 0.6   # overlap: Jev answers yes with confidence at or above this: the statement is a duplicate
+TRACE_POSSIBLE_MIN = 0.4    # overlap: yes with confidence at or above this (below the duplicate threshold): possible
+OVERLAP_CANDIDATE = "overlap"
+OVERLAP_CRITERIA = {
+    "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+    "no": "item.text does not state this obligation.",
+    "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."}
 TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
 TRACE_ANNOTATED = ("exceeds", "conflicts")
 TRACE_PROVENANCE = "reviewer-agent"
@@ -3650,11 +3658,114 @@ def trace_summary(cells: list, records: list, anchors: list) -> dict:
             "conflicts": [{"record": c["record"], "anchor": c["anchor"]} for c in cells if c["class"] == "conflicts"]}
 
 
+def record_statements(r: dict) -> list:
+    """A record's statements as Raptor serves them: its statement list (REQ/NFR), else an ADR's decision as one block."""
+    listed = r["obligations"]["statements"] or []
+    if listed:
+        return [s.get("text", "") if isinstance(s, dict) else str(s) for s in listed]
+    decision = r["raptor"].get("decision")
+    text = decision.get("text") if isinstance(decision, dict) else decision
+    return [text] if text else []
+
+
+def record_text(r: dict) -> str:
+    """The record as Raptor serves it, as text: id and title, its statement paragraph (an ADR's context), then each statement."""
+    raptor = r["raptor"]
+    head = [v.get("text") if isinstance(v, dict) else v for v in (raptor.get("requirement_statement"), raptor.get("context"))]
+    return "\n".join([f"{r['id']}: {raptor.get('title', '')}", next((h for h in head if h), ""),
+                      *(f"- {s}" for s in record_statements(r))])
+
+
+def overlap_partners(cells: list) -> dict:
+    """Item id -> partner ids: in each anchor column, every unordered pair of records whose cell is judged and not none;
+    the lower id (string order) is the item."""
+    columns = {}
+    for c in cells:
+        if c["class"] not in ("none", "error"):
+            columns.setdefault(c["anchor"], set()).add(c["record"])
+    partners = {}
+    for a, b in sorted({(a, b) for ids in columns.values() for a in ids for b in ids if a < b}):
+        partners.setdefault(a, []).append(b)
+    return partners
+
+
+def overlap_jobs(model: str, partners: dict, by_id: dict) -> tuple:
+    """One request per item: one choice question per statement of each partner. Returns (jobs, {(item, qid): (partner, i, statement)})."""
+    jobs, asked = [], {}
+    for item, ids in partners.items():
+        questions = {}
+        for pid in ids:
+            for i, statement in enumerate(record_statements(by_id[pid])):
+                qid = f"{pid.replace('-', '_')}_s{i}"
+                questions[qid] = {"type": "choice", "criteria": OVERLAP_CRITERIA,
+                                  "instructions": f"Does item.text already state this obligation from {pid}?\nOBLIGATION: {statement}"}
+                asked[(item, qid)] = (pid, i, statement)
+        if questions:
+            r = by_id[item]
+            body = {"model": model, "state": {"item": {"id": item, "title": r["raptor"].get("title", ""), "text": record_text(r)}},
+                    "questions": questions}
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, item, None, OVERLAP_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(item, None, OVERLAP_CANDIDATE, 1, rid, body, questions, {}, OVERLAP_CANDIDATE))
+    return jobs, asked
+
+
+def overlap_class(choice: str, confidence: float, duplicate_min: float, possible_min: float) -> str:
+    """One statement's class from Jev's choice and confidence; counted here, never asked of Jev."""
+    if choice != "yes" or confidence < possible_min:
+        return "none"
+    return "duplicate" if confidence >= duplicate_min else "possible"
+
+
+def overlap_summary(overlap: list, records: list) -> dict:
+    restated = {}
+    for o in overlap:
+        if o["class"] == "duplicate":
+            restated.setdefault(o["partner"], set()).add(o["statement_index"])
+    per_record = {r["id"]: {"statements_restated": len(restated.get(r["id"], ())), "statements_total": len(record_statements(r))}
+                  for r in records}
+    return {"per_record": per_record,
+            "fully_restated": [rid for rid, n in per_record.items() if n["statements_total"] and n["statements_restated"] == n["statements_total"]]}
+
+
+def trace_replies(args, jobs: list, fixture) -> Result[list, ClientError]:
+    """Each job's reply in job order, (answers, session_id, model_answered) or a ClientError: from the fixture, or one batch."""
+    replies = []
+    if fixture is not None:
+        for job in jobs:
+            got = decidr_client.fixture_attempt(job, fixture, 1)
+            if not got["ok"]:
+                return Err(got["error"])
+            replies.append((got["value"]["answers"], None, "fixture"))
+        return Ok(replies)
+    if not jobs:
+        return Ok(replies)
+    allowed = decidr_client.remote_preflight(args.repository_root, "The record texts and anchor statements")
+    if not allowed["ok"]:
+        return Err(allowed["error"])
+    result = decidr_client.call_batch_results([j.body for j in jobs], model=args.model, abort_on=frozenset({"auth"}),
+                                              timeout_secs=args.timeout, repository_root=args.repository_root,
+                                              consent_what="The record texts and anchor statements", workers=args.workers)
+    if not result["ok"]:
+        return Err(result["error"])
+    by_position = {line.get("position"): line for line in result["value"]}
+    for n in range(len(jobs)):
+        line = by_position.get(n)
+        if line is None:
+            replies.append(ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned no result for this request"))
+        elif not line["ok"]:
+            replies.append(line["error"])
+        else:
+            replies.append((line["value"], line.get("session_id"), line.get("model_answered")))
+    return Ok(replies)
+
+
 def cmd_trace(args) -> Result[dict, ClientError]:
     thresholds = {}
     for name, flag, value in (("conflicts", "--conflict-threshold", args.conflict_threshold),
                               ("relation", "--relation-threshold", args.relation_threshold),
-                              ("exceeds", "--exceeds-threshold", args.exceeds_threshold)):
+                              ("exceeds", "--exceeds-threshold", args.exceeds_threshold),
+                              ("duplicate", "--duplicate-threshold", args.duplicate_threshold),
+                              ("possible", "--possible-threshold", args.possible_threshold)):
         checked = check_threshold(value, flag)
         if isinstance(checked, Err):
             return checked
@@ -3680,7 +3791,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
     annotations = load_trace_annotations(args.annotations)
     if isinstance(annotations, Err):
         return annotations
-    loaded = answers_file(args.answers_file, "'<record>/<anchor>' or '<anchor>'")
+    loaded = answers_file(args.answers_file, "'<record>/<anchor>', '<anchor>', '<item record>/overlap' or 'overlap'")
     if isinstance(loaded, Err):
         return loaded
     fixture = loaded.value
@@ -3691,46 +3802,19 @@ def cmd_trace(args) -> Result[dict, ClientError]:
             state = {"record": {"id": r["id"], "kind": r["kind"], "repository": r["repository"], "raptor": r["raptor"]},
                      "anchor": {"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)}}
             body = {"model": args.model, "state": state, "questions": TRACE_QUESTIONS}
-            size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
-            if size > args.max_request_bytes:
-                return fail("JEV.CONTEXT_EXCEEDED", f"the request for {r['id']}/{a['id']} is {size} bytes, over --max-request-bytes {args.max_request_bytes}",
-                            action="Split the record into smaller records; never raise the cap to make it fit.")
             rid = decidr_client.batch_request_id(TRACE_CANDIDATE, r["id"], a["id"], TRACE_CANDIDATE, 1)
             jobs.append(decidr_client.BatchJob(r["id"], a["id"], a["id"], 1, rid, body, TRACE_QUESTIONS, {}, TRACE_CANDIDATE))
-    if args.dry_run:
-        path = out_dir / f"{name}.requests.jsonl"
-        write_text_atomic(str(path), "".join(json.dumps({"request_id": j.request_id, "request": j.body}, ensure_ascii=False) + "\n" for j in jobs))
-        return Ok({"success": True, "data": {"dry_run": True, "requests": len(jobs), "requests_path": str(path)}, "error": None})
+    if args.dry_run:  # overlap requests are formed from the cells' answers, which a dry run does not have
+        return Ok({"success": True, "error": None, "data": {
+            "dry_run": True, "requests": [{"request_id": j.request_id, "request": j.body} for j in jobs],
+            "overlap": "not formed: overlap pairs come from the cells' answers" if args.overlap else "off"}})
 
-    replies = []  # (answers, session_id, model_answered) or ClientError, in job order
-    if fixture is not None:
-        for job in jobs:
-            got = decidr_client.fixture_attempt(job, fixture, 1)
-            if not got["ok"]:
-                return Err(got["error"])
-            replies.append((got["value"]["answers"], None, "fixture"))
-    else:
-        allowed = decidr_client.remote_preflight(args.repository_root, "The record texts and anchor statements")
-        if not allowed["ok"]:
-            return Err(allowed["error"])
-        result = decidr_client.call_batch_results([j.body for j in jobs], model=args.model, abort_on=frozenset({"auth"}),
-                                                  timeout_secs=args.timeout, repository_root=args.repository_root,
-                                                  consent_what="The record texts and anchor statements", workers=args.workers)
-        if not result["ok"]:
-            return Err(result["error"])
-        by_position = {line.get("position"): line for line in result["value"]}
-        for n in range(len(jobs)):
-            line = by_position.get(n)
-            if line is None:
-                replies.append(ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned no result for this request"))
-            elif not line["ok"]:
-                replies.append(line["error"])
-            else:
-                replies.append((line["value"], line.get("session_id"), line.get("model_answered")))
-
+    replies = trace_replies(args, jobs, fixture)
+    if isinstance(replies, Err):
+        return replies
     notes = {(n["record"], n["anchor"]): n for n in annotations.value}
-    cells, failures, warnings, sessions, models = [], [], [], [], set()
-    for job, reply in zip(jobs, replies):
+    cells, failures, warnings = [], [], []
+    for job, reply in zip(jobs, replies.value):
         cell = {"record": job.item_id, "anchor": job.anchor_id, "request_id": job.request_id}
         p_yes = {}
         if not isinstance(reply, ClientError):
@@ -3744,11 +3828,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
             failures.append((f"{job.item_id}/{job.anchor_id}", reply))
             cells.append(dict(cell, **{"class": "error", "error": {"code": reply.code, "message": reply.message}}))
             continue
-        answers, session_id, model = reply
-        if session_id:
-            sessions.append(session_id)
-        if model:
-            models.add(model)
+        answers, session_id, _ = reply
         cls = trace_class(p_yes, thresholds["conflicts"], thresholds["relation"], thresholds["exceeds"])
         cell.update({"class": cls, "p_yes": p_yes, "answers": {q: trace_answer_json(answers[q]) for q in TRACE_QUESTIONS},
                      "session_id": session_id})
@@ -3760,11 +3840,35 @@ def cmd_trace(args) -> Result[dict, ClientError]:
                 warnings.append(f"annotation for {job.item_id}/{job.anchor_id} not merged: the cell is {cls}, not exceeds or conflicts")
         cells.append(cell)
     warnings += [f"annotation for {r}/{a} not merged: no such record or locked anchor" for r, a in notes]
+
+    overlap, overlap_replies = None, []
+    if args.overlap:
+        ojobs, asked = overlap_jobs(args.model, overlap_partners(cells), {r["id"]: r for r in records.value})
+        got = trace_replies(args, ojobs, fixture)
+        if isinstance(got, Err):
+            return got
+        overlap, overlap_replies = [], got.value
+        for job, reply in zip(ojobs, overlap_replies):
+            if not isinstance(reply, ClientError) and set(reply[0]) != set(job.questions):
+                reply = ClientError("DECIDR.RESPONSE_INVALID", "the answer IDs do not match the question IDs")
+            if isinstance(reply, ClientError):
+                failures.append((f"{job.item_id}/{OVERLAP_CANDIDATE}", reply))
+                continue
+            for qid, answer in reply[0].items():
+                partner, i, statement = asked[(job.item_id, qid)]
+                overlap.append({"item": job.item_id, "partner": partner, "statement_index": i, "statement": statement,
+                                "choice": answer.choice, "confidence": answer.confidence, "session_id": reply[1],
+                                "class": overlap_class(answer.choice, answer.confidence, thresholds["duplicate"], thresholds["possible"])})
+        overlap.sort(key=lambda o: (o["item"], o["partner"], o["statement_index"]))
+    answered = [r for r in replies.value + overlap_replies if not isinstance(r, ClientError)]
     judged = [c for c in cells if c["class"] != "error"]
+    summary = trace_summary(judged, records.value, anchors)
+    if overlap is not None:
+        summary.update(overlap_summary(overlap, records.value))
     trace = {
         "schema": TRACE_SCHEMA, "generated_at": now_utc().isoformat(timespec="seconds"),
-        "anchors_path": args.anchors, "model": args.model, "model_answered": sorted(models),
-        "answered_by": "fixture" if fixture is not None else "jev", "session_ids": sessions,
+        "anchors_path": args.anchors, "model": args.model, "model_answered": sorted({r[2] for r in answered if r[2]}),
+        "answered_by": "fixture" if fixture is not None else "jev", "session_ids": [r[1] for r in answered if r[1]],
         "thresholds": thresholds, "questions": TRACE_QUESTIONS,
         "questions_digest": canonical_digest(TRACE_QUESTIONS),
         "question_digests": {q: canonical_digest(v) for q, v in TRACE_QUESTIONS.items()},
@@ -3772,17 +3876,18 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         "raptor": source["raptor"], "repositories": source["repositories"], "not_served": source["not_served"],
         "records": [{k: r[k] for k in ("id", "kind", "repository", "index", "raptor", "obligations", "diagnostics")}
                     for r in records.value],
-        "cells": cells, "summary": trace_summary(judged, records.value, anchors), "warnings": warnings,
+        "cells": cells, "overlap": overlap, "summary": summary, "warnings": warnings,
     }
     path = out_dir / f"{name}.json"
     try:
         save_json(str(path), trace)
     except OSError as exc:
         return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
-    data = {"trace_path": str(path), "cells": len(cells), "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
+    data = {"trace_path": str(path), "cells": len(cells), "overlap": None if overlap is None else len(overlap),
+            "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
             "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
     if failures:
-        return jev_failure("trace cells", failures, len(cells), data)
+        return jev_failure("trace requests", failures, len(jobs) + len(overlap_replies), data)
     return Ok({"success": True, "data": data, "error": None})
 
 
@@ -4949,12 +5054,15 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
     tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")
     tr.add_argument("--exceeds-threshold", type=float, default=TRACE_EXCEEDS_MIN, help="a related cell with P(exceeds=yes) at or above this: exceeds")
+    tr.add_argument("--duplicate-threshold", type=float, default=TRACE_DUPLICATE_MIN, help="overlap: Jev's yes with confidence at or above this: duplicate statement")
+    tr.add_argument("--possible-threshold", type=float, default=TRACE_POSSIBLE_MIN, help="overlap: Jev's yes with confidence at or above this, below --duplicate-threshold: possible")
+    tr.add_argument("--overlap", action=argparse.BooleanOptionalAction, default=True,
+                    help="also ask, for each pair of records sharing an anchor column (cells not none), which of one's statements the other already states (default on)")
     tr.add_argument("--workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
-    tr.add_argument("--max-request-bytes", type=int, default=DEFAULT_MAX_REQUEST_BYTES, help="refuse any request over this before sending")
     tr.add_argument("--model", default=DEFAULT_MODEL)
     tr.add_argument("--timeout", type=float, default=30.0)
-    tr.add_argument("--dry-run", action="store_true", help="write the requests to trace-<UTC>.requests.jsonl; call nothing")
-    tr.add_argument("--answers-file", default="", help="fixture answers keyed '<record>/<anchor>', '<anchor>' or '*'; no network")
+    tr.add_argument("--dry-run", action="store_true", help="show the cell requests on stdout; call nothing, write nothing")
+    tr.add_argument("--answers-file", default="", help="fixture answers keyed '<record>/<anchor>', '<anchor>', '<item record>/overlap', 'overlap' or '*'; no network")
     tr.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tr.set_defaults(func=cmd_trace)
 

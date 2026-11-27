@@ -684,6 +684,8 @@ def trace_problems(doc: Any) -> List[str]:
             out.append(f"cell {n} must name a listed record and anchor and carry a class")
         elif c["class"] not in ("none", "error") and not isinstance(c.get("p_yes"), dict):
             out.append(f"cell {n} has no p_yes")
+    if doc.get("overlap") is not None and not isinstance(doc["overlap"], list):
+        out.append("overlap must be an array or null")
     return out
 
 
@@ -775,6 +777,24 @@ def trace_cell_vars(c: dict, anchor: dict, record: dict) -> dict:
             "blocks": blocks, "copy_json": _dump(c), "context_text": "\n".join(context)}
 
 
+def trace_overlap_vars(t: dict) -> dict:
+    """The Overlap panel: duplicated statements grouped by record pair, then the two deletion-candidate lists."""
+    pairs, labels = {}, {}
+    for o in t["overlap"]:
+        if o["class"] == "duplicate":
+            key = labels.setdefault(f"{o['item']} restates {o['partner']}", f"p{len(labels)}")
+            pairs.setdefault(key, []).append(f"{o['partner']} statement {o['statement_index']} ({o['confidence']:.2f}): {o['statement']}")
+    summary = t.get("summary") or {}
+    fields = [(label, key) for label, key in labels.items()]
+    fields += [("Deletion candidates: every statement restated in another record", "fully_restated"),
+               ("Deletion candidates: no relation to any anchor (when the anchors cover every capability)", "records_with_no_relation")]
+    possible = sum(1 for o in t["overlap"] if o["class"] == "possible")
+    return {"dom": "overlap", "title": "Overlap",
+            "subtitle": f"{sum(len(v) for v in pairs.values())} duplicated statements, {possible} possible, of {len(t['overlap'])} asked",
+            "blocks": field_blocks(dict(summary, **pairs), fields),
+            "copy_json": _dump({"overlap": t["overlap"], **{k: summary.get(k) for k in ("per_record", "fully_restated", "records_with_no_relation")}})}
+
+
 def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
     """Render a trace file: a records x anchors grid page and one panel per coloured cell."""
     doc = read_json(Path(args.trace), "trace file")
@@ -823,6 +843,13 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                 return text
             sections.append(text.value)
             panel_paths.append(target.as_posix())
+        overlap_section, overlap_panel = "", None
+        if t.get("overlap") is not None:
+            target = panels_dir / f"{name}-overlap.xhtml"
+            text = render(binary.value, "trace-panel.xhtml.j2", trace_overlap_vars(t), target, scratch, run)
+            if isinstance(text, Err):
+                return text
+            overlap_section, overlap_panel = text.value, target.as_posix()
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -840,12 +867,13 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                  "anchor_cols": [{"id": a["id"], "statement": a["statement"], "dom": dom_id("anc", a["id"])} for a in t["anchors"]],
                  "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
+                 "overlap_section": overlap_section,
                  "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False)}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
-    return Ok({"html": page.as_posix(), "panels": panel_paths, "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
+    return Ok({"html": page.as_posix(), "panels": panel_paths, "overlap_panel": overlap_panel, "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"])})
 
 

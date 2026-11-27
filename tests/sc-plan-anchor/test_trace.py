@@ -19,6 +19,9 @@ import change_report as cr  # noqa: E402
 
 HAS_SC_COMPOSE = shutil.which("sc-compose") is not None
 QUESTIONS = ("relates", "serves", "conflicts", "exceeds")
+OVERLAP_NO = {"type": "choice", "choice": "no", "confidence": 1.0, "probabilities": {"yes": 0.0, "no": 1.0, "unclear": 0.0}}
+# Real records, requests and Jev answers from the overlap prototype run against sc-agent's records (see its _source).
+REAL = json.loads((Path(__file__).parent / "fixtures" / "trace_overlap.json").read_text(encoding="utf-8"))
 
 
 def ans(yes: float) -> dict:
@@ -102,14 +105,15 @@ class TraceTests(unittest.TestCase):
 
     def test_trace_writes_cells_summary_and_only_locked_anchors(self):
         code, out = self.trace({"REQ-001/ANC-001": cell(serves=0.8), "ADR-002/ANC-001": cell(conflicts=0.7, relates=0.9),
-                                "NFR-003/ANC-001": cell(relates=0.1)})
+                                "NFR-003/ANC-001": cell(relates=0.1)}, "--no-overlap")
         self.assertEqual(code, 0, out)
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
         self.assertEqual(trace["schema"], "plan-anchoring/trace/2")
         self.assertEqual([a["id"] for a in trace["anchors"]], ["ANC-001"])
         self.assertEqual({(c["record"], c["class"]) for c in trace["cells"]},
                          {("REQ-001", "serves"), ("ADR-002", "conflicts"), ("NFR-003", "none")})
-        self.assertEqual(trace["thresholds"], {"conflicts": 0.5, "relation": 0.6, "exceeds": 0.6})
+        self.assertEqual(trace["thresholds"], {"conflicts": 0.5, "relation": 0.6, "exceeds": 0.6, "duplicate": 0.6, "possible": 0.4})
+        self.assertIsNone(trace["overlap"])
         self.assertEqual(set(trace["question_digests"]), set(QUESTIONS))
         self.assertEqual(trace["summary"]["per_anchor"]["ANC-001"]["serves"], 1)
         self.assertEqual(trace["summary"]["records_with_no_relation"], ["NFR-003"])
@@ -117,10 +121,12 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(trace["answered_by"], "fixture")
 
     def test_thresholds_are_options(self):
-        code, out = self.trace({"*": cell(relates=0.55)}, "--relation-threshold", "0.5")
+        code, out = self.trace({"*": cell(relates=0.55)}, "--relation-threshold", "0.5", "--no-overlap")
         self.assertEqual(code, 0, out)
         self.assertEqual(out["data"]["summary"]["totals"]["related"], 3)
         code, out = self.trace({"*": cell()}, "--exceeds-threshold", "1.5")
+        self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
+        code, out = self.trace({"*": cell()}, "--duplicate-threshold", "-0.1")
         self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"))
 
     def test_obligations_come_only_from_raptor(self):
@@ -160,7 +166,7 @@ class TraceTests(unittest.TestCase):
         root, repo = self.fake_raptor(CORE)
         answers = write(self.tmp, "answers.json", {"*": cell(serves=0.9)})
         code, out = run_cli(["trace", "--anchors", self.anchors, "--source", repo, "--raptor", root, "--answers-file", answers,
-                             "--out-dir", str(Path(self.tmp) / "out")])
+                             "--out-dir", str(Path(self.tmp) / "out"), "--no-overlap"])
         self.assertEqual(code, 0, out)
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
         self.assertEqual([r["id"] for r in trace["records"]], ["REQ-001", "ADR-002"])
@@ -170,7 +176,7 @@ class TraceTests(unittest.TestCase):
         root, repo = self.fake_raptor(UI, exit_code=1)  # Raptor exits 1 when it imported with diagnostics
         code, out = run_cli(["trace", "--anchors", self.anchors, "--source", repo, "--raptor", root, "--dry-run",
                              "--out-dir", str(Path(self.tmp) / "out")])
-        self.assertEqual((code, out["data"]["requests"]), (0, 1), out)
+        self.assertEqual((code, len(out["data"]["requests"])), (0, 1), out)
         shutil.rmtree(Path(self.tmp) / "raptor"); shutil.rmtree(repo)
         root, repo = self.fake_raptor(CORE, exit_code=3)
         code, out = run_cli(["trace", "--anchors", self.anchors, "--source", repo, "--raptor", root, "--dry-run",
@@ -208,7 +214,7 @@ class TraceTests(unittest.TestCase):
              "remedy": "Copy instead.", "jev_disputed": False},
             {"record": "REQ-001", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": True},
             {"record": "REQ-404", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": False}])
-        code, out = self.trace({"ADR-002/ANC-001": cell(conflicts=0.9), "*": cell(serves=0.9)}, "--annotations", notes)
+        code, out = self.trace({"ADR-002/ANC-001": cell(conflicts=0.9), "*": cell(serves=0.9)}, "--annotations", notes, "--no-overlap")
         self.assertEqual(code, 0, out)
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
         by = {c["record"]: c for c in trace["cells"]}
@@ -244,8 +250,9 @@ class TraceTests(unittest.TestCase):
         code, out = run_cli(["trace", "--anchors", self.anchors, "--index", self.core, "--index", self.ui,
                              "--dry-run", "--out-dir", str(Path(self.tmp) / "out")])
         self.assertEqual(code, 0, out)
-        self.assertEqual(out["data"]["requests"], 3)
-        first = json.loads(Path(out["data"]["requests_path"]).read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(len(out["data"]["requests"]), 3)
+        self.assertFalse((Path(self.tmp) / "out").exists(), "a dry run writes nothing")
+        first = out["data"]["requests"][0]
         self.assertEqual(set(first["request"]["state"]), {"record", "anchor"})
         self.assertEqual(first["request"]["state"]["record"], {"id": "REQ-001", "kind": "REQ", "repository": "urn:raptor:repo:core",
                                                                "raptor": CORE["requirements"][0]})
@@ -264,7 +271,8 @@ class TraceTests(unittest.TestCase):
         notes = write(self.tmp, "notes.json", [{"record": "ADR-002", "anchor": "ANC-001", "clauses": ["written from scratch"],
                                                 "what": "Forbids the copy.", "remedy": "Copy instead.", "jev_disputed": True}])
         code, out = self.trace({"REQ-001/ANC-001": cell(serves=0.8), "ADR-002/ANC-001": cell(conflicts=0.7),
-                                "NFR-003/ANC-001": cell()}, "--annotations", notes)
+                                "NFR-003/ANC-001": cell(), "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": OVERLAP_NO}},
+                               "--annotations", notes)
         self.assertEqual(code, 0, out)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -331,6 +339,114 @@ class TraceTests(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = cr.main(["--trace", bad, "--out", self.tmp])
         self.assertEqual((rc, json.loads(buf.getvalue())["error"]["code"]), (2, "TRACE.INVALID"))
+
+
+class TraceOverlapTests(unittest.TestCase):
+    """Overlap on real data: ANC-001's column holds ADR-SAG-0021, REQ-SAG-0003 and REQ-SAG-0008; ANC-002's holds ADR-SAG-0004
+    and REQ-SAG-0010. The cell answers are made up; the overlap requests and answers are the prototype's real ones."""
+    COLUMNS = {"ANC-001": ("ADR-SAG-0021", "REQ-SAG-0003", "REQ-SAG-0008"), "ANC-002": ("ADR-SAG-0004", "REQ-SAG-0010")}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.anchors = write(self.tmp, "anchors.json", record(anchor("ANC-001"), anchor("ANC-002", statement="A second locked anchor.")))
+        self.index = write(self.tmp, "index.json", REAL["index"])
+        self.out = Path(self.tmp) / "out"
+
+    def answers(self, overlap=True):
+        ids = [r["id"] for t in ("requirements", "decisions") for r in REAL["index"][t]]
+        got = {f"{rid}/{aid}": cell(serves=0.9) if rid in members else cell() for aid, members in self.COLUMNS.items() for rid in ids}
+        if overlap:
+            got.update({f"{item}/overlap": a["answers"] for item, a in REAL["answers"].items()})
+        return write(self.tmp, "answers.json", got)
+
+    def run_trace(self, *extra):
+        return run_cli(["trace", "--anchors", self.anchors, "--index", self.index, "--out-dir", str(self.out), *extra])
+
+    def test_candidate_pairs_come_from_the_cell_table(self):
+        cells = [{"record": r, "anchor": "A1", "class": c} for r, c in (("R-3", "serves"), ("R-1", "related"), ("R-2", "conflicts"),
+                                                                        ("R-9", "none"), ("R-8", "error"))]
+        cells += [{"record": r, "anchor": "A2", "class": c} for r, c in (("R-2", "exceeds"), ("R-1", "serves"), ("R-4", "related"))]
+        self.assertEqual(jj.overlap_partners(cells), {"R-1": ["R-2", "R-3", "R-4"], "R-2": ["R-3", "R-4"]})
+        self.assertEqual(jj.overlap_partners([{"record": "R-1", "anchor": "A1", "class": "serves"}]), {})
+
+    def test_one_request_per_item_with_the_real_question_ids_and_text(self):
+        records = {}
+        for path in (self.index,):
+            records.update({r["id"]: r for r in jj.raptor_index_records(path).value["records"]})
+        partners = {"ADR-SAG-0004": ["REQ-SAG-0010"], "ADR-SAG-0021": ["REQ-SAG-0003", "REQ-SAG-0008"], "REQ-SAG-0003": ["REQ-SAG-0008"]}
+        jobs, asked = jj.overlap_jobs("jev", partners, records)
+        self.assertEqual([j.item_id for j in jobs], list(partners))
+        for job in jobs:
+            self.assertEqual(job.body["state"], REAL["requests"][job.item_id]["state"], job.item_id)
+            self.assertEqual(job.body["questions"], REAL["requests"][job.item_id]["questions"], job.item_id)
+        self.assertEqual(asked[("ADR-SAG-0021", "REQ_SAG_0003_s1")][:2], ("REQ-SAG-0003", 1))
+        adr = jj.record_statements(records["ADR-SAG-0004"])
+        self.assertEqual(adr, [REAL["index"]["decisions"][1]["decision"]["text"]], "an ADR's decision is one block, never split")
+
+    def test_real_answers_are_classified_and_summarised(self):
+        code, out = self.run_trace("--answers-file", self.answers())
+        self.assertEqual(code, 0, out)
+        trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
+        by = {(o["item"], o["partner"], o["statement_index"]): o for o in trace["overlap"]}
+        self.assertEqual(len(by), 12 + 3 + 1)
+        first = by[("ADR-SAG-0021", "REQ-SAG-0003", 1)]
+        self.assertEqual((first["choice"], first["confidence"], first["class"]), ("yes", 0.98, "duplicate"))
+        self.assertIn("<CLI>_LOG_ROOT", first["statement"])
+        self.assertEqual(by[("ADR-SAG-0021", "REQ-SAG-0003", 5)]["class"], "possible")   # yes at 0.52
+        self.assertEqual(by[("ADR-SAG-0021", "REQ-SAG-0003", 8)]["class"], "none")       # yes at 0.18
+        self.assertEqual(by[("ADR-SAG-0021", "REQ-SAG-0003", 6)]["class"], "none")       # no at 0.68
+        self.assertEqual([o["class"] for k, o in by.items() if k[0] == "ADR-SAG-0004"], ["none"])
+        self.assertEqual([o["class"] for k, o in by.items() if k[0] == "REQ-SAG-0003"], ["none"] * 3)
+        per = trace["summary"]["per_record"]
+        self.assertEqual(per["REQ-SAG-0003"], {"statements_restated": 4, "statements_total": 9})
+        self.assertEqual(per["REQ-SAG-0008"], {"statements_restated": 3, "statements_total": 3})
+        self.assertEqual(per["REQ-SAG-0010"], {"statements_restated": 0, "statements_total": 1})
+        self.assertEqual(trace["summary"]["fully_restated"], ["REQ-SAG-0008"])
+        self.assertEqual(trace["summary"]["records_with_no_relation"], [])
+        code, out = self.run_trace("--answers-file", self.answers(), "--duplicate-threshold", "0.99")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["data"]["summary"]["fully_restated"], [], "REQ-SAG-0008 statements 0 and 1 are below 0.99")
+
+    def test_no_overlap_sends_no_overlap_requests(self):
+        code, out = self.run_trace("--answers-file", self.answers(overlap=False), "--no-overlap")
+        self.assertEqual(code, 0, out)
+        trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
+        self.assertIsNone(trace["overlap"])
+        self.assertNotIn("fully_restated", trace["summary"])
+        code, out = self.run_trace("--answers-file", self.answers(overlap=False))
+        self.assertEqual((code, out["error"]["code"]), (2, "FIXTURE.MISSING"), "with overlap on, the overlap requests are sent")
+        self.assertIn("/overlap", out["error"]["message"])
+
+    def test_dry_run_shows_requests_and_writes_nothing(self):
+        code, out = self.run_trace("--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(out["data"]["requests"]), 5 * 2)
+        self.assertEqual({r["request"]["questions"]["serves"]["type"] for r in out["data"]["requests"]}, {"choice"})
+        self.assertIn("not formed", out["data"]["overlap"])
+        self.assertFalse(self.out.exists())
+
+    @unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
+    def test_report_has_an_overlap_section(self):
+        code, out = self.run_trace("--answers-file", self.answers())
+        self.assertEqual(code, 0, out)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main(["--trace", out["data"]["trace_path"], "--out", str(Path(self.tmp) / "report")])
+        env = json.loads(buf.getvalue())
+        self.assertEqual(rc, 0, env)
+        panel = Path(env["data"]["overlap_panel"]).read_text(encoding="utf-8")
+        xml.dom.minidom.parseString(panel)
+        self.assertIn("<h3>ADR-SAG-0021 restates REQ-SAG-0003</h3>", panel)
+        self.assertIn("<h3>ADR-SAG-0021 restates REQ-SAG-0008</h3>", panel)
+        self.assertNotIn("restates REQ-SAG-0010", panel)
+        self.assertIn("REQ-SAG-0003 statement 1 (0.98): When `&lt;CLI&gt;_LOG_ROOT` is set", panel)
+        self.assertIn("7 duplicated statements, 2 possible, of 16 asked", panel)
+        self.assertIn("<h3>Deletion candidates: every statement restated in another record</h3>", panel)
+        self.assertIn("<p>REQ-SAG-0008</p>", panel)
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertIn('id="overlap"', page)
+        self.assertLess(page.index('id="overlap"'), page.index('id="summary"'))
 
 
 STATEMENT_START = "The runtime crates are created by copying"
