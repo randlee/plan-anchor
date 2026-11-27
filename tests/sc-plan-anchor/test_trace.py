@@ -29,6 +29,21 @@ HISTORY = {"record": "ADR-002", "statement": "Runtime crates must be written fro
            "date": "2026-01-02", "summary": "Add ADR-002 before the copy anchor was stated."}
 
 
+def remove_git_checkout(path: Path) -> None:
+    """Delete a test's git checkout. Git writes its object files read-only on Windows, so clear the bit and retry."""
+    import os
+    import stat
+
+    def retry(func, target, *_):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)
+
+
 def ans(yes: float) -> dict:
     rest = round((1 - yes) / 2, 6)
     return {"type": "choice", "choice": "yes" if yes >= 0.5 else "no", "confidence": max(yes, 1 - yes),
@@ -243,6 +258,7 @@ class TraceTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("git"), "provenance is read from git history")
     def test_trace_records_where_each_red_or_yellow_statement_first_appeared(self):
         repo = Path(self.tmp) / "repo"
+        self.addCleanup(remove_git_checkout, repo)  # runs before setUp's rmtree of self.tmp
         (repo / "docs").mkdir(parents=True)
         git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
