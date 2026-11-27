@@ -274,7 +274,7 @@ python3 $S judge --anchors $X/anchors.example.json --gate plan --all --item-id s
 
 ## Status
 
-Version 0.16.0. The repository is a Claude, Codex and Cursor marketplace containing the `sc-plan-anchor` plugin, whose installer renders the shared skill body and harness-owned agent definitions into a folder. The offline suite runs on Linux, macOS and Windows in CI. [docs/experiments/2026-10-10-phase-h-jev-experiments.md](docs/experiments/2026-10-10-phase-h-jev-experiments.md) records the live measurements behind the gate design.
+Version 0.16.1. The repository is a Claude, Codex and Cursor marketplace containing the `sc-plan-anchor` plugin, whose installer renders the shared skill body and harness-owned agent definitions into a folder. The offline suite runs on Linux, macOS and Windows in CI. [docs/experiments/2026-10-10-phase-h-jev-experiments.md](docs/experiments/2026-10-10-phase-h-jev-experiments.md) records the live measurements behind the gate design.
 
 ## Versioning
 

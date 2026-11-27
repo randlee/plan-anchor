@@ -43,6 +43,9 @@ Keys (all optional except ``schema_version``)
                       means nobody has named the current phase yet; ask the
                       user and record it with ``set``. Set it again when the
                       phase changes.
+  reports_dir         the repository website folder plan-anchor reports are saved in, relative
+                      to the folder holding ``.sc/``; absent means ``site/reports/plan-anchor``
+                      (``REPORTS_DIR_DEFAULT``). ``references/html-reporting-guidelines.md``.
   issue_url_template  optional link pattern for tracker ids in the change
                       report, an http(s) URL holding ``{id}`` (for example
                       ``https://tracker.example/issues/{id}``). Absent means
@@ -57,6 +60,8 @@ typed error, including ``VALIDATION.INPUT`` for bad arguments)
       record the user's answer, keeping every other key; commit the file
   set plan_dir docs/plans/phase-<id> [--repository-root PATH]
       record the current phase folder, keeping every other key; commit the file
+  set reports_dir site/reports/plan-anchor [--repository-root PATH]
+      record the reports folder, keeping every other key; commit the file
   set issue_url_template 'https://tracker.example/issues/{id}' [--repository-root PATH]
       record the change report's link pattern, keeping every other key; commit the file
 """
@@ -84,8 +89,9 @@ SCHEMA_VERSION = 1
 GIT_TIMEOUT_SECONDS = 30
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
 TRACKERS = ("{{ tracker }}",)
-ALLOWED_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "issue_url_template")
-SETTABLE_KEYS = ("allow_remote_judge", "plan_dir", "issue_url_template")
+ALLOWED_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "reports_dir", "issue_url_template")
+SETTABLE_KEYS = ("allow_remote_judge", "plan_dir", "reports_dir", "issue_url_template")
+REPORTS_DIR_DEFAULT = "site/reports/plan-anchor"
 PLAN_DIR_CONVENTION = "docs/plans/phase-<current>"
 PYYAML_INSTALL = "python3 -m pip install pyyaml"
 ERROR_EXIT = 2
@@ -104,6 +110,10 @@ PLAN_DIR_LINES = """\
 # plan_dir: the current phase's plan folder (anchors.json, intent.md, anchor-runs/). Set it again when the phase changes.
 plan_dir: {value}
 """
+REPORTS_DIR_LINES = """\
+# reports_dir: the website folder plan-anchor reports and their sources are saved in (references/html-reporting-guidelines.md).
+reports_dir: {value}
+"""
 ID_TOKEN = "{id}"
 ISSUE_URL_COMMENT = ("# issue_url_template: link for tracker ids in the change report; the id replaces "
                      + ID_TOKEN + ".\n")
@@ -116,6 +126,7 @@ class Settings:
     allow_remote_judge: Optional[bool] = None
     plan_dir: Optional[str] = None
     issue_url_template: Optional[str] = None
+    reports_dir: Optional[str] = None
 
 
 def issue_url_problem(value: Any) -> Optional[str]:
@@ -129,6 +140,12 @@ def issue_url_problem(value: Any) -> Optional[str]:
     if value.count(ID_TOKEN) != 1:
         return "must hold " + ID_TOKEN + " exactly once, where the tracker id goes"
     return None
+
+
+def reports_dir_problem(value: Any) -> Optional[str]:
+    """Why ``value`` is not a usable ``reports_dir``, or None: a relative POSIX path, as for ``plan_dir``."""
+    problem = plan_dir_problem(value)
+    return problem.replace("docs/plans/phase-b", REPORTS_DIR_DEFAULT) if problem else None
 
 
 def plan_dir_problem(value: Any) -> Optional[str]:
@@ -257,13 +274,18 @@ def parse_settings(text: str, yaml: ModuleType, *, path: str = SETTINGS_RELPATH)
     problem = plan_dir_problem(plan_dir) if "plan_dir" in data else None
     if problem:
         return err("SETTINGS.INVALID_PLAN_DIR", f"{path} plan_dir is {plan_dir!r}: it {problem}", fix)
+    reports = data.get("reports_dir")
+    problem = reports_dir_problem(reports) if "reports_dir" in data else None
+    if problem:
+        return err("SETTINGS.INVALID_REPORTS_DIR", f"{path} reports_dir is {reports!r}: it {problem}",
+                   f"Edit {path}: set reports_dir to a relative folder such as {REPORTS_DIR_DEFAULT}, or remove the key.")
     link = data.get("issue_url_template")
     problem = issue_url_problem(link) if "issue_url_template" in data else None
     if problem:
         return err("SETTINGS.INVALID_ISSUE_URL", f"{path} issue_url_template is {link!r}: it {problem}",
                    f"Edit {path}: set issue_url_template to an http(s) URL holding " + ID_TOKEN + ", or remove the key.")
     return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir,
-                       issue_url_template=link))
+                       issue_url_template=link, reports_dir=reports))
 
 
 def read_settings_file(path: Path, shown: Optional[str] = None) -> Result[Optional[Settings], ToolError]:
@@ -329,6 +351,8 @@ def render_settings(settings: Settings) -> str:
         text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
     if settings.plan_dir is not None:
         text += PLAN_DIR_LINES.format(value=json.dumps(settings.plan_dir, ensure_ascii=False))  # quoted: always a string
+    if settings.reports_dir is not None:
+        text += REPORTS_DIR_LINES.format(value=json.dumps(settings.reports_dir, ensure_ascii=False))
     if settings.issue_url_template is not None:
         text += ISSUE_URL_COMMENT + "issue_url_template: " + json.dumps(settings.issue_url_template, ensure_ascii=False) + "\n"
     return text
@@ -413,6 +437,9 @@ def set_value(start: Path, key: str, value: Any) -> Result[dict, ToolError]:
     if key == "plan_dir" and plan_dir_problem(value):
         return err("VALIDATION.INPUT", f"plan_dir {value!r} {plan_dir_problem(value)}",
                    f"Run '{PLAN_DIR_SET_COMMAND}' with the current phase id, e.g. docs/plans/phase-b.")
+    if key == "reports_dir" and reports_dir_problem(value):
+        return err("VALIDATION.INPUT", f"reports_dir {value!r} {reports_dir_problem(value)}",
+                   f"Pass a relative folder such as {REPORTS_DIR_DEFAULT}.")
     if key == "issue_url_template" and issue_url_problem(value):
         return err("VALIDATION.INPUT", f"issue_url_template {value!r} {issue_url_problem(value)}",
                    "Pass an http(s) URL holding {id}, e.g. https://tracker.example/issues/{id}.")
@@ -499,6 +526,7 @@ def show(start: Path) -> Result[dict, ToolError]:
         "allow_remote_judge": s.allow_remote_judge if s is not None else None,
         "plan_dir": s.plan_dir if s is not None else None,
         "issue_url_template": s.issue_url_template if s is not None else None,
+        "reports_dir": (s.reports_dir if s is not None else None) or REPORTS_DIR_DEFAULT,
         "repo_guidelines_path": str(guidelines) if guidelines is not None else None,
     })
 
@@ -535,7 +563,7 @@ def _parser() -> argparse.ArgumentParser:
     st = sub.add_parser("set", help=f"record a value in {SETTINGS_RELPATH} (commit it)")
     st.add_argument("key", choices=SETTABLE_KEYS)
     st.add_argument("value", metavar="VALUE", help="allow_remote_judge: true|false; plan_dir: docs/plans/phase-<id>; "
-                    "issue_url_template: an http(s) URL holding {id}")
+                    "reports_dir: a relative folder (default site/reports/plan-anchor); issue_url_template: an http(s) URL holding {id}")
     st.add_argument("--repository-root", default=".", help="any path inside the repository (default: .)")
     return parser
 

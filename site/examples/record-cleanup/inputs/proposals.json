@@ -1,34 +1,136 @@
 {
   "schema": "plan-anchoring/record-cleanup-proposals/1",
   "level": "aggressive",
+  "not_proposed": [
+    {
+      "slice": "wave-1-yellow-a",
+      "reason": "Jev's class is disputed. REQ-SAG-0003 is an sc-agent record, and ANC-015 says rules for every decidr-based tool (logging among them) must be specified in sc-agent's records, so its `<CLIENT>_LOG_ROOT` statement is where the rule belongs. Nothing in the record exceeds ANC-015. A keep_with_reason is refused at aggressive for a record an anchor covers, so the cell is left for the owner to see as disputed.",
+      "items": [
+        "REQ-SAG-0003/ANC-015"
+      ]
+    },
+    {
+      "slice": "wave-1-yellow-a",
+      "reason": "Jev's class is disputed (the cell is marginal: P(relates) 0.60, P(exceeds) 0.62). The statements describe the default path and root override and place no constraint on logger injection beyond ANC-016's scope. The retention excess is already handled under ANC-005. A keep_with_reason is refused at aggressive for a record an anchor covers.",
+      "items": [
+        "REQ-SAG-0003/ANC-016"
+      ]
+    },
+    {
+      "slice": "wave-1-yellow-a",
+      "reason": "Jev's class is disputed. The model-entry statements are the config override ANC-001 allows. The statements that go beyond model resolution (local endpoint address, paid API base address) are not on ANC-001's topic and are cut under ANC-009. A keep_with_reason is refused at aggressive for a record an anchor covers.",
+      "items": [
+        "REQ-SAG-0019/ANC-001"
+      ]
+    }
+  ],
+  "dropped": [
+    {
+      "title": "Keep the paid-API key rule in REQ-SAG-0019; delete the copy in REQ-SAG-0801",
+      "correlation_id": "wave-1-dups",
+      "reason": "merged into 1"
+    },
+    {
+      "title": "Cut the paid-API base-address ban from REQ-SAG-0019",
+      "correlation_id": "wave-1-yellow-a",
+      "reason": "merged into 1"
+    },
+    {
+      "title": "Keep the local-runner address rule in REQ-SAG-0801; delete the copy in REQ-SAG-0019",
+      "correlation_id": "wave-1-dups",
+      "reason": "merged into 2"
+    },
+    {
+      "title": "Cut the local-endpoint address setting from REQ-SAG-0019",
+      "correlation_id": "wave-1-yellow-a",
+      "reason": "merged into 2"
+    },
+    {
+      "title": "Cut the local-runner address rules from REQ-SAG-0801 unless the owner anchors them",
+      "correlation_id": "wave-1-0801",
+      "reason": "merged into 2"
+    }
+  ],
   "proposals": [
     {
       "wave": 1,
-      "kind": "consolidate",
-      "title": "Keep the paid-API base-address rule in REQ-SAG-0019; delete the copy in REQ-SAG-0801",
+      "kind": "propose_anchor",
+      "title": "Paid-API key rule: delete REQ-SAG-0801's copy; delete REQ-SAG-0019's copy too unless the owner anchors the rule",
+      "records": [
+        "REQ-SAG-0801",
+        "REQ-SAG-0019"
+      ],
+      "changes": [
+        {
+          "record": "REQ-SAG-0801",
+          "before": "Configuration MUST NOT change where a paid API's key is sent."
+        },
+        {
+          "record": "REQ-SAG-0019",
+          "before": "Configuration MUST NOT change a paid API's base address."
+        }
+      ],
+      "justification": "Harmonized by the lead from three proposals that disagreed: wave-1-dups kept the rule in REQ-SAG-0019 and deleted REQ-SAG-0801's copy (Jev duplicate, 0.86; Rule 4 puts a configuration rule in REQ-SAG-0019); wave-1-0801 deleted REQ-SAG-0801's copy as excess beyond ANC-009; wave-1-yellow-a deleted REQ-SAG-0019's copy as excess beyond ANC-009. Both copies arrived on 2026-11-25 (67203e2, b98b411), before ANC-009 (2026-11-26), and neither anchor asks for the rule. At aggressive the excess is deleted unless the owner anchors it. One recommendation: REQ-SAG-0801's copy is deleted either way; REQ-SAG-0019's copy is deleted unless the owner approves the proposed anchor, in which case REQ-SAG-0019 keeps it as the rule's one home.",
+      "source": {
+        "ref": "ANC-009",
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "67203e2"
+      },
+      "improvement": "The paid-API key rule is stated at most once, in REQ-SAG-0019, and only if the owner anchors it.",
+      "cells": [
+        "REQ-SAG-0801/ANC-009",
+        "REQ-SAG-0019/ANC-009"
+      ],
+      "duplicates": [
+        "REQ-SAG-0019/REQ-SAG-0801/7"
+      ],
+      "proposed_anchor": "Configuration must not change the base address of a paid API, so an API key is sent only to that provider's built-in endpoint.",
+      "harmonized_with": [
+        4
+      ]
+    },
+    {
+      "wave": 1,
+      "kind": "propose_anchor",
+      "title": "Local-runner address rule: delete REQ-SAG-0019's copy; delete REQ-SAG-0801's statements too unless the owner anchors the rule",
       "records": [
         "REQ-SAG-0019",
         "REQ-SAG-0801"
       ],
       "changes": [
         {
+          "record": "REQ-SAG-0019",
+          "before": "A local endpoint's address MUST be settable in configuration."
+        },
+        {
           "record": "REQ-SAG-0801",
-          "before": "Configuration MUST NOT change where a paid API's key is sent."
+          "before": "Each local decision runner's network address MUST come from configuration."
+        },
+        {
+          "record": "REQ-SAG-0801",
+          "before": "`sc-agent` MUST NOT hard-code the network address of any local decision runner."
         }
       ],
-      "justification": "REQ-SAG-0019 states 'Configuration MUST NOT change a paid API's base address.' REQ-SAG-0801 states 'Configuration MUST NOT change where a paid API's key is sent.' In REQ-SAG-0019's definitions a paid API's key is sent only to that provider's built-in base address, so the two statements are the same obligation (Jev: duplicate, 0.86). Under 'Correcting duplicates' rule 4, between two REQs the statement stays in the record whose title and subject it belongs to. REQ-SAG-0019 ('Configuration file locations and lookup order') governs what configuration may and may not set, including model entries. It is also the record that already carries the matching acceptance criterion, 'a model entry whose provider is not a built-in provider fails the load with a typed error'. REQ-SAG-0801 ('Local decision runners come from configuration') is about local runners, and a paid API is not a local runner. This is a deletion with no rewording, so the kept statement is untouched. REQ-SAG-0801 keeps seven statements, so it is not left empty. Left for the lead and not proposed here: REQ-SAG-0801's 'paid API' definition and its last acceptance criterion (the key is still sent only to the built-in endpoint) now back a statement that lives in REQ-SAG-0019. Neither is a statement, so they are outside this duplicate, but the lead may want them handled in the same pass.",
+      "justification": "Harmonized by the lead from three proposals that disagreed: wave-1-dups kept the rule in REQ-SAG-0801 (titled 'Local decision runners come from configuration'; Jev possible duplicate, 0.5) and deleted REQ-SAG-0019's copy; wave-1-yellow-a deleted REQ-SAG-0019's copy as excess beyond ANC-009; wave-1-0801 deleted REQ-SAG-0801's two address statements unless the owner anchors them. ANC-009 asks only for config-added model rows, not where a runner's host and port come from, and all three statements predate it (b98b411, 67203e2, 1a9af55, all 2026-11-25). One recommendation: REQ-SAG-0019's copy is deleted either way; REQ-SAG-0801's two statements are deleted unless the owner approves the proposed anchor, in which case REQ-SAG-0801 keeps them as the rule's one home.",
       "source": {
-        "ref": "REQ-SAG-0019"
+        "ref": "ANC-009",
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "67203e2"
       },
-      "improvement": "One copy of the paid-API rule, in REQ-SAG-0019. REQ-SAG-0801 drops from 8 to 7 statements and no longer restates a configuration rule.",
+      "improvement": "The local-runner address rule is stated at most once, in REQ-SAG-0801, and only if the owner anchors it.",
+      "cells": [
+        "REQ-SAG-0019/ANC-009",
+        "REQ-SAG-0801/ANC-009"
+      ],
       "duplicates": [
-        "REQ-SAG-0019/REQ-SAG-0801/7"
-      ]
+        "REQ-SAG-0019/REQ-SAG-0801/0"
+      ],
+      "proposed_anchor": "REQ-SAG-0801, statements 'Each local decision runner's network address MUST come from configuration' and 'sc-agent MUST NOT hard-code the network address of any local decision runner': a local decision runner's host and port are read from configuration and never hard-coded in sc-agent, so a runner can move to another computer without a rebuild."
     },
     {
       "wave": 1,
       "kind": "resolve_conflict",
-      "title": "Cut the fixed `decider` resolution from REQ-SAG-0801 so it does not pin a model version against ANC-001",
+      "title": "Cut the fixed decider-to-4b pin from REQ-SAG-0801",
       "records": [
         "REQ-SAG-0801"
       ],
@@ -39,12 +141,13 @@
         }
       ],
       "resolution": "cut",
-      "justification": "ANC-001 makes the decidr Jev selection follow the newest Jev model in the table, with config as the only override. This statement fixes a selection to the single `decider-4b-v2.1` row, so the table's newest-first ordering cannot decide it. Jev rates the cell as a conflict (P(conflicts) 0.74). The statement is also the only one that names the pinned row, so cutting it removes the conflict. Unclear point: the trace does not show whether the owner means `decider` as a separate pinned alias outside ANC-001's `jev` name. If so, the owner should reject this proposal and state that as an anchor. The definition sentence 'The 4b decider model is the `decider-4b-v2.1` row' in the requirement text would then be unused. Definitions are not statements, so this proposal does not touch it. I could not read the code to check this; the tools I could use for that were unavailable.",
+      "justification": "ANC-001 (2026-11-26) says a short name selects the newest row of the model table and config may override the default. This statement pins `decider` to the `decider-4b-v2.1` row. It first appeared in 67203e2 on 2026-11-25, a day before the anchor, so it is the stale side. REQ-SAG-0102 already says a short name resolves to its newest row unless a configured model entry overrides it. I did not read the code: the repository could not be searched with the tools allowed to this agent, so this rests on the trace and the records only.",
       "source": {
         "ref": "ANC-001",
-        "quote": "I want 'jev' to select latest, config can override default."
+        "quote": "I want 'jev' to select latest, config can override default.",
+        "commit": "67203e2"
       },
-      "improvement": "REQ-SAG-0801 no longer fixes a selection to one model version. Resolution follows the model table's newest-row rule (REQ-SAG-0102) and config. One statement fewer, no wording added.",
+      "improvement": "REQ-SAG-0801 no longer contradicts ANC-001. One rule, in REQ-SAG-0102, decides which row a short name resolves to.",
       "cells": [
         "REQ-SAG-0801/ANC-001"
       ]
@@ -52,7 +155,7 @@
     {
       "wave": 1,
       "kind": "cut_excess",
-      "title": "Cut the fixed-model-id requirement for local runners from REQ-SAG-0801",
+      "title": "Cut the fixed-model-id statement from REQ-SAG-0801",
       "records": [
         "REQ-SAG-0801"
       ],
@@ -62,20 +165,24 @@
           "before": "Each local decision runner's model MUST have a fixed model id in the model table."
         }
       ],
-      "justification": "ANC-009 requires only that the model table accept extra rows from config. This statement adds a structural constraint on the rows of local runners. Every table row already has a fixed model id by definition (REQ-SAG-0102 defines a row as having one). Jev's reading of the cell is that obligations on this topic go beyond the anchor (P(exceeds) 0.85). The statement duplicates the row definition and goes past the anchor, so at the aggressive level it is deleted. 'Configuration MUST be able to add a local model that runs on another computer' stays: it serves ANC-009 (P(serves) 0.82).",
+      "justification": "ANC-009 asks only that the model table accept extra rows from config. The fixed-model-id statement restates REQ-SAG-0102, whose definitions give every row a fixed model id. The paid-API-key statement constrains configuration beyond the anchor and restates REQ-SAG-0019's 'Configuration MUST NOT change a paid API's base address.' At aggressive level excess is deleted unless the owner anchors it. I found no code citation (file:symbol) that would justify keeping either statement, because the repository could not be read. (Lead: the paid-API-key statement this proposal also cut is handled once, in panel 1.)",
       "source": {
         "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "aa1190b"
       },
-      "improvement": "REQ-SAG-0801 no longer adds a row constraint beyond ANC-009. It keeps the config-added local model requirement that serves the anchor.",
+      "improvement": "REQ-SAG-0801 no longer exceeds ANC-009 on the model-table rules. Those rules stay in REQ-SAG-0102 and REQ-SAG-0019.",
       "cells": [
         "REQ-SAG-0801/ANC-009"
+      ],
+      "harmonized_with": [
+        1
       ]
     },
     {
       "wave": 1,
       "kind": "propose_anchor",
-      "title": "Cut the log-retention statements from REQ-SAG-0003 unless the owner anchors them",
+      "title": "Cut the log retention and no-removal statements from REQ-SAG-0003 and propose an anchor for them",
       "records": [
         "REQ-SAG-0003"
       ],
@@ -101,23 +208,21 @@
           "before": "sc-agent MUST NOT remove a run log."
         }
       ],
-      "justification": "ANC-005 asks only that default loggers write under the configured log root with a fixed folder and file name. It says nothing about keeping or removing logs. These five statements are a retention policy that no anchor states, so at aggressive level they are deleted until the owner anchors them. I believe the policy is needed: the record's rationale says session logs are the long-term record used to analyse tens of thousands of decisions, and losing one loses data. I therefore also propose the anchor below. ANC-015 and ANC-016 do not cover logging retention either, so this cut is the only unanchored behaviour I found in the record. I could not tie the ANC-015 and ANC-016 yellow cells to any other statement and list them here as cleared by this cut. The owner should check that.",
+      "justification": "ANC-005 asks that default loggers write under the configured log root with fixed folder and file names. It says nothing about keeping, rotating, pruning or removing logs. All five statements are retention rules (provenance commits f023c0d, 13c4513, 1a9af55 and 67203e2, 2026-11-19 to 2026-11-25). They add a guarantee the owner has not stated. Statements 0-3 (default path, `<CLI>_LOG_ROOT`, `<CLIENT>_LOG_ROOT`, session path) stay, because they carry out ANC-005. The record's rationale says session logs are the long-term record used to analyse tens of thousands of decisions, so I think the guarantee may be needed. At aggressive the excess is deleted until the owner anchors it. I did not check the code: only Read was available and no code path was known. The record's acceptance criteria about rotation and retention (the unit tests for session and run logs and the `rg` inspection for general-log removal) lose their statements if this is approved; the lead should handle them in the repair pass.",
       "source": {
         "ref": "ANC-005",
         "quote": "I mandated - that all default loggers created in production have root/folder/file naming conventions specified."
       },
-      "improvement": "REQ-SAG-0003 drops from 9 to 4 statements and states only log placement and the log-root override. The retention rule returns only if the owner anchors it.",
+      "improvement": "REQ-SAG-0003 no longer exceeds ANC-005. It keeps only log location and root rules, and loses 5 of its 9 statements.",
       "cells": [
-        "REQ-SAG-0003/ANC-005",
-        "REQ-SAG-0003/ANC-015",
-        "REQ-SAG-0003/ANC-016"
+        "REQ-SAG-0003/ANC-005"
       ],
-      "proposed_anchor": "sc-agent must never remove, rotate or prune a general log, a session log or a run log, whatever its age, so the long-term record of decisions is never lost."
+      "proposed_anchor": "REQ-SAG-0003: sc-agent never removes (rotates, prunes or deletes) a general log, a session log or a run log, whatever its age. Needed because session logs are the long-term record used to analyse tens of thousands of decisions."
     },
     {
       "wave": 1,
       "kind": "cut_excess",
-      "title": "Cut the wheel packaging constraint from REQ-SAG-0008",
+      "title": "Cut the Python-package dependency ban from REQ-SAG-0008",
       "records": [
         "REQ-SAG-0008"
       ],
@@ -127,12 +232,13 @@
           "before": "The wheel MUST NOT depend on the `sc-observability` Python package."
         }
       ],
-      "justification": "ANC-005 covers where default loggers write, and ANC-016 covers defining the injection path and keeping derivative tools off it in production. A prohibition on a Python package dependency is a packaging constraint that neither anchor states. The other two statements stay: injection of a general Logger (ANC-016) and a named Logger built from the linked crate (ANC-005 default loggers). If the owner wants the no-package choice kept, it is a choice between alternatives and belongs in an ADR (ADR-SAG-0019 is already related to this record).",
+      "justification": "REQ-SAG-0008 is read against ANC-005 (default logger creation, fixed paths) and ANC-016 (sc-agent defines the injection path; derivative tools use it only in tests). Its first two statements, the Rust API accepting an injected general Logger and the wheel returning a named Logger from the linked crate, carry out those anchors. The dependency ban is a packaging constraint that neither anchor asks for. It dates from f023c0d (2026-11-19), before both anchors (2026-11-26). The rationale 'one Logger, one queue, no bridge' is the proposer's prose, not the owner's words. Delete it; if the owner wants it, it needs its own anchor. I did not check the code (no known code path, only Read available). The record's install-check acceptance criterion (`pip install sc-decidr` installs no `sc-observability` package) is orphaned by this cut and should be handled in repair.",
       "source": {
-        "ref": "ANC-016",
-        "quote": "judge-jev/plan-anchor and other derivative tools should defer to the default tool rules and not use injection path for production code (test only)."
+        "ref": "ANC-005",
+        "quote": "I mandated - that all default loggers created in production have root/folder/file naming conventions specified.",
+        "commit": "f023c0d"
       },
-      "improvement": "REQ-SAG-0008 drops from 3 to 2 statements and states only the logger injection and acquisition behaviour the anchors cover.",
+      "improvement": "REQ-SAG-0008 no longer exceeds ANC-005 or ANC-016. It keeps its two logger obligations.",
       "cells": [
         "REQ-SAG-0008/ANC-005",
         "REQ-SAG-0008/ANC-016"
@@ -141,56 +247,7 @@
     {
       "wave": 1,
       "kind": "propose_anchor",
-      "title": "Cut the paid-API base-address prohibition from REQ-SAG-0019 unless the owner anchors it",
-      "records": [
-        "REQ-SAG-0019"
-      ],
-      "changes": [
-        {
-          "record": "REQ-SAG-0019",
-          "before": "Configuration MUST NOT change a paid API's base address."
-        }
-      ],
-      "justification": "ANC-001 requires `jev` to select the newest Jev model with a config default override. ANC-009 requires that config can add model rows. Neither limits what configuration may set, so a prohibition on changing a paid API's base address is a stricter constraint than either anchor and is deleted at aggressive level. I believe it is needed: the record's definitions and rationale say a paid API's key is sent only to that provider's built-in address, and configuration must not redirect that key. I therefore propose the anchor below. The unit test on a model entry whose provider is not built in is acceptance-criterion text and goes with whatever the owner decides.",
-      "source": {
-        "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
-      },
-      "improvement": "REQ-SAG-0019 drops one statement that no anchor states. The key-safety rule returns only if the owner anchors it.",
-      "cells": [
-        "REQ-SAG-0019/ANC-001",
-        "REQ-SAG-0019/ANC-009"
-      ],
-      "proposed_anchor": "Configuration must not change the base address of a paid API, so an API key is sent only to that provider's built-in endpoint."
-    },
-    {
-      "wave": 1,
-      "kind": "cut_excess",
-      "title": "Cut the local-endpoint address statement from REQ-SAG-0019",
-      "records": [
-        "REQ-SAG-0019",
-        "REQ-SAG-0801"
-      ],
-      "changes": [
-        {
-          "record": "REQ-SAG-0019",
-          "before": "A local endpoint's address MUST be settable in configuration."
-        }
-      ],
-      "justification": "ANC-009 covers extra model rows from config. The address of a local runner is not a model-table row, so the statement goes beyond the anchor. REQ-SAG-0801 states the same obligation (\"Each local decision runner's network address MUST come from configuration.\"), so deleting it here leaves one home for it. This depends on REQ-SAG-0801 keeping that statement. REQ-SAG-0801 is outside my slice and I did not check whether another proposal changes it.",
-      "source": {
-        "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
-      },
-      "improvement": "One copy of the local-endpoint configuration rule, in REQ-SAG-0801. REQ-SAG-0019 drops one statement.",
-      "cells": [
-        "REQ-SAG-0019/ANC-009"
-      ]
-    },
-    {
-      "wave": 1,
-      "kind": "delete",
-      "title": "Delete REQ-SAG-0101 (model short names)",
+      "title": "Delete REQ-SAG-0101 (model short names); owner to anchor the short-name list if needed",
       "records": [
         "REQ-SAG-0101"
       ],
@@ -199,45 +256,23 @@
           "record": "REQ-SAG-0101"
         }
       ],
-      "justification": "Both statements go beyond ANC-001 and ANC-009. ANC-001 constrains only the `jev` alias, and ANC-009 constrains only config-added rows. Resolving every cloud short name and every local short name is outside both. Cutting the excess leaves the record with no statements, so it is deleted. The resolution of short names is already stated in REQ-SAG-0102 (a short name resolves to its newest row) and in REQ-SAG-0801 (`decider` resolves to the 4b row, and local runners are selectable by name). REQ-SAG-0102 lists REQ-SAG-0101 under `dependencies.related`; that link must be dropped when the record is deleted.",
+      "justification": "ANC-001 asks only that `jev` select the newest Jev model with a config override, and ANC-009 asks only that config can add model rows. Both statements of REQ-SAG-0101 go beyond that: the fixed list of cloud short names and the fixed list of local short names (`laya`, `decider`). The short-name-to-newest-row rule that serves ANC-001 already lives in REQ-SAG-0102. Both statements first appeared in 1a9af55 (2026-11-25), a day before the owner's anchors (2026-11-26), so the record predates them. Deleting both statements leaves the record empty, so the record is deleted. If the owner wants the named short-name set kept, it needs its own anchor. I could not read the code (only Read was available and the crate file paths could not be discovered), so no code was consulted.",
       "source": {
         "ref": "ANC-001",
-        "quote": "I want 'jev' to select latest, config can override default."
+        "quote": "I want 'jev' to select latest, config can override default.",
+        "commit": "1a9af55"
       },
-      "improvement": "Removes a record, 2 statements and 2 yellow cells. Short-name resolution stays in one place, REQ-SAG-0102.",
+      "improvement": "REQ-SAG-0101 no longer exceeds ANC-001 or ANC-009; one record and two statements fewer.",
       "cells": [
         "REQ-SAG-0101/ANC-001",
         "REQ-SAG-0101/ANC-009"
-      ]
-    },
-    {
-      "wave": 1,
-      "kind": "cut_excess",
-      "title": "Cut the release-date sort rule from REQ-SAG-0102",
-      "records": [
-        "REQ-SAG-0102"
       ],
-      "changes": [
-        {
-          "record": "REQ-SAG-0102",
-          "before": "The built-in rows of the model table MUST be sorted by release date, newest first."
-        }
-      ],
-      "justification": "ANC-001 requires only that `jev` selects the newest Jev model. It does not require a sort order for the table. The statement that a short name resolves to its newest row stays, and so does the requirement that each built-in model carries its published release date, which is how 'newest' is decided. ANC-009 does not ask for a sort order either.",
-      "source": {
-        "ref": "ANC-001",
-        "quote": "I want 'jev' to select latest, config can override default."
-      },
-      "improvement": "Drops a table-layout constraint no anchor asks for. The anchors still constrain the resolution outcome.",
-      "cells": [
-        "REQ-SAG-0102/ANC-001",
-        "REQ-SAG-0102/ANC-009"
-      ]
+      "proposed_anchor": "The sc-agent model table must resolve each cloud short name (jev, haiku, sonnet, opus, fable, luna, terra, sol, astra) to a model in the table and each local short name (laya, decider) to a local model. Needed because callers select models by short name (REQ-SAG-0101 statements 1 and 2)."
     },
     {
       "wave": 1,
       "kind": "propose_anchor",
-      "title": "Full model id selects its row: cut from REQ-SAG-0102, owner to anchor",
+      "title": "Cut exact full-model-id selection from REQ-SAG-0102",
       "records": [
         "REQ-SAG-0102"
       ],
@@ -247,22 +282,23 @@
           "before": "A full model id MUST select its row exactly."
         }
       ],
-      "justification": "No anchor states that a full model id selects its row; ANC-001 is about the `jev` alias and ANC-009 is about config-added rows. ANC-009's check does say a send with a configured id resolves, so the behaviour may be needed. At aggressive the statement is deleted until the owner anchors it.",
+      "justification": "ANC-001 covers the `jev` short name and its newest-row selection, and ANC-009 covers config-added rows. Neither asks that a full model id select its row exactly; this is stricter than both. It first appeared in 66369ba (2026-11-21), before the anchors (2026-11-26). Until the owner anchors it, the statement is deleted. I could not read the code, so none is cited.",
       "source": {
         "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "66369ba"
       },
-      "improvement": "Removes an unanchored obligation. The owner decides whether exact-id selection is a requirement.",
+      "improvement": "REQ-SAG-0102 no longer exceeds ANC-001 or ANC-009 with a full-id rule.",
       "cells": [
         "REQ-SAG-0102/ANC-001",
         "REQ-SAG-0102/ANC-009"
       ],
-      "proposed_anchor": "A send that names a full model id, whether from a built-in row or from a config-added row, must use exactly that row, so a new model can be used by its id before any release."
+      "proposed_anchor": "A full model id must select its row in the model table exactly. Needed so a send with a configured model id resolves (ANC-009's check) rather than falling back to a short name (REQ-SAG-0102)."
     },
     {
       "wave": 1,
-      "kind": "cut_excess",
-      "title": "Cut the no-branching-on-catalog-name rule from REQ-SAG-0102",
+      "kind": "propose_anchor",
+      "title": "Cut the ban on branching on catalog names from REQ-SAG-0102",
       "records": [
         "REQ-SAG-0102"
       ],
@@ -272,48 +308,56 @@
           "before": "`sc-agent` MUST NOT branch on a catalog name."
         }
       ],
-      "justification": "This is a code-structure prohibition. ANC-001 and ANC-009 do not ask for it, and it applies to provider names and model ids as well as the table. ANC-012 (provider dispatch) has the related constraint of no matching on wire strings outside the implementations, and any broader branching rule belongs with that anchor, not in the model-table record. Cutting it also removes the definitions (catalog name, branch on) from use, so the owner may want to drop those definition sentences in the same edit.",
+      "justification": "ANC-001 and ANC-009 constrain how short names resolve and how rows are added. A ban on comparing any provider name, short name or model id with a string literal applies across all of sc-agent, outside both anchors' scope. It first appeared in 1a9af55 (2026-11-25), before the anchors (2026-11-26). Deleted until the owner anchors it. I could not read the code, so none is cited.",
       "source": {
-        "ref": "ANC-001",
-        "quote": "I want 'jev' to select latest, config can override default."
+        "ref": "ANC-009",
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "1a9af55"
       },
-      "improvement": "Removes an unanchored constraint that goes beyond both anchors.",
+      "improvement": "REQ-SAG-0102 no longer exceeds ANC-001 or ANC-009 with a repository-wide coding rule.",
       "cells": [
         "REQ-SAG-0102/ANC-001",
         "REQ-SAG-0102/ANC-009"
-      ]
+      ],
+      "proposed_anchor": "sc-agent must not compare a provider name, short name or model id with a string literal to choose what the code does. Needed so provider and model stay typed data and new rows need no code (REQ-SAG-0102 rationale)."
     },
     {
       "wave": 1,
-      "kind": "cut_excess",
-      "title": "Cut the model-row layout statements from REQ-SAG-0103",
+      "kind": "propose_anchor",
+      "title": "Cut named-provider and provider-name rules from REQ-SAG-0103",
       "records": [
         "REQ-SAG-0103"
       ],
       "changes": [
         {
           "record": "REQ-SAG-0103",
-          "before": "A model-table row MUST store its provider in a field separate from its model."
+          "before": "sc-agent MUST be able to send requests through Together."
         },
         {
           "record": "REQ-SAG-0103",
-          "before": "A request MUST carry the model id stored in the selected model-table row."
+          "before": "sc-agent MUST be able to send requests through OpenRouter."
+        },
+        {
+          "record": "REQ-SAG-0103",
+          "before": "The provider that sends requests to the OpenAI API MUST have the name `openai`."
         }
       ],
-      "justification": "These two statements concern the structure of model-table rows. ANC-009 asks only that the table accept extra rows from config, so they go beyond it. The other statements in REQ-SAG-0103 concern provider routing, not the model table. They are outside ANC-009's topic and this slice does not touch them.",
+      "justification": "ANC-009 asks only that config can add model rows to the table. Naming Together, OpenRouter and the `openai` provider as required providers goes beyond it. The three statements first appeared in 67203e2 (2026-11-25), before the anchor (2026-11-26). Deleted until the owner anchors them. I could not read the code, so none is cited.",
       "source": {
         "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "67203e2"
       },
-      "improvement": "Cuts the row-layout obligations that exceed ANC-009. The provider routing statements stay for other anchors or slices to judge.",
+      "improvement": "REQ-SAG-0103 no longer exceeds ANC-009 with named providers.",
       "cells": [
         "REQ-SAG-0103/ANC-009"
-      ]
+      ],
+      "proposed_anchor": "sc-agent must be able to send requests through Together and OpenRouter, and the provider for the OpenAI API must be named `openai`. Needed because the owner uses these providers today (REQ-SAG-0103 rationale)."
     },
     {
       "wave": 1,
       "kind": "propose_anchor",
-      "title": "Config names a provider for a model: cut from REQ-SAG-0103, owner to anchor",
+      "title": "Cut provider-selection rules from REQ-SAG-0103",
       "records": [
         "REQ-SAG-0103"
       ],
@@ -321,18 +365,35 @@
         {
           "record": "REQ-SAG-0103",
           "before": "When configuration names a provider for a model, sc-agent MUST send that model's requests to that provider."
+        },
+        {
+          "record": "REQ-SAG-0103",
+          "before": "When no provider is configured for a model, sc-agent MUST prefer a provider that needs no key over one that needs a key."
+        },
+        {
+          "record": "REQ-SAG-0103",
+          "before": "When no provider is configured for a model and every provider serving it needs a key, sc-agent MUST use the first of them whose key is found."
+        },
+        {
+          "record": "REQ-SAG-0103",
+          "before": "A short name MUST NOT encode its provider."
+        },
+        {
+          "record": "REQ-SAG-0103",
+          "before": "A request MUST NOT require the caller to name a provider."
         }
       ],
-      "justification": "This is a model configuration behaviour: it chooses a provider, which is not the same as adding model rows. ANC-009 does not ask for it, so it exceeds that anchor. It may still be a real owner requirement, since the rationale says callers should not pick a provider per call. At aggressive it is deleted until the owner anchors it.",
+      "justification": "ANC-009 covers accepting config-added model rows, not choosing which provider serves a model: the configured-provider rule, the keyless-first and first-key-found preference, and the bans on provider-encoding short names and caller-named providers. These add constraints the anchor does not ask for. Four first appeared in 67203e2 and one in 22f4a5b (both 2026-11-25), before the anchor (2026-11-26). Deleted until the owner anchors them. I kept the first two statements (provider in its own field; request carries the row's model id) because they describe the row shape that config-added rows must have. I could not read the code, so none is cited.",
       "source": {
         "ref": "ANC-009",
-        "quote": "hard-coded rows will get stale quickly and often"
+        "quote": "hard-coded rows will get stale quickly and often",
+        "commit": "67203e2"
       },
-      "improvement": "Removes an unanchored configuration rule. The owner decides whether config provider choice is required.",
+      "improvement": "REQ-SAG-0103 no longer exceeds ANC-009 with provider-routing rules.",
       "cells": [
         "REQ-SAG-0103/ANC-009"
       ],
-      "proposed_anchor": "When the sc-agent configuration names a provider for a model, every request for that model must go to that provider, so the owner can steer a model to a provider without a code change."
+      "proposed_anchor": "When several providers serve a model, sc-agent must use the provider configuration names, else prefer a keyless provider, else the first provider whose key is found; a short name must not encode its provider and a request must not require the caller to name one. Needed because one model can be served by several providers and per-call provider choice is poor UX (REQ-SAG-0103 rationale)."
     }
   ]
 }
