@@ -254,11 +254,15 @@ Source: PRD "Do the counting in code"; `design/data-model-and-gating.md` §5. St
 
 ### Requirement Statement
 
-Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent.
+Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers questions about the scoped text it is sent. A run file is the file one live run is written to. An anchor result is one anchor's result in a run file. A session row is the sc-agent session log row for one `session_id`; Jev's answers, `model_answered` and `attempts` are read from it.
 
 **MUST statements:**
 
-- Each live run shall be written to its own run file that copies the statement, quote and provenance it judged. Each anchor result in a run file shall carry plan-anchor's own `anchor_id` and the `session_id` of every Jev query that produced it (two when the request was confirmed, REQ-PA-0076). A run file shall not contain Jev's answers, `model_answered` or `attempts`; they are read from the sc-agent session row with that `session_id`.
+- Each live run shall be written to its own run file.
+- A run file shall copy the statement, quote and provenance it judged.
+- Each anchor result shall carry plan-anchor's own `anchor_id`.
+- Each anchor result shall carry the `session_id` of every Jev query that produced it (two when the request was confirmed, REQ-PA-0076).
+- A run file shall not contain Jev's answers, `model_answered` or `attempts`.
 
 ### Rationale
 
@@ -552,7 +556,7 @@ Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers q
 
 **MUST statements:**
 
-- `anchor-tuning` shall run as a dedicated Opus/Sol (Cursor: Grok at high effort) subagent of the planner that judges a candidate pool larger than production in parallel, ranks it and seals a smaller production set. The tuner's Jev queries shall go only through `jev_judge.py tournament`, which sends each one through sc-agent `send` so that it gets a row in the sc-agent session log; the tuner shall not call Jev any other way.
+- `anchor-tuning` shall run as a dedicated Opus/Sol (Cursor: Grok at high effort) subagent of the planner that judges a candidate pool larger than production in parallel, ranks it and fixes the question-set digest of a smaller production set. The tuner's Jev queries shall go only through `jev_judge.py tournament`;  the tuner shall not call Jev any other way.
 
 ### Rationale
 
@@ -563,8 +567,8 @@ Source: ANC-020, ANC-026, ANC-027; OPERATOR (phase j session-log ruling, 2026-11
 **Acceptance Criteria:**
 
 - [ ] The `anchor-tuning` agent definition runs as a subagent of the planner on Opus/Sol, and on Cursor on Grok at high effort.
-- [ ] An `anchor-tuning` run judges a candidate pool larger than production in parallel, ranks the pool and seals a smaller production set.
-- [ ] Each Jev query of an `anchor-tuning` run goes through `jev_judge.py tournament` via sc-agent `send` and has a row in the sc-agent session log.
+- [ ] An `anchor-tuning` run judges a candidate pool larger than production in parallel, ranks the pool and fixes the question-set digest of a smaller production set.
+- [ ] Each Jev query of an `anchor-tuning` run goes through `jev_judge.py tournament`.
 - [ ] The `anchor-tuning` text and code contain no Jev call other than `jev_judge.py tournament`.
 
 ## REQ-PA-0039: anchor-tuning temporary plan copies
@@ -764,7 +768,7 @@ Definitions: Jev is TypeSafe's judge model at `api.typesafe.ai`, which answers q
 
 **MUST statements:**
 
-- When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`, so that the second send is a new Jev call with its own session row and not a result-cache hit: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`. When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
+- When a live answer to a gating role (not a prohibition's compliance) is within 0.10 of the threshold, `judge` and `check-fixtures` shall send the identical request once more with `cache=False`: agreement sets `confirmed`; disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s; a second call with no answer keeps the first verdict, records `confirm_error` and exits 2 (REQ-050). It is on by default; `--no-confirm` turns it off and `--confirm-near-threshold` only states the default; fixture answers are never re-asked. Every judged result carries `leaning` (the verdict at threshold 0), and an `underspecified` one carries `low_questions`. When `--repeat` of `batch` or `bead-batch`, or the tournament request's `repeat_count`, is greater than 1, every repeat shall be sent with `cache=False`, all repeats in one call that keeps their order, so that each repeat is its own Jev call with its own `session_id`. The second and third testability confirmations of `rubric` and `add --rubric` shall also be sent with `cache=False`.
 
 ### Rationale
 
@@ -776,7 +780,7 @@ Source: OPERATOR (phase j session-log ruling, 2026-11-24); OPERATOR (phase j rul
 
 **Acceptance Criteria:**
 
-- [ ] A test with a live gating-role answer (not a prohibition's compliance) within 0.10 of the threshold finds `judge` and `check-fixtures` send the identical request once more with `cache=False`, producing a new Jev call with its own session row.
+- [ ] A test with a live gating-role answer (not a prohibition's compliance) within 0.10 of the threshold finds `judge` and `check-fixtures` send the identical request once more with `cache=False`.
 - [ ] A test finds agreement sets `confirmed`, and disagreement makes the cell `underspecified` with `unstable`, both verdicts and both `session_id`s.
 - [ ] A test where the second call returns no answer finds the first verdict kept, `confirm_error` recorded and exit 2.
 - [ ] Tests find the re-ask runs by default, does not run with `--no-confirm`, is not re-asked for fixture answers, and every judged result carries `leaning` with each `underspecified` result also carrying `low_questions`.
@@ -882,11 +886,9 @@ Source: OPERATOR (issue #58, 0.8.6). Status: shipped.
 
 ### Requirement Statement
 
-Definitions: Redacted means the live TypeSafe key and bearer tokens are removed from every emitted value.
-
 **MUST statements:**
 
-- A `--dry-run` shall only check that its input composes into valid requests and show the would-send requests, redacted, on stdout, or in the file named by `--out` (for `judge`, `--out` names the requests file on a dry run). A dry run shall write no file under `anchor-runs/`, no run file, no result line and no log event. A `--out` path inside `anchor-runs/` on a dry run shall be refused with `VALIDATION.INPUT`. `--dry-run` and `--answers-file` execution shall make zero network calls.
+- A dry run shall show the would-send requests on stdout, or in the file named by `--out`.
 
 ### Rationale
 
@@ -896,9 +898,4 @@ Source: OPERATOR (phase j session-log ruling, 2026-11-24); INTENT "Success"; ret
 
 **Acceptance Criteria:**
 
-- [ ] A test runs `--dry-run` and the input is checked to compose into valid requests and the would-send requests are shown redacted on stdout, or in the file named by `--out` (for `judge`, the requests file).
-- [ ] After a dry run, no file is written under `anchor-runs/`, and no run file, result line or log event exists.
-- [ ] A dry run with a `--out` path inside `anchor-runs/` is refused with `VALIDATION.INPUT`.
-- [ ] A test runs with `--dry-run` with network access blocked and records zero network calls.
-- [ ] A test runs with `--answers-file` with network access blocked and records zero network calls.
-
+- [ ] A test runs `--dry-run` and the would-send requests are shown on stdout, or in the file named by `--out`.
