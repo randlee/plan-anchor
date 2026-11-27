@@ -68,7 +68,6 @@ The correction is a deletion. Remove the duplicate statement. Add only the id of
 
 Only duplicates are deletion candidates: duplicate statements, and records fully restated elsewhere (delete such a record unless it holds an obligation no other record states).
 
-- Anchors capture intent, not every required detail. REQ/ADR records are added to fill gaps in required coverage. For example, an anchor may set SQLite behaviour while the records still have to specify details it does not mention, such as WAL mode or no WAL. A record can be necessary without any anchor of its own.
 - For each record in "Not covered by any anchor", the caller asks one question: is this valuable to the product? It is kept if it states something the product needs, such as required detail like SQLite WAL, a consumer-visible behaviour, or a choice with its reason. It is deleted if it is not valuable. A missing anchor is not a reason to delete, and the record existing is not a reason to keep it.
 
 The agent running the deduplication makes these choices itself. The one exception is when the two copies differ in meaning: that is a conflict, not a duplicate, and goes to the owner with both texts quoted.
@@ -92,11 +91,10 @@ Errors (exit 2): `ANCHOR.NONE_LOCKED`, `DEPENDENCY.RAPTOR`, `RAPTOR.NO_INVENTORY
 ## Interpretation
 
 - Red: the record contradicts the owner. Fix the record (or ask the owner), then re-trace.
-- Yellow (exceeds): the record adds constraints the anchor did not ask for. Remedy, in this order:
-  1. Look at every yellow cell critically and ask whether the extra detail is valuable to the product.
-  2. If it is not, which is the usual case, delete the extra statement or clause. If that leaves the record empty, delete the record.
-  3. If part of it is needed, tune it down: cut it to just the detail the product needs. Exception: required detail no anchor mentions, such as SQLite WAL mode, is kept at just that detail.
-  4. Rewriting or rewording a yellow cell is not a remedy, because it keeps the excess.
-- Anchors capture intent, not every required detail. REQ/ADR records are added to fill gaps in required coverage. For example, an anchor may set SQLite behaviour while the records still have to specify details it does not mention, such as WAL mode or no WAL. A record can be necessary without any anchor of its own.
+- Yellow (exceeds): the record goes beyond the anchor, and a record that exceeds an anchor is highly suspect. Remedy:
+  1. Delete the part that goes beyond the anchor; this is the default. Tuning down means cutting the record back to what the anchor states.
+  2. A record left empty is deleted.
+  3. Rewording is not a remedy.
+  4. If you believe the extra detail is necessary, do not keep it in the record: list it for the owner as a proposed anchor, in one line (record id, statement, why it is needed). Until the owner anchors it, the excess is deleted.
 - For each record in "Not covered by any anchor", the caller asks one question: is this valuable to the product? It is kept if it states something the product needs, such as required detail like SQLite WAL, a consumer-visible behaviour, or a choice with its reason. It is deleted if it is not valuable. A missing anchor is not a reason to delete, and the record existing is not a reason to keep it.
 - Annotations are a reviewer's reading. When `jev_disputed` is true the reviewer disagrees with Jev's class; read the record before acting.
