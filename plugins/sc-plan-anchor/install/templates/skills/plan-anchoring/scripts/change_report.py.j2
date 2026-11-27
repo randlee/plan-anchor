@@ -1180,7 +1180,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                    "Pass a file written by `jev_judge.py trace`.")
     t = doc.value
     subject = Path(str(t.get("anchors_path") or "")).parent.name or "records"
-    where = report_location(args, "cleanup" if args.proposals else "trace", subject)
+    where = report_location(args, "cleanup" if args.proposals else "trace", subject, place_warnings := [])
     if isinstance(where, Err):
         return where
     out, name = where.value
@@ -1280,6 +1280,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
             totals, warnings = proposal_effect(proposals, t, records)
             warnings += [x for _, _, x in clashes]
             uncovered = coverage(t, proposals, not_proposed)
+        warnings = place_warnings + warnings
         gaps = [(f"{c['record']}/{c['anchor']}", f"{c['record']} × {c['anchor']} ({c['class']})", dom_id("cell", f"{c['record']}-{c['anchor']}"))
                 for c in t["cells"] if c["class"] in TRACE_DETAIL and not annotated(c.get("annotation"))]
         gaps += [(dup_key(o), f"{o['item']} restates {o['partner']} statement {o['statement_index'] + 1}", dom_id("dup", f"{o['item']}-{o['partner']}"))
@@ -1355,23 +1356,30 @@ def issue_template(root: Path) -> Result[Optional[str], ToolError]:
     return Ok(s.issue_url_template if s is not None else None)
 
 
-def report_location(args: argparse.Namespace, kind: str, subject: str) -> Result[Tuple[Path, str], ToolError]:
+def report_location(args: argparse.Namespace, kind: str, subject: str, warnings: List[str]) -> Result[Tuple[Path, str], ToolError]:
     """Where a report goes (references/html-reporting-guidelines.md): --out, else ``reports_dir`` from the settings
     (default site/reports/plan-anchor) under the folder holding .sc/; and --name, else the stamped, non-intersecting
-    ``YYYYMMDD-HHMMSS-<kind>-<subject>`` (with -2, -3... if a report of that name already exists)."""
+    ``YYYYMMDD-HHMMSS-<kind>-<subject>`` (with -2, -3... if a report of that name already exists). Rendering stays
+    standard-library only: with no settings file, or without PyYAML to read one, the default folder is used (warned)."""
     if args.out:
         out = Path(args.out).resolve()
     else:
         pas = settings_module()
-        found = pas.effective_settings(Path(args.repository_root).resolve())
-        if isinstance(found, Err):
-            return found
-        base = found.value.path.parent.parent.parent if found.value.path is not None else None
-        if base is None:
-            top = pas.find_repo_root(Path(args.repository_root))
-            base = top.value if isinstance(top, Ok) else Path(args.repository_root).resolve()
-        settings = found.value.settings
-        out = (base / ((settings.reports_dir if settings is not None else None) or pas.REPORTS_DIR_DEFAULT)).resolve()
+        start = Path(args.repository_root).resolve()
+        path, rel = pas.find_settings(start), pas.REPORTS_DIR_DEFAULT
+        if path is not None:
+            found = pas.effective_settings(start)
+            if isinstance(found, Err) and found.error.code == "DEPENDENCY.PYYAML":
+                warnings.append(f"reports_dir not read from {path}: PyYAML is not installed; saved under {rel}")
+            elif isinstance(found, Err):
+                return found
+            elif found.value.settings is not None and found.value.settings.reports_dir:
+                rel = found.value.settings.reports_dir
+            base = path.parent.parent.parent
+        else:
+            top = pas.find_repo_root(start)
+            base = top.value if isinstance(top, Ok) else start
+        out = (base / rel).resolve()
     if args.name:
         return Ok((out, args.name))
     stem = "-".join([datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S"), kind,
@@ -1419,7 +1427,7 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
         return err("SCRIPT.IO", f"anchors file {anchors} does not exist", "Pass --anchors naming anchors.json.")
     anchors = anchors.resolve()
     plan_dir = Path(args.plan_dir).resolve() if args.plan_dir else anchors.parent
-    where = report_location(args, "change", plan_dir.name)
+    where = report_location(args, "change", plan_dir.name, place_warnings := [])
     if isinstance(where, Err):
         return where
     out, args.name = where.value
@@ -1456,7 +1464,7 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
     runs = load_runs(plan_dir / "anchor-runs", args.gate, args.item)
     if isinstance(runs, Err):
         return runs
-    warnings = [f"no {args.gate} run found for item {i}" for i in args.item if i not in runs.value]
+    warnings = place_warnings + [f"no {args.gate} run found for item {i}" for i in args.item if i not in runs.value]
 
     old, new = by_id(old_doc.value), by_id(now_doc.value)
     anchor_units = [anchor_unit(a, old.get(a, {}), new.get(a, {}), checks.value, tuning.value, template.value)

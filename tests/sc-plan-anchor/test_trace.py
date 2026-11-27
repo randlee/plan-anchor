@@ -1,5 +1,6 @@
 """jev_judge.py trace and change_report.py --trace: offline, with --answers-file fixtures; no Jev call."""
 import contextlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -775,20 +776,32 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertNotIn("Check before approving", second)
 
     def test_default_output_follows_the_settings_and_saves_the_sources(self):
-        settings = Path(self.tmp) / ".sc" / "plan-anchor" / "settings.yaml"
-        settings.parent.mkdir(parents=True)
-        settings.write_text("schema_version: 1\nreports_dir: \"web/reports\"\n", encoding="utf-8")
+        """Without --out and --name: reports_dir from the settings and a stamped name; without PyYAML (rendering is
+        standard-library only) or without a settings file, the default folder, never a failure."""
         proposals = write(self.tmp, "proposals.json", PROPOSALS)
-        pages = []
-        for _ in range(2):
+
+        def render():
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = cr.main(["--trace", self.trace, "--proposals", proposals, "--repository-root", self.tmp])
             env = json.loads(buf.getvalue())
             self.assertEqual(rc, 0, env)
-            page = Path(env["data"]["html"])
+            return env, Path(env["data"]["html"])
+
+        _, page = render()  # no settings file: the default folder, PyYAML or not
+        self.assertEqual(page.parent, (Path(self.tmp) / "site" / "reports" / "plan-anchor").resolve())
+        settings = Path(self.tmp) / ".sc" / "plan-anchor" / "settings.yaml"
+        settings.parent.mkdir(parents=True)
+        settings.write_text("schema_version: 1\nreports_dir: \"web/reports\"\n", encoding="utf-8")
+        has_yaml = importlib.util.find_spec("yaml") is not None
+        pages = []
+        for _ in range(2):
+            env, page = render()
             pages.append(page)
-            self.assertEqual(page.parent, (Path(self.tmp) / "web" / "reports").resolve())
+            want = ("web/reports" if has_yaml else "site/reports/plan-anchor").split("/")
+            self.assertEqual(page.parent, Path(self.tmp, *want).resolve())
+            if not has_yaml:
+                self.assertIn("PyYAML is not installed", env["data"]["warnings"][0])
             self.assertRegex(page.name, r"^\d{8}-\d{6}-cleanup-[A-Za-z0-9._-]+\.html$")
             sources = page.parent / page.stem / "sources"
             self.assertEqual(sorted(x.name for x in sources.iterdir()), ["proposals.json", "trace.json"])
