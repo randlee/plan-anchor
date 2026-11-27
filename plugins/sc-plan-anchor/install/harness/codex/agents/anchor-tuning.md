@@ -1,6 +1,6 @@
 ---
 name: anchor-tuning
-version: 0.13.0
+version: 0.15.0
 description: Calibrates Jev questions from approved authority and adjudicates disputed failures without tuning toward a pass.
 model: sol
 color: purple

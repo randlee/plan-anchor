@@ -201,17 +201,6 @@ class RubricInputTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertIn('intent', out['data']['requests'][0]['state'])
 
-    def test_oversized_context_dry_live_and_fixture_refuse_before_credentials(self):
-        with tempfile.TemporaryDirectory() as root:
-            intent, _ = self.inputs(root)
-            intent['content'] = 'approved context ' * 200
-            intent['sha256'] = hashlib.sha256(intent['content'].encode()).hexdigest()
-            write(root, 'intent.json', intent)
-            fixture = write(root, 'answers.json', {'candidate': rubric_answers()})
-            for flags in ([], ['--dry-run'], ['--answers-file', fixture]):
-                with self.subTest(flags=flags), mock.patch.object(jj, 'DEFAULT_MAX_REQUEST_BYTES', 1000):
-                    self.assert_refused_before_credentials(self.args(root) + flags, 'JEV.CONTEXT_EXCEEDED')
-
     def test_context_does_not_bypass_consent(self):
         try:
             import yaml  # noqa: F401 - live consent reads settings through this optional dependency

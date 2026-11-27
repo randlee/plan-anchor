@@ -9,14 +9,11 @@
     "id": "live-1",
     "title": "Sprint 2 runtime (from scratch)",
     "source": "<scratch>/live/bead1.txt",
-    "chars": 128,
-    "truncated": false
+    "chars": 128
   },
   "model_requested": "jev-latest",
   "model_answered": "jev-1.13.0",
   "threshold": 0.6,
-  "max_request_bytes": 24000,
-  "min_item_chars": 2000,
   "dry_run": false,
   "fixture": false,
   "results": [
@@ -76,9 +73,7 @@
         "output_tokens": 117
       },
       "attempts": 1,
-      "item_chars_sent": 128,
-      "item_shortened": false,
-      "request_bytes": 3073
+      "item_chars_sent": 128
     },
     {
       "anchor_id": "REQ-014",
@@ -136,9 +131,7 @@
         "output_tokens": 117
       },
       "attempts": 1,
-      "item_chars_sent": 128,
-      "item_shortened": false,
-      "request_bytes": 3025
+      "item_chars_sent": 128
     }
   ],
   "summary": {
@@ -150,7 +143,6 @@
       "ANC-012"
     ],
     "errors": [],
-    "shortened": [],
     "pass": false
   }
 }

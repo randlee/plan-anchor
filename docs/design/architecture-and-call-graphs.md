@@ -2,7 +2,7 @@
 
 Design document for the `plan-anchoring` skill. Companion to the [PRD](../plan-anchor-prd.md) and to [data model, gating and lifecycle](data-model-and-gating.md). Diagrams are Mermaid.
 
-Status: describes the code at 0.8.3 (`fix/0.8.3-errors`). The anchor tracker is selected by `anchor_tracker.py` (`br` or `bd`), both gates judge the sprint text the caller supplies (no plan parsing), anchors can exclude items, remote-judge consent is a committed setting (§6), and the marketplace plugin only installs plan-anchor into a folder, rendered for one tracker (§7). Every CLI exits 0 when it ran, 2 when it could not (a Jev call with no answer included, since 0.8.3) and 130 on interrupt (ADR-007). The live verification against Jev `jev-1.13.0` predates these changes. Not built: fast-model stand-ins (`design/anchor-tuning-stand-ins.md`) and separate gate entry points (ADR-009).
+Status: describes the code at 0.8.3 (`fix/0.8.3-errors`). The anchor tracker is selected by `anchor_tracker.py` (`br` or `bd`), both gates judge the sprint text the caller supplies (no plan parsing), anchors can exclude items, remote-judge consent is a committed setting (§6), and the marketplace plugin only installs plan-anchor into a folder, rendered for one tracker (§7). Every CLI exits 0 when it ran, 2 when it could not (a Jev call with no answer included, since 0.8.3) and 130 on interrupt (REQ-049). The live verification against Jev `jev-1.13.0` predates these changes. Not built: fast-model stand-ins (`design/anchor-tuning-stand-ins.md`) and separate gate entry points (REQ-PA-0036).
 
 ## 1. Components
 
@@ -124,7 +124,7 @@ flowchart TD
     QM["Quality manager<br/>(QA side of the dev/QA matrix)"]
     QM -- "item_file (the sprint text), evidence paths or pr_number" --> SA["anchor-sprint-review"]
 
-    subgraph Assemble["assemble the account (priority order; item cut to 24,000 chars, 64,000-byte request cap)"]
+    subgraph Assemble["assemble the account (priority order)"]
         E1["1. sprint report / completion summary"]
         E2["2. PR title and body<br/>(gh pr view --json)"]
         E3["3. git diff --stat base..head<br/>(file names and counts only)"]
@@ -242,7 +242,7 @@ Before execution, each agent canonicalizes the supplied script path and accepts 
 
 ## 6. What leaves the machine
 
-Live `rubric` (and `add --rubric`), `dedupe --jev`, `check-fixtures`, and `judge` calls contact TypeSafe only with `TYPESAFE_API_KEY` set and `allow_remote_judge: true` in the nearest `.sc/plan-anchor/settings.yaml` (ADR-016; "committed" is checked only as not git-ignored); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED` and nothing is sent. `TYPESAFE_API_KEY` is the only configuration read from the environment (`USER` only defaults `add --stated-by`; the home directory only ends the install and settings walks). Gate requests carry one anchor's testable statement and scope plus one item's ID, title, composed text, and question set; `rubric` also carries the verbatim quote, and Jev dedupe carries one candidate pair. The whole plan, full diffs, source files, and external evidence are never uploaded. The key travels only as a bearer header; the script recursively redacts the exact key and bearer tokens from every emitted value and never writes them to a run file. `--dry-run` writes exact request bodies and totals without sending; `--answers-file` exercises the pipeline with fixture answers for tests and CI.
+Live `rubric` (and `add --rubric`), `dedupe --jev`, `check-fixtures`, and `judge` calls contact TypeSafe only with `TYPESAFE_API_KEY` set and `allow_remote_judge: true` in the nearest `.sc/plan-anchor/settings.yaml` (REQ-PA-0065; "committed" is checked only as not git-ignored); `false` or an absent key is `POLICY.REMOTE_JUDGE_DISABLED` and nothing is sent. `TYPESAFE_API_KEY` is the only configuration read from the environment (`USER` only defaults `add --stated-by`; the home directory only ends the install and settings walks). Gate requests carry one anchor's testable statement and scope plus one item's ID, title, composed text, and question set; `rubric` also carries the verbatim quote, and Jev dedupe carries one candidate pair. The whole plan, full diffs, source files, and external evidence are never uploaded. The key travels only as a bearer header; the script recursively redacts the exact key and bearer tokens from every emitted value and never writes them to a run file. `--dry-run` writes exact request bodies and totals without sending; `--answers-file` exercises the pipeline with fixture answers for tests and CI.
 
 ## 7. Installation
 

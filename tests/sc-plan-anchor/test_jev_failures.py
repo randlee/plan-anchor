@@ -268,7 +268,7 @@ class RefusalsAndNoOps(ProcessCase):
 
 
 class RunFileRedaction(ProcessCase):
-    """REQ-017: the key value and bearer tokens never reach a run file, whatever input carried them."""
+    """The key value and bearer tokens never reach a run file, whatever input carried them."""
 
     CANARY = "sk-canary-6f1c2a9e0b"
     BEARER = "tok-canary-77aa"

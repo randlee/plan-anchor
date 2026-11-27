@@ -1,5 +1,8 @@
 # Anchor tuning with fast-agent stand-ins (design draft)
 
+> **Retired (phase j plan review, 2026-11-24; never built).** OPERATOR ruling 2026-11-24: stand-ins are removed; the caller runs jev or haiku or luna or laya or decider, one model per command, and fan-out across models is the caller's job. Retired records: REQ-020, REQ-043, REQ-044, REQ-045, the stand-in clause of REQ-PA-0051, and ADR-011. This document is kept for history only.
+
+
 Status: draft. Anchor exclusions and the `Result` conversion are built
 (0.7.0); stand-ins, `follow-up`, `fast_agents` and the tuning prompt are not
 built at 0.8.3 (ADR-011), and the settings schema still rejects a
@@ -90,7 +93,7 @@ The case: a sprint with unrelated work, where an anchor simply does not
 apply. Today that cell can still fail as `underspecified` when Jev wavers
 near 0.6, as bi-2 did.
 
-Built in 0.7.0 (ADR-012, REQ-006). The anchor record (`anchors.json`) has an
+Built in 0.7.0 (REQ-PA-0006). The anchor record (`anchors.json`) has an
 optional list on the anchor, set with `jev_judge.py exclude`:
 
 ```json
@@ -127,7 +130,7 @@ reports a typed reason.
     `stand_ins: [{profile, ok, session_id, cwd, answers, agrees_with_jev} | {profile, ok: false, error}]`.
   - Gating is unchanged.
   - A stand-in launch failure means the tool could not do its job: the run
-    exits 2 with a typed error envelope (ADR-007), not exit 0 with a
+    exits 2 with a typed error envelope (REQ-049), not exit 0 with a
     negative result.
 - **`follow-up --run <file> --cell <anchor>:<item> --profile <name> --question <text> [--attach-item <file>]`**
   - Resumes that cell's own session.

@@ -1,0 +1,98 @@
+---
+name: sc-plan-anchor-record-trace
+version: 1.0.0
+format: markdown
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+---
+name: record-trace
+version: {{ version }}
+description: Judge REQ, ADR and NFR records against the locked anchors with Jev to find over-specification and conflicts; jev_judge.py trace writes the matrix, change_report.py --trace renders it.
+---
+
+# Record trace
+
+## When to use
+
+After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits. A run with `duplicates_pass: false` is not finished until a re-run shows `true`, or the remaining items are recorded as conflicts for the owner.
+
+## Command
+
+```
+python3 scripts/jev_judge.py trace --anchors <plan>/anchors.json --source <repo> [--source <repo> ...] [--raptor <checkout>] [--index <raptor-index.json> ...] [--ids ids.txt] [--annotations notes.json] [--out-dir DIR] [--no-overlap] [--dry-run | --answers-file F] [--workers N]
+python3 scripts/change_report.py --trace DIR/trace-<UTC>.json --out <folder>
+```
+
+- Records come only from Raptor. `--source <repo>` runs Raptor's importer (`--raptor <checkout>`) on a repository with a `.raptor/` inventory; `--index` takes a saved Raptor import index as Raptor wrote it. Nothing parses record Markdown, splits headings or finds obligations in text. Raptor missing: `DEPENDENCY.RAPTOR` with the install command; no inventory: `RAPTOR.NO_INVENTORY`; importer failure: `RAPTOR.IMPORT_FAILED`.
+- Each record: `id`, `kind` (ADR for Raptor's decisions; REQ or NFR from the id for its requirements), `repository` (Raptor's repository URN; Raptor's index carries no per-record file path), the whole record as Raptor serves it (`raptor`), its import `diagnostics`, and `obligations`: Raptor's `requirement_statement.statements` verbatim, or, when Raptor serves none (ADRs, or an empty list), `statements: null` with a note saying so. Obligations are never synthesized.
+- `--ids` (one id per line) traces only those records; a requested id Raptor did not serve is listed in `not_served` with Raptor's reason, never read another way.
+- Jev receives the record as Raptor serves it (`state.record.raptor`).
+- Only `locked` anchors are traced (`ANCHOR.NONE_LOCKED` when there are none).
+- One Jev request per record x anchor with four choice questions: `relates`, `serves`, `conflicts`, `exceeds`. Live calls go through the batch client and need `allow_remote_judge: true`, as for `judge`. `--dry-run` shows the cell requests on stdout and writes nothing; `--answers-file` keys are `<record>/<anchor>`, `<anchor>`, `<item>/overlap`, `overlap` or `*`.
+
+## Classification
+
+The script classifies each cell from P(yes); Jev is never asked for counts.
+
+| Class | Rule (defaults; `--conflict-threshold`, `--relation-threshold`, `--exceeds-threshold`) | Colour |
+|---|---|---|
+| conflicts | P(conflicts) >= 0.5 | red |
+| exceeds | P(serves) or P(relates) >= 0.6, and P(exceeds) >= 0.6 | yellow |
+| serves | P(serves) >= 0.6 | green |
+| related | P(relates) >= 0.6 | blue |
+| none | otherwise | grey |
+
+## Overlap
+
+After the cells, `trace` asks which records restate each other (`--no-overlap` turns it off). Candidate pairs come from the cells: in each anchor column, every pair of records whose cells are not `none`, deduplicated; in a pair the lower id is the item. One request per item: `state.item` is the record as text (id and title, its statement paragraph or an ADR's context, then each statement), and each partner's statements are choice questions `<partner id, - as _>_s<i>`: does the item already state this obligation (yes, no, unclear)? Statements are Raptor's: a REQ/NFR's statement list; an ADR's decision as one block, since Raptor serves no statements for decisions. The requests go through the same batch path, consent rule and `--answers-file` as the cells, in a second batch, because the pairs depend on the cells' answers; a dry run therefore shows no overlap requests.
+
+The script classifies each answer: `yes` with confidence >= 0.6 is a duplicate statement, `yes` >= 0.4 possible, otherwise none (`--duplicate-threshold`, `--possible-threshold`). `overlap` lists every answer as `{item, partner, statement_index, statement, choice, confidence, session_id, class}`; `summary.per_record` gives each record's `statements_restated` and `statements_total`, and `summary.fully_restated` the records every statement of which is a duplicate in another record. The report page has two tabs. It opens on "Anchors × Records" (the grid). "Duplicates" lists the duplicated statements by record pair (pair, statement, confidence; a row opens a side panel with both records' statements), then the deletion candidates: "Fully restated records" (`fully_restated`). `records_with_no_relation` is shown on the Anchors × Records tab as "Not covered by any anchor", with no badge and no effect on `duplicates_pass`; each record in it is judged on its own merits (Interpretation). With at least one duplicate the tab label carries a red "(!)" badge and the count; with none it reads "Duplicates 0"; with `--no-overlap` the tab says not run. The trace JSON keeps the two reports apart: `cells` and `overlap`.
+
+The output pushes the caller to correct, never chooses the correction: every duplicate entry carries `action: "correct"`; `data.duplicates_to_correct` counts them and `data.duplicates_pass` is `false` while there is one (exit stays 0; `null` with `--no-overlap`); `data.message` and the top of the Duplicates tab say "N duplicate statements must be corrected: keep each obligation in one record and delete the other copy. See Correcting duplicates in references/record-trace.md." Each row links to that section. The trace's `actions` holds this wording and the fully-restated wording: "Fully restated: every statement is in another record; delete this record." Which copy to keep is the caller's judgement, by the rules below.
+
+## Correcting duplicates
+
+Duplicate information is a defect. Each obligation is stated in exactly one record. A duplicate means two texts to keep in step, two places a reviewer files findings against, and two places a record-vs-code check must pass. Correct every duplicate the overlap step reports, in the same pass. Never keep both copies, and never resolve a duplicate by rewording one of them.
+
+Choose the one home for each duplicated statement, in this order:
+
+1. A rule for every tool built on sc-agent lives in sc-agent's records; a derivative tool's copy is deleted.
+2. A consumer-visible, testable obligation (wire format, a file another tool reads, a config key, CLI behaviour, public API behaviour) lives in a REQ, or an NFR for a quality attribute. An ADR states the decision and its reasons and cites the REQ id instead of restating the obligation.
+3. A choice between alternatives, with its reasons, lives in the ADR. A REQ that restates the choice deletes it.
+4. Between two REQs, keep the statement in the record whose title and subject it belongs to. If that does not decide it, keep it in the record with the higher judge-jev score.
+
+The correction is a deletion. Remove the duplicate statement. Add only the id of the record that keeps it, and only where the remaining text would not read without it. Do not reword the kept statement in the same pass. A record left with no statements is deleted.
+
+A record fully restated elsewhere is deleted.
+
+The agent running the deduplication makes these choices itself. The one exception is when the two copies differ in meaning: that is a conflict, not a duplicate, and goes to the owner with both texts quoted.
+
+Verify: re-run `trace` with overlap. The corrected pair must show no duplicate statement, and every edited record gets one judge-jev run.
+
+## Outputs
+
+`<out-dir>/trace-<UTC>.json` (schema `plan-anchoring/trace/2`; default out-dir `<plan>/anchor-runs`): model, session ids, question digests, thresholds; per cell the answers, P(yes) and class; the Raptor revision and indexes, `not_served`; per record what Raptor serves (above); per anchor the whole anchor; `summary.per_anchor` counts, `records_with_no_relation`, `conflicts`; with overlap on, `overlap`, `summary.per_record` and `summary.fully_restated` (above, `overlap: null` when off).
+
+`--annotations` takes `[{record, anchor, clauses, what, remedy, jev_disputed}]` written by a reviewer agent for yellow and red cells. They merge only into exceeds and conflicts cells, carry `provenance: reviewer-agent`, and the report labels them "written by a reviewer agent, not Jev". An annotation for another cell is listed in `data.warnings`, not merged.
+
+The HTML page is a records x anchors grid. Every panel uses one layout (templates/trace-panel.xhtml.j2): a title and plain-language headed blocks. A row header shows the record: title, kind, repository, status and version, then its statements (modal as MUST / MUST NOT), requirement text, decision, rationale and acceptance criteria. A column header shows the anchor: statement, owner quote, scope, deterministic check. A coloured cell shows "Record × Anchor — class"; yellow and red cells first show what exceeds or conflicts (the offending clauses quoted; "Reviewer disputes Jev:" when the reviewer disagrees) and the proposed remedy (marked "reviewer text, not Jev"), then the anchor, the record statements and one line of Jev P(yes). Copy JSON keeps every field.
+
+### Field lists (move to Raptor)
+
+Which fields a panel shows is a declarative list in `change_report.py`: `RECORD_FIELDS` and `ANCHOR_PANEL_FIELDS`, each `(label, dotted path)` in reading order. `field_blocks(obj, fields, keep)` turns one into headed blocks; `--fields path,...` keeps only some paths. This is the one seam between Raptor records and HTML. Long term it belongs in Raptor: a simple render method per record kind that shows a record plainly and takes a client's field filter, so tools do not each write code to make Raptor records readable. When Raptor offers that, delete `field_blocks`, the field lists and `_texts`, and call Raptor.
+
+Errors (exit 2): `ANCHOR.NONE_LOCKED`, `DEPENDENCY.RAPTOR`, `RAPTOR.NO_INVENTORY`, `RAPTOR.IMPORT_FAILED`, `INPUT.MALFORMED` / `INPUT.EMPTY` / `VALIDATION.INPUT` for a bad Raptor index or duplicate ids, `FIXTURE.MISSING`, `POLICY.REMOTE_JUDGE_DISABLED`; `change_report.py --trace` reports a file that is not a trace as `TRACE.INVALID`.
+
+## Interpretation
+
+- Red: the record contradicts the owner. Fix the record (or ask the owner), then re-trace.
+- Yellow (exceeds): the record goes beyond the anchor, and a record that exceeds an anchor is highly suspect. Remedy:
+  1. Delete the part that goes beyond the anchor; this is the default. Tuning down means cutting the record back to what the anchor states.
+  2. A record left empty is deleted.
+  3. Rewording is not a remedy.
+  4. If you believe the extra detail is necessary, do not keep it in the record: list it for the owner as a proposed anchor, in one line (record id, statement, why it is needed). Until the owner anchors it, the excess is deleted.
+- Judge each record in "Not covered by any anchor" on its own merits: is it valuable to the product? If not, delete it. A missing anchor is not a reason to delete, and existing is not a reason to keep.
+- Annotations are a reviewer's reading. When `jev_disputed` is true the reviewer disagrees with Jev's class; read the record before acting.

@@ -72,13 +72,9 @@ The repository guidelines file (`anchor-document.md`) is never sent to Jev whole
 
 `probabilities` says which option; `confidence` says whether to trust the call. Near-threshold cells are re-asked because of run-to-run noise (measured-behaviour.md). sc-decidr parses provider responses into typed answers and returns its typed error for malformed responses. The response read is bounded at 8 MiB. The run file stores the full answers so thresholds can be re-tuned without re-judging. An `underspecified` result also lists `low_questions`: each gating answer that was `unclear` or under the threshold, as `{ask, role, question_id, choice, confidence}`; the report prints one `Low:` line per entry.
 
-## Size, context window, and shortening
+## Size and context window
 
 - Jev allows about 32k tokens for state plus the longest question and about 64k for state plus all questions.
-- **Planning gate: a plan bead is never shortened.** A bead that fits `--max-item-chars` and, for every anchor, `--max-request-bytes` is sent whole; otherwise long code is reduced to signatures only as far as needed to fit (the rule is in `plan-size-and-shape.md`, Long code). Prose is never cut. A bead that does not fit with every long block reduced stops the run before sending with `PLAN.TOO_LARGE` (exit 2). A token-limit 422 at this gate is recorded per anchor as `PLAN.TOO_LARGE`, never halved (`plan-size-and-shape.md`). The run records `item.chars_before_reduction` and `item.code_reduced`.
-- **Development gate:** before the first call the script shortens the evidence account (keeping the head, appending a truncation marker) until the serialised request is under `--max-request-bytes` (default 64,000 bytes at this gate; measured-behaviour.md). If Jev still answers a 4xx reporting the token limit, the script halves the account and retries, down to `--min-item-chars` (default 2,000). Below that the anchor is `verdict: error` with `JEV.CONTEXT_EXCEEDED`.
-- Each result records `item_chars_sent`, `item_shortened`, `request_bytes`; the run's `summary.shortened` lists affected anchors.
-
 ## Provider retries and attempts
 
 Per anchor, per request:
@@ -86,7 +82,6 @@ Per anchor, per request:
 | Situation | Behaviour |
 | --- | --- |
 | Provider response, timeout, network or response error | The shared sc-decidr client applies its retry policy and status classification. Plan-anchor makes one client call, records the wheel's `attempts` on typed failures, then continues with other anchors unless the error is authentication |
-| Context window exceeded | Planning refuses the oversized item; development halves evidence and makes another logical client call down to 2,000 characters |
 | Authentication error | The wheel aborts the run with `AUTH.CREDENTIALS`; the response body is withheld |
 | Missing key, or `allow_remote_judge` not `true` | Credentials are resolved by the wheel after plan-anchor checks consent; the run aborts before provider data is sent |
 
@@ -109,8 +104,6 @@ Agents and plan-anchor never add provider retry loops around the client. Typed f
 | `DECIDR.CONFIG`, `DECIDR.LOG`, `DECIDR.ERROR` | sc-decidr | Configuration, logging or other client failure; follow the message and suggested action |
 | `DECIDR.INVALID_RESULT`, `DECIDR.INVALID_OPTION` | shared client | Invalid wheel result or unsupported client option; check the installed wheel and call options |
 | `CANCELED` | shared client / interrupt | The operation was canceled; follow the message and suggested action before retrying |
-| `JEV.CONTEXT_EXCEEDED` | 422 token limit (development gate) | Evidence could not be shortened enough; shorten it |
-| `PLAN.TOO_LARGE` | planning-gate pre-flight or 422 | The bead does not fit one request after code reduction; triage per `plan-size-and-shape.md`. Never trim or raise the cap to pass |
 | `DECIDR.VALIDATION` | 422 other | Request rejected; usually a malformed override |
 | `VALIDATION.ANCHORS`, `VALIDATION.INPUT` | record / arguments | Fix `anchors.json` (`validate`) or the flags |
 | `QUESTIONS.ROLES` | question set | An override renamed a question ID; keep the default IDs |
@@ -174,7 +167,7 @@ Two layers and a logged stream. Nothing in them writes to the tracker: reading t
 | `bead-batch` (high layer, bead adapter) | `--anchors`, `--gate`, `--anchor`, `--item <bead>` (repeatable); the question bead is the anchor's `beads.<gate>_questions`, and `--candidates` adds each open child bead as a candidate (closed children are skipped) | The same request lines (`--emit` prints them and calls nothing), else piped in-process through `batch`; it only reads beads |
 | `tournament` | `--request` (the tune request), `--oracle` (`tune-oracle.schema.json`), `--candidates` (`tune-candidates.schema.json`), `--out` | Builds oracle case x bundle request lines, runs them through `batch` into `<out>/results.jsonl`, scores the stream and writes `<out>/result_vars.json` for `anchor-tuning-result.md.j2`. `--results` rescores an existing stream; `--dry-run` writes `requests.dry-run.jsonl` |
 
-Every result line is also teed, unchanged, to an append-only log, flushed after every line: `batch` and `bead-batch` write `<anchors dir>/anchor-runs/tournament-<run>.jsonl` (`--run-dir`, `--run-name`; default name a UTC timestamp), so the log exists even when the caller consumes stdout; the tournament's log is `<out>/results.jsonl`. At most 4 calls run at once (`--max-workers`, 1 to 4). The shared client owns provider retries; plan-anchor makes one client call per logical request and does not resubmit a failed call. Attempt counts are recorded in `retry_count` and `attempts`; `AUTH.CREDENTIALS` and `POLICY.*` stop the remaining calls. Every request line is validated, and every request size checked against `--max-request-bytes`, before the first call. A live run needs a key and `allow_remote_judge: true` (`--repository-root`); `--dry-run` and `--answers-file` (keys `<item>/<candidate>/r<n>`, `<item>/<candidate>`, `<candidate>`, `*`; fixture lists are not retried, and the current fixture path selects their first entry; `{"__error__": "<code>"}` simulates a failure) never contact Jev.
+Every result line is also teed, unchanged, to an append-only log, flushed after every line: `batch` and `bead-batch` write `<anchors dir>/anchor-runs/tournament-<run>.jsonl` (`--run-dir`, `--run-name`; default name a UTC timestamp), so the log exists even when the caller consumes stdout; the tournament's log is `<out>/results.jsonl`. At most 4 calls run at once (`--max-workers`, 1 to 4). The shared client owns provider retries; plan-anchor makes one client call per logical request and does not resubmit a failed call. Attempt counts are recorded in `retry_count` and `attempts`; `AUTH.CREDENTIALS` and `POLICY.*` stop the remaining calls. Every request line is validated before the first call. A live run needs a key and `allow_remote_judge: true` (`--repository-root`); `--dry-run` and `--answers-file` (keys `<item>/<candidate>/r<n>`, `<item>/<candidate>`, `<candidate>`, `*`; fixture lists are not retried, and the current fixture path selects their first entry; `{"__error__": "<code>"}` simulates a failure) never contact Jev.
 
 `lint` and `shape` are deterministic and never contact Jev. `lint` with neither `--id` nor `--all` lints every non-retired anchor.
 
@@ -187,12 +180,8 @@ Every result line is also teed, unchanged, to an append-only log, flushed after 
 | `--questions` | `assets/questions/<gate>.json` | Alternative question-set file |
 | `--overrides-file` | none | Per-anchor overrides read from the question beads |
 | `--extra-questions` | none | Repeatable JSONL file of consumer questions, one `{id, type, instructions, criteria}` per line. Added to the set for every cell, answered and recorded in `results[].answers`, listed with path, sha256 and ids in the run's `extra_questions`; never gating. An id already in the set, or a role mapped to an extra question, is refused before any call |
-| `--no-triage-questions` | off | Skip the default triage questions. Without it, `judge --gate plan` adds `.sc/plan-anchor/triage/plan-questions.jsonl` next to the nearest `settings.yaml` (from `--repository-root`), else the shipped `assets/triage/plan-questions.jsonl`. Extra answers are optional: an answer missing from the response or fixture is skipped, and when the body exceeds `--max-request-bytes` the extras are dropped (`extra_questions_dropped`) rather than the item refused. `questions_sha256` covers the gate questions only; `extra_questions_sha256` covers the extras |
-| `--max-item-chars` | 24,000 | Development gate: truncate the evidence to this. Planning gate: refuse a larger bead with `PLAN.TOO_LARGE` |
-| `--max-request-bytes` | 24,000 plan / 64,000 dev | Pre-flight cap on the serialised request (planning gate: refuse; development gate: shorten) |
+| `--no-triage-questions` | off | Skip the default triage questions. Without it, `judge --gate plan` adds `.sc/plan-anchor/triage/plan-questions.jsonl` next to the nearest `settings.yaml` (from `--repository-root`), else the shipped `assets/triage/plan-questions.jsonl`. Extra answers are optional: an answer missing from the response or fixture is skipped. `questions_sha256` covers the gate questions only; `extra_questions_sha256` covers the extras |
 | `--confirm-near-threshold` | on | Re-ask once when a required-role confidence is within 0.10 of the threshold; disagreement makes the cell `underspecified` with `unstable: true` (`--no-confirm` turns it off) |
-| `--max-code-lines` | 8 | Planning gate: the shortest fenced block that may be sent as signatures plus a redaction marker, only when the bead would not otherwise fit (`plan-size-and-shape.md`) |
-| `--min-item-chars` | 2,000 | Development gate: floor for context shortening |
 | `--timeout` | 30 s | Per-request socket timeout |
 | `--run-dir` / `--out` | `<anchors dir>/anchor-runs` | Where the run file goes |
 | `--repository-root` | `.` | Any path inside the repository whose settings file holds `allow_remote_judge` (live calls only) |

@@ -24,6 +24,8 @@ python3 "<skill dir>/scripts/anchor_tracker.py" resolve      # selected tracker,
 which {{ tracker }} && {{ tracker }} --version
 which sc-compose && sc-compose --version
 which jq && jq --version
+# record operations only (jev_judge.py trace):
+test -x "${RAPTOR:-raptor}/.venv/bin/python" && test -f "${RAPTOR:-raptor}/scripts/extract.py" && echo "Raptor ok"
 test -n "$TYPESAFE_API_KEY" && echo "environment key set (preferred)" || echo "environment key absent; check the documented platform credential store"
 ```
 
@@ -122,6 +124,19 @@ Settings are your choice: keep `<folder>/.sc/plan-anchor/settings.yaml` to retai
 - Install: `brew install steveyegge/beads/bd` (or your team's tap), or with Go `go install github.com/steveyegge/beads/cmd/bd@latest` and `$HOME/go/bin` on PATH.
 {% endif %}
 
+**Raptor** (only for `jev_judge.py trace`, which reads REQ, NFR and ADR records; every other command runs without it)
+
+Raptor is the only reader of records: it imports them from a repository's `.raptor/` inventory into an index of record fields and obligation statements. `trace` runs Raptor's importer as an external program (`<checkout>/.venv/bin/python <checkout>/scripts/extract.py`); it imports no Raptor module and parses no Markdown. Install once per machine (needs a Rust toolchain; same revision as judge-jev):
+
+```bash
+git clone https://github.com/randlee/raptor raptor
+git -C raptor checkout 8ce2be8363318be2f7c2e2b79d1f646399cab2fd
+uv venv raptor/.venv -p 3.11 && uv pip install -p raptor/.venv/bin/python ./raptor markdown
+RAPTOR="$(pwd)/raptor"     # pass --raptor "$RAPTOR" to trace
+```
+
+Each repository whose records are traced needs a `.raptor/` inventory (Raptor's README). Without Raptor, `trace --source` returns `DEPENDENCY.RAPTOR`; a repository with no inventory returns `RAPTOR.NO_INVENTORY`. A saved Raptor index (`extract.py --output`) can be passed with `--index` instead of `--source`.
+
 **sc-compose** (1.8.0 or newer)
 
 The Python wheel supplies bindings, not the CLI. Use the GitHub release binary (CI uses release 1.8.0). On macOS or Linux, run this in a directory where you want to keep the extracted CLI; choose your release target below:
@@ -196,6 +211,7 @@ Use the full path, or `export PATH="/opt/homebrew/bin:$PATH"` for the session.
 {% endif %}
 | sc-compose | 1.8.0 | strict render, declared-variable validation, and `--check-render` |
 | jq | any current release | gate agents read question-override beads |
+| Raptor | revision `8ce2be83` | `jev_judge.py trace` only: the import index (`metadata.repository`, `requirements`, `decisions`, `diagnostics.issues`) |
 | Jev | `jev-latest` | pin a version once thresholds are tuned |
 
 ## PATH troubleshooting
@@ -231,7 +247,6 @@ The smoke `judge` runs the full gating path offline: expect `not_addressed` for 
 - `AUTH.CREDENTIALS` with the key set: it contains whitespace or a control character (usually a pasted trailing newline), or TypeSafe rejected it.
 - `QUESTIONS.ROLES`: a question override renamed a question ID. Keep the default IDs.
 - `ANCHOR.NOT_LOCKED`: `--anchor` named a proposed or retired anchor. Lock it, or use `--all`.
-- `JEV.CONTEXT_EXCEEDED`: the item could not be shortened below 2,000 characters and still fit. Shorten the evidence account; at the development gate drop the test section first.
 - `DECIDR.RESPONSE_INVALID` repeatedly: sc-decidr rejected the provider response shape. Check for a proxy between you and `api.typesafe.ai`, and confirm the installed wheel matches the generated client version.
 - `VALIDATION.ANCHORS` from `judge`: run `validate` and fix the listed problems; the usual cause is a hand edit. Use `update`, `retire` and `promote`.
 - `DECIDR.RATE_LIMITED` under parallel gates: reduce concurrency; the shared client reports its observed attempts.

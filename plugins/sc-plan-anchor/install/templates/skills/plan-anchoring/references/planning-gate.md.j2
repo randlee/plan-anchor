@@ -51,7 +51,7 @@ python3 "$S" judge --anchors "$A" --gate plan --all --item-id <sprint-id> --item
 | Exit | Meaning |
 | --- | --- |
 | 0 | The run completed with an answer for every anchor; read `data.summary.pass`: true when every anchor is `satisfied`, `not_applicable`, `deterministic_only` or `excluded`, false on at least one `contradicted`, `not_addressed`, `asserted_only` or `underspecified` verdict; the run file was written. A dry run (`data.dry_run`) judges nothing and is never a pass: `data.summary.pass` is false |
-| 2 | The tool could not do its job: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, `PLAN.TOO_LARGE` (a symptom; `plan-size-and-shape.md`), or any anchor Jev gave no answer for after retries (`DECIDR.*`, `JEV.*`, `FIXTURE.MISSING`); the partial run is still written and `data.run_path` names it |
+| 2 | The tool could not do its job: credentials, `allow_remote_judge` not `true`, malformed record or override, unknown anchor, or any anchor Jev gave no answer for after retries (`DECIDR.*`, `JEV.*`, `FIXTURE.MISSING`); the partial run is still written and `data.run_path` names it |
 
 Then, across all sprint items:
 
@@ -73,7 +73,6 @@ python3 "$S" coverage --runs "$P/anchor-runs" --gate plan --anchors "$A" --forma
 
 To mark an anchor not relevant to one sprint item when its scope is right, use `exclude` (`anchor-document.md`), not a scope change or a smaller `--anchor` list. Check exclusion ids against the plan with `lint --plan-items <discover output>`.
 | `error` | Jev could not be asked after retries | `results[].error.code` | Fix the cause; re-run that bead |
-| `PLAN.TOO_LARGE` | The sprint does not fit one request | `shape` on the sprint text; scope-anchor verdicts | Judge the cause: unapproved work, then prose and ceremony, then split (`plan-size-and-shape.md`) |
 
 The gate passes when every sprint's latest run has `summary.pass: true` and `coverage` lists no
 uncovered locked anchor. An anchor uncovered everywhere has the wrong scope, or

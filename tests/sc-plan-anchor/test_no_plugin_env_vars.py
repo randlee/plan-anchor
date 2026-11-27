@@ -1,4 +1,4 @@
-"""TYPESAFE_API_KEY is the plugin's only configuration variable (ANC-005, REQ-018).
+"""TYPESAFE_API_KEY is the plugin's only configuration variable (ANC-005).
 
 The six retired PLAN_ANCHOR_* variables (JEV_MODEL, JEV_URL, CONFIDENCE_THRESHOLD,
 MAX_ITEM_CHARS, MAX_CODE_LINES, CONFIRM_NEAR) are planted with wild values and

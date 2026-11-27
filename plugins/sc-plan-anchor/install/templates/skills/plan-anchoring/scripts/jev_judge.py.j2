@@ -60,6 +60,10 @@ Subcommands
                   repeat) on stdout as each answer arrives, teed to anchor-runs/tournament-<run>.jsonl; never writes beads
   bead-batch      high layer: item beads x an anchor's question bead (and its open candidate children) as batch
                   request lines (--emit prints them), then the low layer; reads beads only
+  trace           records (REQ/ADR/NFR, read only through Raptor; DEPENDENCY.RAPTOR without it) x locked anchors:
+                  four Jev questions per cell, classified here as serves, related, exceeds, conflicts or none; then
+                  (--overlap, default on) which statements of records sharing an anchor column another already states;
+                  writes trace-<UTC>.json (render: change_report.py --trace)
   tournament      run one anchor's question tournament through the low layer (oracle x candidate bundles x repeats) and
                   score it; writes result_vars.json for the anchor-tuning agent; data.accepted; never writes beads
 
@@ -86,8 +90,7 @@ Exit codes
      arguments as VALIDATION.INPUT, a missing or unreadable file, a malformed
      record or override, bad credentials, remote judging not allowed by
      allow_remote_judge in .sc/plan-anchor/settings.yaml as
-     POLICY.REMOTE_JUDGE_DISABLED, a plan bead that does not fit one Jev
-     request as PLAN.TOO_LARGE, a missing dependency, an internal error as
+     POLICY.REMOTE_JUDGE_DISABLED, a missing dependency, an internal error as
      SCRIPT.INTERNAL, and any Jev call that produced no answer: a Jev HTTP
      error, a network or transport failure, an invalid response, or a missing
      or malformed answers-file entry, in `judge`, `check-fixtures`,
@@ -100,17 +103,6 @@ Exit codes
   line has an answer (or --dry-run / --emit); exit 2 with the error envelope on
   stderr when any line has none (each such line has ok false and its error);
   an error before the first line prints the envelope on stdout as usual.
-
-Plan-gate size handling
-  The plan gate never shortens prose. A bead that fits (--max-item-chars, and
-  --max-request-bytes for every anchor) is sent whole. Otherwise fenced code
-  blocks longer than --max-code-lines are reduced to their signature lines plus
-  a redaction marker, longest first and one at a time, until it fits; a bead
-  that does not fit with all of them reduced is refused before anything is
-  sent (PLAN.TOO_LARGE), and
-  a context overflow from Jev fails the run as PLAN.TOO_LARGE (exit 2; the
-  partial run file is kept). The
-  development gate keeps the truncate-and-halve behaviour.
 """
 from __future__ import annotations
 
@@ -134,14 +126,9 @@ from decidr_client import (ClientError, from_tool_error, typed_answer, NoulAnswe
 
 DEFAULT_MODEL = "jev"
 DEFAULT_THRESHOLD = 0.6
-DEFAULT_MAX_ITEM_CHARS = 24000
-DEFAULT_MAX_CODE_LINES = 8  # plan gate: shortest fenced block that may go to Jev as signatures when a bead does not fit
+DEFAULT_MAX_CODE_LINES = 8  # shape: fenced blocks longer than this count toward chars_after_reduction
 CODE_REDACTION_MARKER = "<redacted: {dropped} of {total} code lines are in the plan but were not sent to Jev>"
-DEFAULT_MAX_REQUEST_BYTES = 24000  # plan gate: what Jev reads reliably (a planted contradiction 28k deep scored 0.46 vs 0.79 near the top)
-DEFAULT_MAX_REQUEST_BYTES_DEV = 64000  # dev gate: evidence is long; Jev accepted 107k bytes in one attempt, halving never fired in 245 requests
 NEAR_THRESHOLD_BAND = 0.10         # a confidence this close to the threshold triggers one confirming re-judge (15/50 identical cells moved > 0.10)
-DEFAULT_MIN_ITEM_CHARS = 2000      # below this the item is not shortened further on a context overflow
-TRUNCATION_MARKER = "\n[... truncated by jev_judge; keep the state small ...]"
 HERE = pathlib.Path(__file__).resolve().parent
 QUESTIONS_DIR = HERE.parent / "assets" / "questions"
 TRIAGE_ASSETS = HERE.parent / "assets" / "triage"
@@ -310,7 +297,7 @@ def write_text_atomic(path: str, text: str) -> None:
 
 
 def save_json(path: str, obj: dict) -> None:
-    """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout (REQ-017): no key or bearer token reaches a file."""
+    """Write ``obj`` as JSON, redacted as ``emit`` redacts stdout: no key or bearer token reaches a file."""
     write_text_atomic(path, json.dumps(redact_sensitive(decidr_client.json_answers(obj)), indent=2, ensure_ascii=False) + "\n")
 
 
@@ -750,7 +737,7 @@ def cmd_update(args) -> Result[dict, ClientError]:
         a["fixtures"] = fixtures
         changed.append("fixtures")
     if not changed:  # every value given already holds: a no-op, not a failure; nothing is saved
-        # data.changed is the list of changed fields on an update, false on a no-op (ADR-007)
+        # data.changed is the list of changed fields on an update, false on a no-op (REQ-049)
         return Ok({"success": True, "data": {"updated": False, "changed": False, "id": a["id"],
                                              "version": a.get("version", 1), "anchor": a}, "error": None})
     linted = lint_or_refuse(a.get("statement") or "", anchor_quote(a), a.get("source_type") or "ANC", bool(getattr(args, "strict", False)))
@@ -1286,26 +1273,17 @@ def fenced_blocks(lines: list):
         i = j + 1
 
 
-def long_code_blocks(text: str, max_lines: int) -> list:
-    """Ordinals of the fenced blocks longer than max_lines, longest first (ties in document order)."""
-    lines = text.split("\n")
-    sizes = [(n, j - i - 1) for n, (i, j, _, _) in enumerate(fenced_blocks(lines))]
-    return [n for n, size in sorted(sizes, key=lambda s: (-s[1], s[0])) if size > max_lines]
-
-
-def reduce_code(text: str, max_lines: int, only=None) -> tuple:
+def reduce_code(text: str, max_lines: int) -> tuple:
     """Replace each fenced code block longer than max_lines with its signature lines and a redaction marker.
 
-    `only`, a set of fenced-block ordinals (0-based, in document order), limits the reduction to those blocks; None
-    reduces every long block. The plan keeps the code; only the text sent to Jev is reduced, and the marker says so.
     Returns (text, stats).
     """
     lines = text.split("\n")
     out, stats, prev = [], {"blocks": 0, "lines": 0}, 0
-    for n, (i, j, indent, fence) in enumerate(fenced_blocks(lines)):
+    for i, j, indent, fence in fenced_blocks(lines):
         out.extend(lines[prev:i])
         body = lines[i + 1:j]
-        if len(body) <= max_lines or (only is not None and n not in only):
+        if len(body) <= max_lines:
             out.extend(lines[i:j + 1])
         else:
             sigs = signature_lines(body)
@@ -1356,7 +1334,7 @@ def size_breakdown(text: str) -> dict:
 
 
 def shape_text(text: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> dict:
-    """Facts about one composed item text, on top of size_breakdown (so `shape` and PLAN.TOO_LARGE report the same numbers):
+    """Facts about one composed item text, on top of size_breakdown:
     chars per section, code versus prose (chars and lines), fenced blocks, bullets, table rows, references, and the prose
     paragraphs (for cross-bead repetition). Facts for a judgement, never a verdict."""
     size = size_breakdown(text)
@@ -1398,50 +1376,6 @@ def shape_text(text: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> dict:
         "bullets": bullets, "table_rows": table_rows, "references": refs,
         "no_issue_reference": not any(refs.values()), "paragraphs": paragraphs,
     }
-
-
-def plan_too_large(item: dict, detail: str, max_code_lines: int = DEFAULT_MAX_CODE_LINES) -> ClientError:
-    """The plan-gate refusal. Oversize is a symptom: the error names where the characters are and carries the bead's shape."""
-    size = size_breakdown(item["text"])
-    where = ", ".join(f"{k} {v}" for k, v in sorted(size["sections"].items(), key=lambda kv: -kv[1]))
-    exc = ClientError("PLAN.TOO_LARGE",
-                     f"plan bead {item['id']} is {len(item['text'])} characters after long code was reduced to signatures "
-                     f"({size['prose_chars']} prose, {size['code_chars']} code; by section: {where}); {detail}. "
-                     "A reasonable plan bead fits in one Jev request; this one is asking too much",
-                     action="Oversize is a symptom; judge its cause before changing the bead. First remove work that no anchor, "
-                            "requirement or user-approved issue asks for and the change does not need. Then cut prose and process "
-                            "ceremony that does not serve a deliverable. Split only approved work that is still too large after "
-                            "that. Never split, trim or raise a limit just to pass the gate. See references/plan-size-and-shape.md")
-    shape = shape_text(item["text"], max_code_lines)
-    shape.pop("paragraphs", None)
-    shape["chars_before_reduction"] = item.get("chars_before_reduction", len(item["text"]))
-    if "code_reduced" in item:
-        shape["code_reduced"] = item["code_reduced"]
-    exc.data = {"item_id": item["id"], "size": size, "shape": shape}
-    return exc
-
-
-def fit_plan_item(item: dict, misfit, max_code_lines: int) -> Result[dict, ClientError]:
-    """Plan gate: send the bead whole when it fits; otherwise reduce code as little as possible.
-
-    `misfit(text)` returns None when the text fits one Jev request, else why not. Fenced blocks longer than
-    max_code_lines are reduced to signatures one more at a time, longest first, until the bead fits. Prose is never
-    cut; a bead that does not fit with every long block reduced is PLAN.TOO_LARGE. Records chars_before_reduction and
-    code_reduced (what was actually reduced).
-    """
-    text = item["text"]
-    item["chars_before_reduction"] = len(text)
-    item["code_reduced"] = {"blocks": 0, "lines": 0}
-    detail, chosen = misfit(text), set()
-    for n in long_code_blocks(text, max_code_lines):
-        if detail is None:
-            break
-        chosen.add(n)
-        item["text"], item["code_reduced"] = reduce_code(text, max_code_lines, chosen)
-        detail = misfit(item["text"])
-    if detail is not None:
-        return Err(plan_too_large(item, detail, max_code_lines))
-    return Ok(item)
 
 
 def beads_from_json(obj, what: str) -> Result[list, ClientError]:
@@ -1733,93 +1667,22 @@ def call_jev(body: dict, timeout: float) -> Result[dict, ClientError]:
                "usage": record.get("usage"), "attempts": record.get("attempts")})
 
 
-def item_core(text: str) -> str:
-    return text[: -len(TRUNCATION_MARKER)] if text.endswith(TRUNCATION_MARKER) else text
-
-
-def halve_item(item: dict, min_item_chars: int, meta: dict) -> bool:
-    """Keep the head of the item text and re-append the truncation marker. False when already at the floor."""
-    core = item_core(item["text"])
-    if len(core) <= min_item_chars:
-        return False
-    item["text"] = core[: max(len(core) // 2, min_item_chars)] + TRUNCATION_MARKER
-    meta["item_shortened"] = True
-    meta["item_chars_sent"] = len(item["text"])
-    return True
-
-
-def fit_request(body: dict, max_request_bytes: int, min_item_chars: int, meta: dict) -> Result[None, ClientError]:
-    """Pre-flight cap: shorten the item until the serialised request (state + questions) is under max_request_bytes.
-
-    A state without an item (dedupe, rubric) has nothing to shorten: over the cap it is refused outright.
-    """
+def judge_with_policy(body: dict, timeout: float, questions: dict) -> Result[tuple, ClientError]:
+    """Call the shared transport once."""
     item = body["state"].get("item")
-    size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
-    while size > max_request_bytes:
-        if item is None:
-            exc = ClientError("JEV.CONTEXT_EXCEEDED", f"request is {size} bytes, over --max-request-bytes {max_request_bytes}, and has no item to shorten",
-                             action="Shorten the anchor statement, quote or scope, or raise --max-request-bytes.")
-            exc.data = dict(exc.data or {}, **meta)
-            exc.attempts = meta.get("attempts", 0)
-            return Err(exc)
-        if not halve_item(item, min_item_chars, meta):
-            exc = ClientError("JEV.CONTEXT_EXCEEDED",
-                             f"request is {size} bytes with the item at {len(item['text'])} chars, over --max-request-bytes {max_request_bytes}; "
-                             f"the item is already at --min-item-chars {min_item_chars}",
-                             action="Shorten the evidence for this item (names, counts and summaries only), shorten the question overrides, or raise --max-request-bytes.")
-            exc.data = dict(exc.data or {}, **meta)
-            exc.attempts = meta.get("attempts", 0)
-            return Err(exc)
-        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
-    meta["request_bytes"] = size
-    return Ok(None)
-
-
-def judge_with_policy(body: dict, timeout: float, max_request_bytes: int, min_item_chars: int, questions: dict,
-                      shorten: bool = True, optional=frozenset()) -> Result[tuple, ClientError]:
-    """Call the shared transport and retain plan-anchor's local request sizing and context halving."""
-    item = body["state"].get("item")
-    meta = {"attempts": 0, "item_chars_sent": len(item["text"]) if item else 0, "item_shortened": False}
-    fitted = fit_request(body, max_request_bytes, min_item_chars, meta)
-    if isinstance(fitted, Err):
-        return fitted
-    while True:
-        meta["item_chars_sent"] = len(item["text"]) if item else 0
-        answered = call_jev(body, timeout)
-        if isinstance(answered, Ok):
-            sends = answered.value.get("attempts")
-            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                 decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
-            return Ok((answered.value, meta))
-        else:
-            sends = answered.error.attempts
-            meta["attempts"] = (None if meta["attempts"] is None or sends is None else
-                                 decidr_client.total_attempts([{"sends": meta["attempts"]}, {"sends": sends}]))
-            if answered.error.retry_after_ms is not None:
-                meta["retry_after_ms"] = answered.error.retry_after_ms
-        exc = answered.error
-        exc.attempts = meta.get("attempts", 0)
-        if exc.code in ABORT_CODES:
-            return answered
-        exc.data = dict(exc.data or {}, **meta)
-        if exc.code == "DECIDR.CONTEXT_EXCEEDED" and item is not None and not shorten:
-            final = plan_too_large(item, f"Jev rejected it for context size ({exc.message})")
-            final.data = dict(meta, **final.data)
-            final.attempts = meta["attempts"]
-            return Err(final)
-        if exc.code == "DECIDR.CONTEXT_EXCEEDED":
-            if item is not None and halve_item(item, min_item_chars, meta):
-                meta["request_bytes"] = len(json.dumps(body, allow_nan=False).encode("utf-8"))
-                continue
-            final = ClientError("JEV.CONTEXT_EXCEEDED",
-                               f"Jev rejected the request for context size with the item at {len(item['text']) if item else 0} chars "
-                               f"(floor --min-item-chars {min_item_chars}): {exc.message}",
-                               action="Shorten the evidence for this item: sprint report and PR body summaries, file names and counts only; or lower --min-item-chars.",
-                               status=exc.status)
-            final.data = dict(exc.data or {}, **meta)
-            final.attempts = meta["attempts"]
-            return Err(final)
+    meta = {"attempts": 0, "item_chars_sent": len(item["text"]) if item else 0}
+    answered = call_jev(body, timeout)
+    if isinstance(answered, Ok):
+        meta["attempts"] = answered.value.get("attempts")
+        return Ok((answered.value, meta))
+    exc = answered.error
+    meta["attempts"] = exc.attempts
+    if exc.retry_after_ms is not None:
+        meta["retry_after_ms"] = exc.retry_after_ms
+    if exc.code in ABORT_CODES:
         return answered
+    exc.data = dict(exc.data or {}, **meta)
+    return answered
 
 
 def answer_choice(ans: dict) -> tuple:
@@ -1957,14 +1820,7 @@ def read_item(args) -> Result[dict, ClientError]:
         text = sys.stdin.read()
     if not text.strip():
         return fail("INPUT.EMPTY", "item text is empty", action="Pass the bead or work description via --item-file.")
-    item = {"id": args.item_id, "title": args.item_title or "", "truncated": False, "source": args.item_file or "stdin"}
-    if getattr(args, "gate", "") == "plan":
-        # A plan bead is never truncated; cmd_judge fits it (fit_plan_item) once the anchors and questions are known.
-        item["text"] = text
-        return Ok(item)
-    if len(text) > args.max_item_chars:
-        text = text[: args.max_item_chars] + TRUNCATION_MARKER
-        item["truncated"] = True
+    item = {"id": args.item_id, "title": args.item_title or "", "source": args.item_file or "stdin"}
     item["text"] = text
     return Ok(item)
 
@@ -1980,18 +1836,9 @@ def judge_context(args, rec: dict, remote: bool = True, triage: bool = False) ->
     ctx = {
         "gate": args.gate, "model": getattr(args, "model", DEFAULT_MODEL), "threshold": threshold,
         "timeout": getattr(args, "timeout", 30.0),
-        "max_item_chars": getattr(args, "max_item_chars", DEFAULT_MAX_ITEM_CHARS),
-        "max_request_bytes": getattr(args, "max_request_bytes", None),
-        "min_item_chars": getattr(args, "min_item_chars", DEFAULT_MIN_ITEM_CHARS),
         "dry_run": bool(getattr(args, "dry_run", False)),
-        "max_code_lines": getattr(args, "max_code_lines", DEFAULT_MAX_CODE_LINES),
         "confirm": confirm_enabled(args),
     }
-    if ctx["max_request_bytes"] is None:
-        ctx["max_request_bytes"] = DEFAULT_MAX_REQUEST_BYTES if args.gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV
-    for name in ("max_item_chars", "max_request_bytes", "min_item_chars", "max_code_lines"):
-        if ctx[name] < 1:
-            return fail("VALIDATION.INPUT", f"--{name.replace('_', '-')} must be a positive integer, got {ctx[name]}")
     loaded = load_question_set(args.gate, getattr(args, "questions", ""))
     if isinstance(loaded, Err):
         return loaded
@@ -2074,7 +1921,7 @@ def ask_jev_once(args, body: dict, questions: dict, fixture, fixture_keys: tuple
         if isinstance(parsed, Err):
             return parsed
         return Ok((parsed.value, {"attempts": 1}))
-    return judge_with_policy(body, getattr(args, "timeout", 30.0), DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, questions)
+    return judge_with_policy(body, getattr(args, "timeout", 30.0), questions)
 
 
 def prepare_question_sets(ctx: dict, anchors: list) -> Result[list, ClientError]:
@@ -2113,7 +1960,7 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
                         action=f"Add an entry for {fixture_key(a)} (or '*') to the answers file.")
         meta["attempts"] = 1
         sent = body["questions"]
-        left_out = set(qs["questions"]) - set(sent)  # extra questions dropped from this request for size
+        left_out = set(qs["questions"]) - set(sent)  # deferred triage questions are asked in their own request
         fixture_answers = {k: v for k, v in fx.items() if k not in left_out}
         required = set((qs.get("roles") or {}).values())
         fixture_questions = {k: v for k, v in qs["questions"].items()
@@ -2122,8 +1969,7 @@ def _first_answer(ctx: dict, a: dict, qs: dict, body: dict, meta: dict, fixture_
         if isinstance(parsed, Err):
             return parsed
         return Ok((parsed.value, meta))
-    return judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
-                             shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
+    return judge_with_policy(body, ctx["timeout"], body["questions"])
 
 
 def entry_base(a: dict) -> dict:
@@ -2151,8 +1997,8 @@ def excluded_entry(a: dict, exclusion: dict, gate: str) -> dict:
 
 def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_key, entry: dict) -> Result[int, ClientError]:
     """Ask the triage questions of one failed cell in their own request and record the answers on the cell; never touches the
-    verdict. Ok(attempts made); Err only for an ABORT_CODES error. A request over the size cap, or a call that gets no answer, is
-    recorded on the cell (extra_questions_dropped, triage_error) and costs nothing else."""
+    verdict. Ok(attempts made); Err only for an ABORT_CODES error. A call that gets no answer is
+    recorded on the cell (triage_error) and costs nothing else."""
     asked = {k: v for k, v in qs["questions"].items() if k in deferred}
     if ctx["answers_fixture"] is not None:
         fx = ctx["answers_fixture"].get(fixture_key(a)) or ctx["answers_fixture"].get("*") or {}
@@ -2160,11 +2006,7 @@ def ask_triage(ctx: dict, a: dict, qs: dict, deferred: set, item: dict, fixture_
         entry["triage_questions"] = [k for k in asked if k in entry["answers"]]
         return Ok(0)
     body = {"model": ctx["model"], "state": build_state(a, item), "questions": asked}
-    if len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
-        entry["extra_questions_dropped"] = sorted(set(entry.get("extra_questions_dropped") or ()) | deferred)
-        return Ok(0)
-    got = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], asked,
-                            shorten=False, optional=frozenset(asked))
+    got = judge_with_policy(body, ctx["timeout"], asked)
     if isinstance(got, Err):
         if got.error.code in ABORT_CODES:
             return got
@@ -2187,11 +2029,6 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
         deferred = set(qs.get("deferred") or ())
         body = {"model": ctx["model"], "state": build_state(a, item),
                 "questions": {k: v for k, v in qs["questions"].items() if k not in deferred}}
-        dropped = []
-        if (set(qs.get("optional") or ()) - deferred) and len(json.dumps(body, allow_nan=False).encode("utf-8")) > ctx["max_request_bytes"]:
-            # extra questions never cost a verdict: over the size cap they are left out of this request, not the item
-            dropped = sorted(set(qs["optional"]) - deferred)
-            body["questions"] = {k: v for k, v in body["questions"].items() if k not in dropped}
         entry = entry_base(a)
         entry.update({
             "question_set": {"gate": qs.get("gate", ctx["gate"]), "version": qs.get("version"), "overridden": overridden},
@@ -2202,9 +2039,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             entry["extra_questions_sha256"] = decidr_client.questions_digest({k: qs["questions"][k] for k in qs["optional"]})
         if overridden:
             entry["questions"] = qs["questions"]
-        if dropped:
-            entry["extra_questions_dropped"] = dropped
-        meta = {"attempts": 0, "item_chars_sent": len(item["text"]), "item_shortened": False}
+        meta = {"attempts": 0, "item_chars_sent": len(item["text"])}
         if entry["kind"] == "structural" and ctx["gate"] == "plan":
             # Jev is not asked: the default compliance question answered no on 9/10 beads for a structural anchor.
             entry.update({"verdict": "deterministic_only", "answers": None, "min_confidence": None,
@@ -2213,12 +2048,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             results.append(entry)
             continue
         if ctx["dry_run"]:
-            fitted = fit_request(body, ctx["max_request_bytes"], ctx["min_item_chars"], meta)
-            if isinstance(fitted, Ok):
-                entry.update({"verdict": None, "answers": None, "min_confidence": None, "explanation": "dry run"})
-            else:
-                entry.update({"verdict": None, "answers": None, "min_confidence": None, "explanation": "dry run; request does not fit",
-                              "error": fitted.error.to_json()["error"]})
+            entry.update({"verdict": None, "answers": None, "min_confidence": None, "explanation": "dry run"})
             requests_out.append(body)
             entry.update(meta)
             results.append(entry)
@@ -2232,8 +2062,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             if ctx["answers_fixture"] is None and ctx.get("confirm", False) and near_threshold(resp["answers"], qs["roles"], ctx["threshold"], entry["kind"]):
                 # Near the threshold a single answer is noise (8/50 identical re-runs flipped): ask once more, require agreement.
                 entry["near_threshold"] = True
-                second = judge_with_policy(body, ctx["timeout"], ctx["max_request_bytes"], ctx["min_item_chars"], body["questions"],
-                                           shorten=ctx["gate"] != "plan", optional=frozenset(qs.get("optional") or ()))
+                second = judge_with_policy(body, ctx["timeout"], body["questions"])
                 if isinstance(second, Ok):
                     resp2, meta2 = second.value
                     sends = meta2.get("attempts")
@@ -2266,7 +2095,7 @@ def judge_entries(ctx: dict, prepared: list, item: dict, fixture_key) -> Result[
             exc = first.error
             if exc.code in ABORT_CODES:
                 return first
-            meta = {**meta, **{k: v for k, v in (exc.data or {}).items() if k in {"attempts", "item_chars_sent", "item_shortened", "request_bytes", "retry_after_ms", "size"}}}
+            meta = {**meta, **{k: v for k, v in (exc.data or {}).items() if k in {"attempts", "item_chars_sent", "retry_after_ms"}}}
             error = exc.to_json()["error"]
             if exc.data:
                 error["data"] = exc.data
@@ -2285,7 +2114,7 @@ def cell_failures(results: list, label=lambda r: r["anchor_id"]) -> list:
         for key, suffix in (("error", ""), ("confirm_error", " (confirmation)")):
             e = r.get(key)
             if not e or (key == "error" and r.get("verdict") != "error"):
-                continue  # a dry run's "does not fit" note is not a call
+                continue
             out.append((label(r) + suffix, ClientError(e["code"], e["message"], retryable=bool(e.get("recoverable")),
                                                       action=e.get("suggested_action") or "")))
     return out
@@ -2303,13 +2132,10 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
         "created_at": now_utc().isoformat(timespec="seconds"),
         "anchors_path": anchors_path,
         "plan": rec.get("plan"),
-        "item": {"id": item["id"], "title": item["title"], "source": item["source"], "chars": len(item["text"]), "truncated": item["truncated"],
-                 **{k: item[k] for k in ("chars_before_reduction", "code_reduced") if k in item}},
+        "item": {"id": item["id"], "title": item["title"], "source": item["source"], "chars": len(item["text"])},
         "model_requested": ctx["model"],
         "model_answered": model_answered,
         "threshold": ctx["threshold"],
-        "max_request_bytes": ctx["max_request_bytes"],
-        "min_item_chars": ctx["min_item_chars"],
         "dry_run": ctx["dry_run"],
         "fixture": ctx["answers_fixture"] is not None,
         "extra_questions": ctx.get("extra_questions") or [],
@@ -2321,14 +2147,12 @@ def assemble_run(ctx: dict, rec: dict, anchors_path: str, item: dict, results: l
             "unstable": [r["anchor_id"] for r in results if r.get("unstable")],
             "errors": [r["anchor_id"] for r in results if r["verdict"] == "error"],
             "excluded": [{"anchor_id": r["anchor_id"], "reason": r["exclusion"]["reason"]} for r in results if r["verdict"] == "excluded"],
-            "shortened": [r["anchor_id"] for r in results if r.get("item_shortened")],
             "pass": not any(r["verdict"] in FAILING or r["verdict"] == "error" for r in results) and not ctx["dry_run"],
         },
     }
     if ctx["dry_run"]:
         run["requests"] = requests_out
-        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out),
-                         "max_request_bytes": ctx["max_request_bytes"]}
+        run["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out)}
     return run
 
 
@@ -2384,7 +2208,7 @@ def cmd_judge(args) -> Result[dict, ClientError]:
                             action="Lock the anchor first, or pass --include-unlocked to judge a proposed or retired anchor deliberately.")
     if not anchors:
         return fail("ANCHOR.NONE", "no locked anchors to judge", action="Lock at least one anchor, or pass --anchor.")
-    # An anchor whose `exclude` names this item is never asked: no question set, no size check, no request.
+    # An anchor whose `exclude` names this item is never asked: no question set, no request.
     exclusions = {a["id"]: exclusion_for(a, args.item_id) for a in anchors}
     judged_anchors = [a for a in anchors if exclusions[a["id"]] is None]
     built = judge_context(args, rec, remote=bool(judged_anchors), triage=True)
@@ -2399,21 +2223,6 @@ def cmd_judge(args) -> Result[dict, ClientError]:
     if isinstance(resolved, Err):
         return resolved
     prepared = resolved.value
-    if ctx["gate"] == "plan":
-        # Checked for every anchor before any request, so an oversize plan bead sends nothing and is never shortened.
-        def misfit(text):
-            if len(text) > ctx["max_item_chars"]:
-                return f"the plan-gate item budget is --max-item-chars {ctx['max_item_chars']}"
-            trial = dict(item, text=text)
-            for a, qs, _ in prepared:
-                gate_questions = {k: v for k, v in qs["questions"].items() if k not in (qs.get("optional") or ())}
-                size = len(json.dumps({"model": ctx["model"], "state": build_state(a, trial), "questions": gate_questions}, allow_nan=False).encode("utf-8"))
-                if size > ctx["max_request_bytes"]:
-                    return f"with {a['id']} and its questions the request is {size} bytes, over --max-request-bytes {ctx['max_request_bytes']}"
-            return None
-        fitted = fit_plan_item(item, misfit, ctx["max_code_lines"])
-        if isinstance(fitted, Err):
-            return fitted
     judged = judge_entries(ctx, prepared, item, lambda a: a["id"])
     if isinstance(judged, Err):
         return judged
@@ -2461,7 +2270,7 @@ def cmd_check_fixtures(args) -> Result[dict, ClientError]:
             for n, sentence in enumerate(fx.get(kind) or [], 1):
                 if not isinstance(sentence, str) or not sentence.strip():
                     continue
-                item = {"id": f"fixture:{a['id']}:{kind}:{n}", "title": "fixture", "text": sentence.strip(), "truncated": False, "source": "fixtures"}
+                item = {"id": f"fixture:{a['id']}:{kind}:{n}", "title": "fixture", "text": sentence.strip(), "source": "fixtures"}
                 key = f"{a['id']}:{kind}:{n}"
                 judged = judge_entries(ctx, [(a, qs, overridden)], item, lambda _a, key=key: key)
                 if isinstance(judged, Err):
@@ -2500,8 +2309,7 @@ def cmd_check_fixtures(args) -> Result[dict, ClientError]:
         return jev_failure("fixture checks", failures, len(checks), data)
     if ctx["dry_run"]:
         data["requests"] = [b for r in runs for b in r.get("requests", [])]
-        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in data["requests"]),
-                          "max_request_bytes": ctx["max_request_bytes"]}
+        data["totals"] = {"requests": len(data["requests"]), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in data["requests"])}
     return Ok({"success": True, "data": data, "error": None})
 
 
@@ -2589,11 +2397,8 @@ def check_threshold(value: float, name: str = "--threshold") -> Result[float, Cl
 
 
 def batch_request_cap(gate: str, requested: Optional[int]) -> Result[int, ClientError]:
-    if requested is None:
-        return Ok(DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV)
-    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
-        return fail("VALIDATION.INPUT", "--max-request-bytes must be a positive integer")
-    return Ok(requested)
+    """The pinned client still requires a request-cap value; plan-anchor enforces none (0 = unused)."""
+    return Ok(0)
 
 
 def cmd_dedupe(args) -> Result[dict, ClientError]:
@@ -2642,11 +2447,7 @@ def cmd_dedupe(args) -> Result[dict, ClientError]:
                 "a": {"id": a.get("id"), "statement": a.get("statement") or ""},
                 "b": {"id": b.get("id"), "statement": b.get("statement") or ""}}}
             if dry_run:
-                fitted = fit_request(body, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, {})
-                if isinstance(fitted, Ok):
-                    pair["jev"] = None
-                else:
-                    pair["jev"] = {"choice": None, "confidence": None, "error": fitted.error.to_json()["error"]}
+                pair["jev"] = None
                 requests_out.append(body)
                 continue
             asked = ask_jev_once(args, body, qs["questions"], fixture, (f"{pair['a']}|{pair['b']}", "*"))
@@ -2662,7 +2463,7 @@ def cmd_dedupe(args) -> Result[dict, ClientError]:
                 failures.append((f"{pair['a']}|{pair['b']}", exc))
         if dry_run:
             data["requests"] = requests_out
-            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+            data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out)}
             data["likely_duplicates"] = [p for p in pairs if p["jaccard"] >= LIKELY_DUPLICATE_JACCARD]
         else:
             data["likely_duplicates"] = [p for p in pairs if p.get("jev") and p["jev"].get("choice") == "yes" and (p["jev"].get("confidence") or 0.0) >= DEFAULT_THRESHOLD]
@@ -2899,10 +2700,6 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             "statement": candidate["statement"], "quote": candidate["quote"], "scope": candidate.get("scope") or ""}}}
         if intent is not None:
             body["state"]["intent"] = intent
-        if explicit_inputs:
-            fitted = fit_request(body, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, {})
-            if isinstance(fitted, Err):
-                return fitted  # refuse before credentials, emission or any transport
         bodies.append(body)
 
     if candidates and not dry_run and fixture is None:
@@ -2923,9 +2720,6 @@ def rubric_entries(args, candidates: list, threshold: float, dry_run: bool, fixt
             if intent is not None:
                 entry["inputs"]["intent"] = {key: intent[key] for key in ("id", "version", "sha256")}
         if dry_run:
-            fitted = fit_request(body, DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MIN_ITEM_CHARS, {})
-            if isinstance(fitted, Err):
-                entry["error"] = fitted.error.to_json()["error"]
             requests_out.extend((body, json.loads(json.dumps(body))))
             entries.append(entry)
             continue
@@ -3000,7 +2794,7 @@ def cmd_rubric(args) -> Result[dict, ClientError]:
             "pass": bool(entries) and all(e["verdict"] == "testable" for e in entries) and not dry_run}
     if dry_run:
         data["requests"] = requests_out
-        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out), "max_request_bytes": DEFAULT_MAX_REQUEST_BYTES}
+        data["totals"] = {"requests": len(requests_out), "bytes": sum(len(json.dumps(b, allow_nan=False).encode("utf-8")) for b in requests_out)}
     return Ok({"success": True, "data": data, "error": None})
 
 
@@ -3054,8 +2848,6 @@ def triage_lines(r: dict) -> list:
             shown.append(f"`{qid}` {choice} ({conf:.2f})")
     if shown:
         lines.append(">   Triage: " + ", ".join(shown) + ".")
-    if r.get("extra_questions_dropped"):
-        lines.append(">   Not asked, over the request size cap: " + ", ".join(f"`{q}`" for q in r["extra_questions_dropped"]) + ".")
     if isinstance(r.get("triage_error"), dict) and r["triage_error"].get("code"):
         lines.append(f">   Triage error {r['triage_error']['code']}: {r['triage_error'].get('message', '')}".rstrip())
     return lines
@@ -3140,7 +2932,7 @@ def collect_runs(paths: list) -> list:
                 r = json.loads(f.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 continue
-            if isinstance(r, dict) and r.get("schema") == "plan-anchoring/run/1" and not r.get("dry_run") \
+            if isinstance(r, dict) and r.get("schema") == "plan-anchoring/run/1" \
                     and isinstance(r.get("results"), list) and isinstance(r.get("item"), dict):
                 runs.append(r)
     return runs
@@ -3264,7 +3056,7 @@ def cmd_diff(args) -> Result[dict, ClientError]:
 
     def item_chars(run):
         item = run.get("item") or {}
-        value = item.get("chars_before_reduction", item.get("chars", 0))
+        value = item.get("chars", 0)
         return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
     before_chars, after_chars = item_chars(prev), item_chars(nxt)
@@ -3369,10 +3161,6 @@ def batch_jobs(line, number: int, settings: decidr_client.BatchSettings, base_ro
         if isinstance(checked, Err):
             return checked
         body = {"model": settings.model, "state": state, "questions": qs["questions"]}
-        size = len(json.dumps(body, allow_nan=False).encode("utf-8"))
-        if size > settings.max_request_bytes:
-            return fail("JEV.CONTEXT_EXCEEDED", f"{where}: the request for {item['id']}/{cid} is {size} bytes, over --max-request-bytes {settings.max_request_bytes}",
-                        action="Shorten the item (see references/plan-size-and-shape.md); never raise the cap to make it fit.")
         for r in range(1, settings.repeat + 1):
             rid = decidr_client.batch_request_id(settings.prefix, item_id, anchor_id, cid, r)
             jobs.append(decidr_client.BatchJob(item_id, anchor_id, cid, r, rid, body, qs["questions"], qs["roles"], kind))
@@ -3618,6 +3406,501 @@ def cmd_batch(args) -> Result[Any, ClientError]:
     if isinstance(lines, Err):
         return lines
     return run_low_layer(args, lines.value)
+
+
+# --------------------------------------------------------------------------- #
+# trace: records (REQ/ADR/NFR) x locked anchors, four questions per cell, classified here (references/record-trace.md)
+# --------------------------------------------------------------------------- #
+TRACE_SCHEMA = "plan-anchoring/trace/2"
+TRACE_CANDIDATE = "trace"
+TRACE_CONFLICT_MIN = 0.5    # P(conflicts=yes) at or above this: conflicts, whatever the other answers
+TRACE_RELATION_MIN = 0.6    # P(serves=yes) or P(relates=yes) at or above this: the record touches the anchor
+TRACE_EXCEEDS_MIN = 0.6     # a related record with P(exceeds=yes) at or above this: exceeds
+TRACE_DUPLICATE_MIN = 0.6   # overlap: Jev answers yes with confidence at or above this: the statement is a duplicate
+TRACE_POSSIBLE_MIN = 0.4    # overlap: yes with confidence at or above this (below the duplicate threshold): possible
+OVERLAP_CANDIDATE = "overlap"
+# What the caller must do with the overlap results; the tool never chooses which copy to keep (references/record-trace.md).
+OVERLAP_ACTIONS = {
+    "duplicates": "{n} duplicate statements must be corrected: keep each obligation in one record and delete the other copy. "
+                  "See Correcting duplicates in references/record-trace.md.",
+    "fully_restated": "Fully restated: every statement is in another record; delete this record."}
+OVERLAP_CRITERIA = {
+    "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+    "no": "item.text does not state this obligation.",
+    "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."}
+TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
+TRACE_ANNOTATED = ("exceeds", "conflicts")
+TRACE_PROVENANCE = "reviewer-agent"
+TRACE_PROVENANCE_LABEL = "written by a reviewer agent, not Jev"
+# Records are read only through Raptor (https://github.com/randlee/raptor): its import index is the one source of record
+# identity, text and obligation statements. Nothing here parses Markdown or finds obligations in text.
+RAPTOR_PIN = "8ce2be8363318be2f7c2e2b79d1f646399cab2fd"  # the Raptor revision judge-jev pins
+RAPTOR_INSTALL = (f"Install Raptor (needs a Rust toolchain): git clone https://github.com/randlee/raptor raptor && "
+                  f"git -C raptor checkout {RAPTOR_PIN} && uv venv raptor/.venv -p 3.11 && "
+                  "uv pip install -p raptor/.venv/bin/python ./raptor markdown; then pass --raptor raptor "
+                  "(references/installation-and-troubleshooting.md). Or pass a saved Raptor index with --index.")
+RAPTOR_OBLIGATIONS_FIELD = {"requirements": "requirement_statement.statements"}  # Raptor serves no statements for decisions
+RAPTOR_NO_OBLIGATIONS = "No obligation statements."
+TRACE_QUESTIONS = {
+    "relates": {"type": "choice",
+                "instructions": "Does `record.raptor` (the record as Raptor serves it) govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",
+                "criteria": {"yes": "At least one obligation in the record governs behavior inside the anchor's scope.",
+                             "no": "The record governs only other behavior.",
+                             "unclear": "Cannot tell from the text."}},
+    "serves": {"type": "choice",
+               "instructions": "Does at least one obligation in `record.raptor` (the record as Raptor serves it) carry out what `anchor.statement` requires, so that satisfying the record also satisfies the anchor within the anchor's scope?",
+               "criteria": {"yes": "An obligation in the record implements or states the anchor's requirement.",
+                            "no": "No obligation in the record implements the anchor's requirement.",
+                            "unclear": "The record touches the anchor's topic but it is not possible to tell whether it implements it."}},
+    "conflicts": {"type": "choice",
+                  "instructions": "Does any obligation in `record.raptor` (the record as Raptor serves it) contradict `anchor.statement`: requiring what the anchor forbids, forbidding or limiting what the anchor requires or permits, or requiring a behavior the anchor says must not exist? Judge only inside `anchor.scope`.",
+                  "criteria": {"yes": "At least one obligation in the record contradicts the anchor.",
+                               "no": "No obligation in the record contradicts the anchor.",
+                               "unclear": "An obligation might contradict the anchor but the text does not make it certain."}},
+    "exceeds": {"type": "choice",
+                "instructions": "Among the obligations in `record.raptor` (the record as Raptor serves it) that concern the anchor's topic, does any go beyond `anchor.statement`: stricter, applying outside `anchor.scope`, or adding constraints (limits, prohibitions, required structure) the anchor does not ask for? Answer no if the record does not concern the anchor's topic.",
+                "criteria": {"yes": "An obligation on the anchor's topic is broader or stricter than the anchor.",
+                             "no": "Every obligation on the anchor's topic stays within the anchor.",
+                             "unclear": "Cannot tell whether an obligation goes beyond the anchor."}},
+}
+
+
+def trace_class(p_yes: dict, conflict_min: float, relation_min: float, exceeds_min: float) -> str:
+    """One cell's class from Jev's P(yes) per question; counted here, never asked of Jev."""
+    if p_yes["conflicts"] >= conflict_min:
+        return "conflicts"
+    if p_yes["serves"] >= relation_min or p_yes["relates"] >= relation_min:
+        if p_yes["exceeds"] >= exceeds_min:
+            return "exceeds"
+        return "serves" if p_yes["serves"] >= relation_min else "related"
+    return "none"
+
+
+def p_yes_of(answer) -> Result[float, ClientError]:
+    if hasattr(answer, "noul"):
+        return Ok(float(answer.noul))
+    probs = getattr(answer, "probabilities", None)
+    if isinstance(probs, Mapping) and isinstance(probs.get("yes"), (int, float)):
+        return Ok(float(probs["yes"]))
+    return fail("DECIDR.RESPONSE_INVALID", "a trace answer has no probability for 'yes'")
+
+
+def raptor_checkout(root: str) -> Result[dict, ClientError]:
+    """The Raptor checkout trace runs (``--raptor``): its venv python and scripts/extract.py. Read from no environment variable."""
+    if not root:
+        return fail("DEPENDENCY.RAPTOR", "trace reads REQ, NFR and ADR records only through Raptor, and no Raptor checkout was given (--raptor)",
+                    action=RAPTOR_INSTALL)
+    base = pathlib.Path(root).expanduser()
+    python, extract = base / ".venv" / "bin" / "python", base / "scripts" / "extract.py"
+    if not python.is_file() or not extract.is_file():
+        return fail("DEPENDENCY.RAPTOR", f"{root} is not an installed Raptor checkout (needs .venv/bin/python and scripts/extract.py)",
+                    action=RAPTOR_INSTALL)
+    revision = None
+    try:
+        got = subprocess.run(["git", "-C", str(base), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+        revision = got.stdout.strip() or None if got.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return Ok({"root": str(base), "python": str(python), "extract": str(extract), "revision": revision})
+
+
+def raptor_import(raptor: dict, project_root: str, output: pathlib.Path, run=subprocess.run) -> Result[str, ClientError]:
+    """Run Raptor's importer on one repository (its .raptor/ inventory) and return the index path it wrote."""
+    if not pathlib.Path(project_root, ".raptor").is_dir():
+        return fail("RAPTOR.NO_INVENTORY", f"{project_root} has no .raptor/ inventory, so Raptor cannot read its records",
+                    action="Add a .raptor/ inventory naming the record files (Raptor's README), or leave this repository out.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        got = run([raptor["python"], raptor["extract"], "--project-root", ".", "--output", str(output.resolve())],
+                  cwd=project_root, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor could not import {project_root}: {exc}", action=RAPTOR_INSTALL)
+    # Raptor's importer exits 1 when it imported with diagnostics; it still writes the index and a JSON report
+    # ({"index", "files", "records", "issues"}) as its last stdout line. Each record carries its own diagnostics here.
+    report = None
+    try:
+        report = json.loads((got.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        pass
+    with_issues = got.returncode == 1 and isinstance(report, dict) and isinstance(report.get("issues"), int) and report["issues"] > 0
+    if (got.returncode != 0 and not with_issues) or not output.is_file():
+        tail = (got.stderr or got.stdout or "")[-600:]
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor's importer failed on {project_root} (exit {got.returncode}): {tail}",
+                    action="Fix what Raptor reports, then rerun.")
+    return Ok(str(output))
+
+
+def raptor_index_records(index_path: str) -> Result[dict, ClientError]:
+    """Records and import diagnostics from one Raptor import index, as Raptor serves them (no field is re-derived from text).
+    kind: ADR for Raptor's decisions table; for its requirements table, the record id's prefix (REQ or NFR)."""
+    loaded = load_json(index_path, "Raptor import index")
+    if isinstance(loaded, Err):
+        return loaded
+    d = loaded.value
+    meta = d.get("metadata") if isinstance(d, dict) else None
+    issues = (d.get("diagnostics") or {}).get("issues") if isinstance(d, dict) else None
+    if not isinstance(meta, dict) or not isinstance(meta.get("repository"), str) or not isinstance(issues, list) \
+            or not all(isinstance(d.get(t), list) for t in ("requirements", "decisions")):
+        return fail("INPUT.MALFORMED", f"{index_path} is not a Raptor import index (metadata.repository, requirements, decisions, diagnostics.issues)",
+                    action="Pass the JSON written by Raptor's scripts/extract.py --output.")
+    repository = meta["repository"]
+    by_id = {}
+    for i in issues:
+        if isinstance(i, dict) and isinstance(i.get("id"), str):
+            by_id.setdefault(i["id"], []).append(i)
+    records = []
+    for table in ("requirements", "decisions"):
+        for rec in d[table]:
+            rid = rec.get("id") if isinstance(rec, dict) else None
+            checked = decidr_client.safe_id(rid, f"{index_path} {table} id")
+            if not checked["ok"]:
+                return Err(checked["error"])
+            field = RAPTOR_OBLIGATIONS_FIELD.get(table)
+            statements = None
+            if field:
+                value = rec
+                for part in field.split("."):
+                    value = value.get(part) if isinstance(value, dict) else None
+                statements = value if isinstance(value, list) and value else None
+            obligations = {"source": "raptor", "field": field if statements is not None else None, "statements": statements,
+                           "note": None if statements is not None else RAPTOR_NO_OBLIGATIONS}
+            records.append({"id": rid, "kind": "ADR" if table == "decisions" else rid.split("-", 1)[0],
+                            "repository": repository, "index": index_path, "raptor": rec, "obligations": obligations,
+                            "diagnostics": by_id.get(rid, [])})
+    imported = {r["id"] for r in records}
+    not_imported = {rid: v for rid, v in by_id.items() if rid not in imported}
+    return Ok({"repository": repository, "records": records, "not_imported": not_imported})
+
+
+def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict, ClientError]:
+    """Records from Raptor only: --source repositories imported by the Raptor checkout, and/or --index saved Raptor indexes.
+    --ids restricts them; a requested id Raptor did not serve is listed in ``not_served``, never filled from elsewhere."""
+    if not args.source and not args.index:
+        return fail("VALIDATION.INPUT", "pass at least one --source <repository root> (read through Raptor) or --index <Raptor index>",
+                    action="trace reads records only through Raptor.")
+    indexes, raptor = list(args.index), None
+    if args.source:
+        got = raptor_checkout(args.raptor)
+        if isinstance(got, Err):
+            return got
+        raptor = got.value
+        for n, src in enumerate(args.source, start=1):
+            made = raptor_import(raptor, src, out_dir / f"trace-{stamp_}.raptor-{n}.json")
+            if isinstance(made, Err):
+                return made
+            indexes.append(made.value)
+    records, seen, not_imported, repos = [], {}, {}, []
+    for path in indexes:
+        got = raptor_index_records(path)
+        if isinstance(got, Err):
+            return got
+        repos.append({"repository": got.value["repository"], "index": path})
+        not_imported.update(got.value["not_imported"])
+        for r in got.value["records"]:
+            if r["id"] in seen:
+                return fail("VALIDATION.INPUT", f"record id {r['id']} is served by two Raptor indexes ({seen[r['id']]}, {path})",
+                            action="Pass each repository once.")
+            seen[r["id"]] = path
+            records.append(r)
+    not_served = []
+    if args.ids:
+        try:
+            wanted = [x.strip() for x in pathlib.Path(args.ids).read_text(encoding="utf-8").splitlines() if x.strip()]
+        except (OSError, UnicodeDecodeError) as exc:
+            return fail("INPUT.MISSING", f"--ids file could not be read: {exc}", action="Pass a file with one record id per line.")
+        keep = set(wanted)
+        records = [r for r in records if r["id"] in keep]
+        for rid in dict.fromkeys(wanted):
+            if rid not in seen:
+                reason = ("Raptor did not import it: " + "; ".join(str(i.get("message", "")) for i in not_imported[rid][:3])) \
+                    if rid in not_imported else "not in any Raptor index given"
+                not_served.append({"id": rid, "reason": reason})
+    if not records:
+        return fail("INPUT.EMPTY", "Raptor served no records to trace", action="Check the --source/--index repositories and --ids.")
+    return Ok({"records": records, "not_served": not_served, "repositories": repos,
+               "raptor": {k: raptor[k] for k in ("root", "revision")} if raptor else None})
+
+
+def load_trace_annotations(path: str) -> Result[list, ClientError]:
+    if not path:
+        return Ok([])
+    loaded = load_json(path, "annotations file")
+    if isinstance(loaded, Err):
+        return loaded
+    rows = loaded.value
+    if not isinstance(rows, list):
+        return fail("INPUT.MALFORMED", "annotations must be a JSON array of {record, anchor, clauses, what, remedy, jev_disputed}")
+    out = []
+    for n, row in enumerate(rows, start=1):
+        if not isinstance(row, dict) or not isinstance(row.get("record"), str) or not isinstance(row.get("anchor"), str) \
+                or not isinstance(row.get("clauses", []), list) or not all(isinstance(c, str) for c in row.get("clauses", [])) \
+                or not isinstance(row.get("what", ""), str) or not isinstance(row.get("remedy", ""), str) \
+                or not isinstance(row.get("jev_disputed", False), bool):
+            return fail("INPUT.MALFORMED", f"annotation {n} needs record and anchor strings, clauses (strings), what, remedy and jev_disputed (bool)")
+        out.append({"record": row["record"], "anchor": row["anchor"], "clauses": list(row.get("clauses", [])),
+                    "what": row.get("what", ""), "remedy": row.get("remedy", ""), "jev_disputed": row.get("jev_disputed", False),
+                    "provenance": TRACE_PROVENANCE, "provenance_label": TRACE_PROVENANCE_LABEL})
+    return Ok(out)
+
+
+def trace_answer_json(answer) -> dict:
+    if hasattr(answer, "noul"):
+        return {"noul": answer.noul}
+    return {"choice": answer.choice, "confidence": answer.confidence, "probabilities": dict(answer.probabilities)}
+
+
+def trace_summary(cells: list, records: list, anchors: list) -> dict:
+    per_anchor = {a["id"]: {c: 0 for c in TRACE_CLASSES} for a in anchors}
+    totals = {c: 0 for c in TRACE_CLASSES}
+    related = set()
+    for c in cells:
+        per_anchor[c["anchor"]][c["class"]] += 1
+        totals[c["class"]] += 1
+        if c["class"] != "none":
+            related.add(c["record"])
+    return {"per_anchor": per_anchor, "totals": totals,
+            "records_with_no_relation": [r["id"] for r in records if r["id"] not in related],
+            "conflicts": [{"record": c["record"], "anchor": c["anchor"]} for c in cells if c["class"] == "conflicts"]}
+
+
+def record_statements(r: dict) -> list:
+    """A record's statements as Raptor serves them: its statement list (REQ/NFR), else an ADR's decision as one block."""
+    listed = r["obligations"]["statements"] or []
+    if listed:
+        return [s.get("text", "") if isinstance(s, dict) else str(s) for s in listed]
+    decision = r["raptor"].get("decision")
+    text = decision.get("text") if isinstance(decision, dict) else decision
+    return [text] if text else []
+
+
+def record_text(r: dict) -> str:
+    """The record as Raptor serves it, as text: id and title, its statement paragraph (an ADR's context), then each statement."""
+    raptor = r["raptor"]
+    head = [v.get("text") if isinstance(v, dict) else v for v in (raptor.get("requirement_statement"), raptor.get("context"))]
+    return "\n".join([f"{r['id']}: {raptor.get('title', '')}", next((h for h in head if h), ""),
+                      *(f"- {s}" for s in record_statements(r))])
+
+
+def overlap_partners(cells: list) -> dict:
+    """Item id -> partner ids: in each anchor column, every unordered pair of records whose cell is judged and not none;
+    the lower id (string order) is the item."""
+    columns = {}
+    for c in cells:
+        if c["class"] not in ("none", "error"):
+            columns.setdefault(c["anchor"], set()).add(c["record"])
+    partners = {}
+    for a, b in sorted({(a, b) for ids in columns.values() for a in ids for b in ids if a < b}):
+        partners.setdefault(a, []).append(b)
+    return partners
+
+
+def overlap_jobs(model: str, partners: dict, by_id: dict) -> tuple:
+    """One request per item: one choice question per statement of each partner. Returns (jobs, {(item, qid): (partner, i, statement)})."""
+    jobs, asked = [], {}
+    for item, ids in partners.items():
+        questions = {}
+        for pid in ids:
+            for i, statement in enumerate(record_statements(by_id[pid])):
+                qid = f"{pid.replace('-', '_')}_s{i}"
+                questions[qid] = {"type": "choice", "criteria": OVERLAP_CRITERIA,
+                                  "instructions": f"Does item.text already state this obligation from {pid}?\nOBLIGATION: {statement}"}
+                asked[(item, qid)] = (pid, i, statement)
+        if questions:
+            r = by_id[item]
+            body = {"model": model, "state": {"item": {"id": item, "title": r["raptor"].get("title", ""), "text": record_text(r)}},
+                    "questions": questions}
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, item, None, OVERLAP_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(item, None, OVERLAP_CANDIDATE, 1, rid, body, questions, {}, OVERLAP_CANDIDATE))
+    return jobs, asked
+
+
+def overlap_class(choice: str, confidence: float, duplicate_min: float, possible_min: float) -> str:
+    """One statement's class from Jev's choice and confidence; counted here, never asked of Jev."""
+    if choice != "yes" or confidence < possible_min:
+        return "none"
+    return "duplicate" if confidence >= duplicate_min else "possible"
+
+
+def overlap_summary(overlap: list, records: list) -> dict:
+    restated = {}
+    for o in overlap:
+        if o["class"] == "duplicate":
+            restated.setdefault(o["partner"], set()).add(o["statement_index"])
+    per_record = {r["id"]: {"statements_restated": len(restated.get(r["id"], ())), "statements_total": len(record_statements(r))}
+                  for r in records}
+    return {"per_record": per_record,
+            "fully_restated": [rid for rid, n in per_record.items() if n["statements_total"] and n["statements_restated"] == n["statements_total"]]}
+
+
+def trace_replies(args, jobs: list, fixture) -> Result[list, ClientError]:
+    """Each job's reply in job order, (answers, session_id, model_answered) or a ClientError: from the fixture, or one batch."""
+    replies = []
+    if fixture is not None:
+        for job in jobs:
+            got = decidr_client.fixture_attempt(job, fixture, 1)
+            if not got["ok"]:
+                return Err(got["error"])
+            replies.append((got["value"]["answers"], None, "fixture"))
+        return Ok(replies)
+    if not jobs:
+        return Ok(replies)
+    allowed = decidr_client.remote_preflight(args.repository_root, "The record texts and anchor statements")
+    if not allowed["ok"]:
+        return Err(allowed["error"])
+    result = decidr_client.call_batch_results([j.body for j in jobs], model=args.model, abort_on=frozenset({"auth"}),
+                                              timeout_secs=args.timeout, repository_root=args.repository_root,
+                                              consent_what="The record texts and anchor statements", workers=args.workers)
+    if not result["ok"]:
+        return Err(result["error"])
+    by_position = {line.get("position"): line for line in result["value"]}
+    for n in range(len(jobs)):
+        line = by_position.get(n)
+        if line is None:
+            replies.append(ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned no result for this request"))
+        elif not line["ok"]:
+            replies.append(line["error"])
+        else:
+            replies.append((line["value"], line.get("session_id"), line.get("model_answered")))
+    return Ok(replies)
+
+
+def cmd_trace(args) -> Result[dict, ClientError]:
+    thresholds = {}
+    for name, flag, value in (("conflicts", "--conflict-threshold", args.conflict_threshold),
+                              ("relation", "--relation-threshold", args.relation_threshold),
+                              ("exceeds", "--exceeds-threshold", args.exceeds_threshold),
+                              ("duplicate", "--duplicate-threshold", args.duplicate_threshold),
+                              ("possible", "--possible-threshold", args.possible_threshold)):
+        checked = check_threshold(value, flag)
+        if isinstance(checked, Err):
+            return checked
+        thresholds[name] = checked.value
+    if not 1 <= args.workers <= decidr_client.BATCH_MAX_WORKERS:
+        return fail("VALIDATION.INPUT", f"--workers must be between 1 and {decidr_client.BATCH_MAX_WORKERS}")
+    if args.dry_run and args.answers_file:
+        return fail("VALIDATION.INPUT", "pass --dry-run or --answers-file, not both")
+    rec = _valid_record(args.anchors)
+    if isinstance(rec, Err):
+        return rec
+    anchors = [a for a in rec.value["anchors"] if a.get("status") == "locked"]
+    if not anchors:
+        return fail("ANCHOR.NONE_LOCKED", f"{args.anchors} has no locked anchor to trace against",
+                    action="Lock the anchors the owner approved (references/anchor-capture.md), then rerun.")
+    out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(args.anchors).parent / "anchor-runs"
+    name = f"trace-{stamp()}"
+    loaded_records = load_trace_records(args, out_dir, name[len("trace-"):])
+    if isinstance(loaded_records, Err):
+        return loaded_records
+    source = loaded_records.value
+    records = Ok(source["records"])
+    annotations = load_trace_annotations(args.annotations)
+    if isinstance(annotations, Err):
+        return annotations
+    loaded = answers_file(args.answers_file, "'<record>/<anchor>', '<anchor>', '<item record>/overlap' or 'overlap'")
+    if isinstance(loaded, Err):
+        return loaded
+    fixture = loaded.value
+
+    jobs = []
+    for r in records.value:
+        for a in anchors:
+            state = {"record": {"id": r["id"], "kind": r["kind"], "repository": r["repository"], "raptor": r["raptor"]},
+                     "anchor": {"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)}}
+            body = {"model": args.model, "state": state, "questions": TRACE_QUESTIONS}
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, r["id"], a["id"], TRACE_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(r["id"], a["id"], a["id"], 1, rid, body, TRACE_QUESTIONS, {}, TRACE_CANDIDATE))
+    if args.dry_run:  # overlap requests are formed from the cells' answers, which a dry run does not have
+        return Ok({"success": True, "error": None, "data": {
+            "dry_run": True, "requests": [{"request_id": j.request_id, "request": j.body} for j in jobs],
+            "overlap": "not formed: overlap pairs come from the cells' answers" if args.overlap else "off"}})
+
+    replies = trace_replies(args, jobs, fixture)
+    if isinstance(replies, Err):
+        return replies
+    notes = {(n["record"], n["anchor"]): n for n in annotations.value}
+    cells, failures, warnings = [], [], []
+    for job, reply in zip(jobs, replies.value):
+        cell = {"record": job.item_id, "anchor": job.anchor_id, "request_id": job.request_id}
+        p_yes = {}
+        if not isinstance(reply, ClientError):
+            for q in TRACE_QUESTIONS:
+                got = p_yes_of(reply[0].get(q)) if q in reply[0] else fail("DECIDR.RESPONSE_INVALID", f"no answer for {q}")
+                if isinstance(got, Err):
+                    reply = got.error
+                    break
+                p_yes[q] = round(got.value, 4)
+        if isinstance(reply, ClientError):
+            failures.append((f"{job.item_id}/{job.anchor_id}", reply))
+            cells.append(dict(cell, **{"class": "error", "error": {"code": reply.code, "message": reply.message}}))
+            continue
+        answers, session_id, _ = reply
+        cls = trace_class(p_yes, thresholds["conflicts"], thresholds["relation"], thresholds["exceeds"])
+        cell.update({"class": cls, "p_yes": p_yes, "answers": {q: trace_answer_json(answers[q]) for q in TRACE_QUESTIONS},
+                     "session_id": session_id})
+        note = notes.pop((job.item_id, job.anchor_id), None)
+        if note is not None:
+            if cls in TRACE_ANNOTATED:
+                cell["annotation"] = {k: v for k, v in note.items() if k not in ("record", "anchor")}
+            else:
+                warnings.append(f"annotation for {job.item_id}/{job.anchor_id} not merged: the cell is {cls}, not exceeds or conflicts")
+        cells.append(cell)
+    warnings += [f"annotation for {r}/{a} not merged: no such record or locked anchor" for r, a in notes]
+
+    overlap, overlap_replies = None, []
+    if args.overlap:
+        ojobs, asked = overlap_jobs(args.model, overlap_partners(cells), {r["id"]: r for r in records.value})
+        got = trace_replies(args, ojobs, fixture)
+        if isinstance(got, Err):
+            return got
+        overlap, overlap_replies = [], got.value
+        for job, reply in zip(ojobs, overlap_replies):
+            if not isinstance(reply, ClientError) and set(reply[0]) != set(job.questions):
+                reply = ClientError("DECIDR.RESPONSE_INVALID", "the answer IDs do not match the question IDs")
+            if isinstance(reply, ClientError):
+                failures.append((f"{job.item_id}/{OVERLAP_CANDIDATE}", reply))
+                continue
+            for qid, answer in reply[0].items():
+                partner, i, statement = asked[(job.item_id, qid)]
+                overlap.append({"item": job.item_id, "partner": partner, "statement_index": i, "statement": statement,
+                                "choice": answer.choice, "confidence": answer.confidence, "session_id": reply[1],
+                                "class": overlap_class(answer.choice, answer.confidence, thresholds["duplicate"], thresholds["possible"])})
+                if overlap[-1]["class"] == "duplicate":
+                    overlap[-1]["action"] = "correct"
+        overlap.sort(key=lambda o: (o["item"], o["partner"], o["statement_index"]))
+    answered = [r for r in replies.value + overlap_replies if not isinstance(r, ClientError)]
+    judged = [c for c in cells if c["class"] != "error"]
+    summary = trace_summary(judged, records.value, anchors)
+    actions, to_correct = None, 0
+    if overlap is not None:
+        summary.update(overlap_summary(overlap, records.value))
+        to_correct = sum(1 for o in overlap if o["class"] == "duplicate")
+        actions = dict(OVERLAP_ACTIONS, duplicates=OVERLAP_ACTIONS["duplicates"].format(n=to_correct) if to_correct else None)
+    trace = {
+        "schema": TRACE_SCHEMA, "generated_at": now_utc().isoformat(timespec="seconds"),
+        "anchors_path": args.anchors, "model": args.model, "model_answered": sorted({r[2] for r in answered if r[2]}),
+        "answered_by": "fixture" if fixture is not None else "jev", "session_ids": [r[1] for r in answered if r[1]],
+        "thresholds": thresholds, "questions": TRACE_QUESTIONS,
+        "questions_digest": canonical_digest(TRACE_QUESTIONS),
+        "question_digests": {q: canonical_digest(v) for q, v in TRACE_QUESTIONS.items()},
+        "anchors": [dict(a, scope=a.get("scope") or "", quote=anchor_quote(a)) for a in anchors],
+        "raptor": source["raptor"], "repositories": source["repositories"], "not_served": source["not_served"],
+        "records": [{k: r[k] for k in ("id", "kind", "repository", "index", "raptor", "obligations", "diagnostics")}
+                    for r in records.value],
+        "cells": cells, "overlap": overlap, "actions": actions, "summary": summary, "warnings": warnings,
+    }
+    path = out_dir / f"{name}.json"
+    try:
+        save_json(str(path), trace)
+    except OSError as exc:
+        return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
+    data = {"trace_path": str(path), "cells": len(cells), "overlap": None if overlap is None else len(overlap),
+            "duplicates_pass": None if overlap is None else not to_correct, "duplicates_to_correct": None if overlap is None else to_correct,
+            "message": actions and actions["duplicates"],
+            "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
+            "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
+    if failures:
+        return jev_failure("trace requests", failures, len(jobs) + len(overlap_replies), data)
+    return Ok({"success": True, "data": data, "error": None})
 
 
 # --------------------------------------------------------------------------- #
@@ -4453,9 +4736,8 @@ def cmd_tournament(args) -> Result[dict, ClientError]:
     request_lines = [{"item": {"id": c.case_id, "title": c.item["title"], "text": c.item["text"]}, "anchor": anchor,
                       "questions": [{"candidate_id": b.bundle_id, "questions": b.questions, "roles": roles} for b in bundles]}
                      for c in oracle.cases]
-    max_bytes = DEFAULT_MAX_REQUEST_BYTES if gate == "plan" else DEFAULT_MAX_REQUEST_BYTES_DEV
     settings = decidr_client.BatchSettings(gate, args.model, repeat, request["correlation_id"], request["production_confidence_threshold"],
-                             args.timeout, args.max_workers, max_bytes, bool(args.dry_run))
+                             args.timeout, args.max_workers, 0, bool(args.dry_run))
     jobs = []
     for number, line in enumerate(request_lines, start=1):
         got = batch_jobs(line, number, settings, roles)
@@ -4519,7 +4801,6 @@ def add_stream_options(parser) -> None:
     parser.add_argument("--request-prefix", default="batch", help="request ids are <prefix>/<item>/<anchor>/<candidate>/r<n>")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="confidence threshold of each line's verdict")
     parser.add_argument("--max-workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
-    parser.add_argument("--max-request-bytes", type=int, default=None, help="refuse any request over this before sending; default the gate's cap")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--dry-run", action="store_true", help="emit the result lines with the requests only; call nothing")
@@ -4537,11 +4818,6 @@ def add_judge_options(parser, with_item: bool) -> None:
         parser.add_argument("--item-id", required=True, help="bead id, PR number, or sprint id")
         parser.add_argument("--item-title", default="")
         parser.add_argument("--item-file", default="", help="file with the bead or work description; stdin if omitted")
-        parser.add_argument("--max-item-chars", type=int, default=DEFAULT_MAX_ITEM_CHARS,
-                            help="dev gate: truncate the item to this; plan gate: refuse a larger bead with PLAN.TOO_LARGE")
-        parser.add_argument("--max-code-lines", type=int, default=DEFAULT_MAX_CODE_LINES,
-                            help="plan gate: only fenced code blocks longer than this may be sent as signatures plus a redaction "
-                                 "marker, and only when the bead would not otherwise fit (longest first, as few as needed)")
         parser.add_argument("--out", default="", help="explicit run file path")
     else:
         parser.add_argument("--id", default="", help="one anchor id")
@@ -4564,16 +4840,10 @@ def add_judge_options(parser, with_item: bool) -> None:
     parser.add_argument("--overrides-file", default="", help="JSON {anchor_id: {questions: {...}, roles: {...}}} read from the question beads; merged after anchors.json overrides")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
-    parser.add_argument("--max-request-bytes", type=int, default=None,
-                        help=f"default plan {DEFAULT_MAX_REQUEST_BYTES} (what Jev reads reliably: a contradiction 28k deep was missed), "
-                             f"dev {DEFAULT_MAX_REQUEST_BYTES_DEV} (Jev took 107k bytes in one attempt). dev gate: shorten the item until each "
-                             "serialised request is under this; plan gate: refuse a bead that does not fit")
     parser.add_argument("--confirm-near-threshold", action="store_true", default=False,
                         help=f"re-judge once when a gating confidence is within {NEAR_THRESHOLD_BAND} of the threshold and require agreement "
                              "(the default; --no-confirm turns it off)")
     parser.add_argument("--no-confirm", action="store_true", help="never re-judge near the threshold")
-    parser.add_argument("--min-item-chars", type=int, default=DEFAULT_MIN_ITEM_CHARS,
-                        help="never shorten the item below this on a context overflow; record JEV.CONTEXT_EXCEEDED instead")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--run-dir", default="", help="judge: default <anchors dir>/anchor-runs; check-fixtures: write runs under <run-dir>/fixtures/")
     parser.add_argument("--dry-run", action="store_true", help="write the Jev requests; call nothing")
@@ -4741,7 +5011,7 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("--children-json", default="", help="output of `{% if tracker == "br" %}br show <child id>... --json{% elif tracker == "bd" %}bd children <id> --json{% endif %}`: every child is shaped")
     sh.add_argument("--show-json", action="append", help="output of `{{ tracker }} show <id> --json`; repeatable")
     sh.add_argument("--anchors", default="", help="anchors.json: report unknown ANC references and anchors no bead references")
-    sh.add_argument("--max-code-lines", type=int, default=DEFAULT_MAX_CODE_LINES, help="chars_after_reduction reduces every fenced block longer than this (the plan gate's floor)")
+    sh.add_argument("--max-code-lines", type=int, default=DEFAULT_MAX_CODE_LINES, help="chars_after_reduction reduces every fenced block longer than this")
     sh.add_argument("--format", choices=("json", "md"), default="json")
     sh.set_defaults(func=cmd_shape)
 
@@ -4757,7 +5027,7 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--input", default="-", help="request stream, one JSON object per line (assets/schemas/jev-batch-request.schema.json); - or omitted reads stdin")
     add_stream_options(bt)
     bt.add_argument("--anchors", default="", help="anchors.json; the result log goes to its anchor-runs/ folder unless --run-dir is given")
-    bt.add_argument("--gate", choices=("plan", "dev"), default="plan", help="default roles and request cap when a candidate carries no roles")
+    bt.add_argument("--gate", choices=("plan", "dev"), default="plan", help="default roles when a candidate carries no roles")
     bt.set_defaults(func=cmd_batch)
 
     bb = sub.add_parser("bead-batch", help="high layer: item beads x one anchor's question bead (+ open candidate children) as request lines, run through batch")
@@ -4784,6 +5054,29 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--answers-file", default="", help="fixture answers keyed '<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>' or '*'; no network")
     tn.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tn.set_defaults(func=cmd_tournament)
+
+    tr = sub.add_parser("trace", help="judge records (REQ/ADR/NFR) x locked anchors: serves, related, exceeds, conflicts or none per cell; writes trace-<UTC>.json")
+    tr.add_argument("--anchors", required=True, help="anchors.json; only locked anchors are traced")
+    tr.add_argument("--source", action="append", default=[], help="repository root with a .raptor/ inventory; its REQ/NFR/ADR records are read through Raptor (repeatable)")
+    tr.add_argument("--index", action="append", default=[], help="a saved Raptor import index (scripts/extract.py --output), used as Raptor wrote it (repeatable)")
+    tr.add_argument("--raptor", default="", help="Raptor checkout with .venv; required with --source")
+    tr.add_argument("--ids", default="", help="file of record ids, one per line: trace only these; ids Raptor did not serve are listed in not_served")
+    tr.add_argument("--annotations", default="", help="JSON [{record, anchor, clauses, what, remedy, jev_disputed}] merged into exceeds/conflicts cells, labelled as written by a reviewer agent, not Jev")
+    tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
+    tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
+    tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")
+    tr.add_argument("--exceeds-threshold", type=float, default=TRACE_EXCEEDS_MIN, help="a related cell with P(exceeds=yes) at or above this: exceeds")
+    tr.add_argument("--duplicate-threshold", type=float, default=TRACE_DUPLICATE_MIN, help="overlap: Jev's yes with confidence at or above this: duplicate statement")
+    tr.add_argument("--possible-threshold", type=float, default=TRACE_POSSIBLE_MIN, help="overlap: Jev's yes with confidence at or above this, below --duplicate-threshold: possible")
+    tr.add_argument("--overlap", action=argparse.BooleanOptionalAction, default=True,
+                    help="also ask, for each pair of records sharing an anchor column (cells not none), which of one's statements the other already states (default on)")
+    tr.add_argument("--workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
+    tr.add_argument("--model", default=DEFAULT_MODEL)
+    tr.add_argument("--timeout", type=float, default=30.0)
+    tr.add_argument("--dry-run", action="store_true", help="show the cell requests on stdout; call nothing, write nothing")
+    tr.add_argument("--answers-file", default="", help="fixture answers keyed '<record>/<anchor>', '<anchor>', '<item record>/overlap', 'overlap' or '*'; no network")
+    tr.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
+    tr.set_defaults(func=cmd_trace)
 
     rp = sub.add_parser("report", help="render a run")
     rp.add_argument("--run", required=True)

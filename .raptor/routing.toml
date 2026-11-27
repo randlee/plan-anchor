@@ -1,0 +1,9 @@
+schema_version = "1.0.0"
+
+[[routes]]
+source = "documentation"
+artifact_types = ["requirement", "non_functional_requirement", "architecture_decision", "design_document"]
+
+[routes.profile]
+profile_id = "judge-jev"
+profile_version = "1.0.0"

@@ -1,0 +1,10 @@
+# Repository spelling aliases (owner ruling 2026-11-26).
+[labels]
+[sections]
+[values]
+shipped = "Active"
+accepted = "Approved"
+planned = "Proposed"
+superseded = "Superseded"
+retired = "Deprecated"
+partial = "Active"

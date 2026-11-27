@@ -1,0 +1,8 @@
+{
+  "documents": {
+    "DOC-PA-001": {"path": "docs/requirements.md"},
+    "DOC-PA-002": {"path": "docs/architecture.md"}
+  },
+  "identity_version": "1.0.0",
+  "repository_id": "urn:raptor:repo:plan-anchor"
+}
