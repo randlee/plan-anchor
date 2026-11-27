@@ -458,7 +458,7 @@ class TraceOverlapTests(unittest.TestCase):
         self.assertIn("<td>0.98</td>", page)
         self.assertIn("7 duplicate statements must be corrected", page)
         self.assertEqual(page.count('#correcting-duplicates">correct: Correcting duplicates</a>'), 7)
-        self.assertIn("Fully restated: delete this record unless it holds an obligation no other record states.", page)
+        self.assertIn("Fully restated: every statement is in another record; delete this record.", page)
         self.assertNotIn("Serves no anchor", page)
         self.assertIn("<h2>Fully restated records (deletion candidates)</h2>", page)
         self.assertIn("<li>REQ-SAG-0008</li>", page)
