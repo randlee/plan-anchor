@@ -6,12 +6,14 @@ scripts as an install renders them, so a change to the scripts or templates need
 runs this at deploy, beside build-site.py; the generated report, sidecar, panels and trace are build
 artifacts and are never committed (site/examples/.gitignore).
 
-  record-cleanup  jev_judge.py trace --index --ids --anchors --answers-file (fixture answers: no network),
-                  then change_report.py --trace --proposals --out site/examples/record-cleanup/
+  record-cleanup  jev_judge.py trace --index --ids --anchors --answers-file (fixture answers: no network), with
+                  --annotations inputs/annotations.json when that file exists, then
+                  change_report.py --trace --proposals --out site/examples/record-cleanup/
 
 Needs the sc-compose CLI on PATH (the scripts are rendered with it, and change_report renders the report with
 it), as the tests do. Usage: python3 scripts/build-examples.py [--out DIR]
-(--out writes <DIR>/<example>/ instead of site/examples/<example>/; the tests use it.)
+(--out writes <DIR>/<example>/ instead of site/examples/<example>/, and --inputs reads the record-cleanup inputs from
+DIR instead of site/examples/record-cleanup/inputs/; the tests use both.)
 """
 from __future__ import annotations
 
@@ -100,15 +102,16 @@ def run(argv: list, cwd: Path) -> dict:
     return envelope["data"]
 
 
-def record_cleanup(scripts: Path, scratch: Path, out_root: Path) -> dict:
-    inputs = EXAMPLES / "record-cleanup" / "inputs"
+def record_cleanup(scripts: Path, scratch: Path, out_root: Path, inputs: Path) -> dict:
+    annotations = inputs / "annotations.json"
     example = out_root / "record-cleanup"
     example.mkdir(parents=True, exist_ok=True)
     runs = scratch / "record-cleanup-runs"
     trace = run([str(scripts / "jev_judge.py"), "trace", "--anchors", str(inputs / "anchors.json"),
                  "--index", str(inputs / "raptor-sc-agent.json"), "--ids", str(inputs / "ids.txt"),
                  "--answers-file", str(inputs / "answers.json"), "--out-dir", str(runs),
-                 "--repository-root", str(scratch)], scratch)
+                 "--repository-root", str(scratch),
+                 *(["--annotations", str(annotations)] if annotations.is_file() else [])], scratch)
     for stale in ("report.html", "report.json", "trace.json"):
         (example / stale).unlink(missing_ok=True)
     shutil.rmtree(example / "report", ignore_errors=True)
@@ -123,14 +126,18 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default=str(EXAMPLES), help="folder the examples are written under (default site/examples)")
-    out_root = Path(parser.parse_args().out).resolve()
+    parser.add_argument("--inputs", default=str(EXAMPLES / "record-cleanup" / "inputs"),
+                        help="folder holding the record-cleanup inputs (default site/examples/record-cleanup/inputs)")
+    args = parser.parse_args()
+    out_root, inputs = Path(args.out).resolve(), Path(args.inputs).resolve()
     with tempfile.TemporaryDirectory(prefix="build-examples-") as tmp:
         scratch = Path(tmp)
         scripts = render_skill(scratch / "skill" / ".claude" / "skills" / "plan-anchoring")
-        built = record_cleanup(scripts, scratch, out_root)
+        built = record_cleanup(scripts, scratch, out_root, inputs)
     t, r = built["trace"], built["report"]
     print(f"record-cleanup: {t['cells']} cells, {t['overlap']} overlap statements, "
-          f"{r.get('proposals')} proposals -> {out_root / 'record-cleanup' / 'report.html'}")
+          f"{r.get('proposals')} proposals, {len(r.get('unannotated_cells') or [])} red or yellow cells without a reviewer "
+          f"annotation -> {out_root / 'record-cleanup' / 'report.html'}")
     return 0
 
 

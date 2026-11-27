@@ -17,18 +17,22 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "site" / "examples" / "record-cleanup"
 
 
+def build(out: Path, *extra: str) -> Path:
+    if shutil.which("sc-compose") is None:
+        raise AssertionError("the sc-compose CLI is required to build the site examples (scripts/install_sc_compose_ci.py)")
+    proc = run_test_child([sys.executable, str(ROOT / "scripts" / "build-examples.py"), "--out", str(out), *extra],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if proc.returncode != 0:
+        raise AssertionError(f"build-examples failed (exit {proc.returncode}):\n{proc.stdout}\n{proc.stderr}")
+    return out / "record-cleanup"
+
+
 class RecordCleanupExampleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if shutil.which("sc-compose") is None:
-            raise AssertionError("the sc-compose CLI is required to build the site examples (scripts/install_sc_compose_ci.py)")
         cls.tmp = tempfile.TemporaryDirectory(prefix="site-examples-")
         cls.out = Path(cls.tmp.name)
-        proc = run_test_child([sys.executable, str(ROOT / "scripts" / "build-examples.py"), "--out", str(cls.out)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-        if proc.returncode != 0:
-            raise AssertionError(f"build-examples failed (exit {proc.returncode}):\n{proc.stdout}\n{proc.stderr}")
-        cls.built = cls.out / "record-cleanup"
+        cls.built = build(cls.out)
         cls.page = (cls.built / "report.html").read_text(encoding="utf-8")
         cls.trace = json.loads((cls.built / "trace.json").read_text(encoding="utf-8"))
 
@@ -69,6 +73,43 @@ class RecordCleanupExampleTests(unittest.TestCase):
         page = re.search(r"^\*\*Page:\*\*\s*\[[^\]]*\]\(([^)\s]+)\)", readme, re.MULTILINE)
         self.assertIsNotNone(page)
         self.assertTrue((self.built / page.group(1)).is_file())
+
+
+class RecordCleanupAnnotationsTests(unittest.TestCase):
+    """build-examples.py passes inputs/annotations.json to `trace --annotations` when it exists, and builds without it."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="site-examples-ann-")
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.inputs = self.tmp / "inputs"
+        shutil.copytree(EXAMPLE / "inputs", self.inputs)
+        (self.inputs / "annotations.json").unlink(missing_ok=True)
+
+    def red_and_yellow(self, built: Path) -> list:
+        trace = json.loads((built / "trace.json").read_text(encoding="utf-8"))
+        return [c for c in trace["cells"] if c["class"] in ("exceeds", "conflicts")]
+
+    def test_without_annotations_every_red_and_yellow_cell_is_listed(self):
+        built = build(self.tmp / "without", "--inputs", str(self.inputs))
+        cells = self.red_and_yellow(built)
+        self.assertGreaterEqual(len(cells), 1)
+        self.assertFalse(any("annotation" in c for c in cells))
+        page = (built / "report.html").read_text(encoding="utf-8")
+        self.assertIn(f"<h3>Cells without a reviewer annotation ({len(cells)})</h3>", page)
+
+    def test_with_annotations_they_are_merged_and_nothing_is_listed(self):
+        cells = self.red_and_yellow(build(self.tmp / "first", "--inputs", str(self.inputs)))
+        notes = [{"record": c["record"], "anchor": c["anchor"], "clauses": [], "what": f"test annotation {c['record']}/{c['anchor']}",
+                  "remedy": "test remedy", "jev_disputed": False} for c in cells]
+        (self.inputs / "annotations.json").write_text(json.dumps(notes), encoding="utf-8")
+        built = build(self.tmp / "with", "--inputs", str(self.inputs))
+        self.assertTrue(all(c["annotation"]["provenance"] == "reviewer-agent" for c in self.red_and_yellow(built)))
+        page = (built / "report.html").read_text(encoding="utf-8")
+        self.assertNotIn("Cells without a reviewer annotation", page)
+        self.assertNotIn("No reviewer annotation yet.", page)
+        c = cells[0]
+        self.assertIn(f"test annotation {c['record']}/{c['anchor']}", page)
 
 
 if __name__ == "__main__":

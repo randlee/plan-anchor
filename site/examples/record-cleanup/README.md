@@ -33,6 +33,8 @@ Four proposers ran in parallel, one per slice, each with no shared context.
 
 The lead dropped one proposal. `wave-1-red-0801` proposed deleting REQ-SAG-0801's paid-API key rule and anchoring it. Panel 1 already deletes that statement as a duplicate, and panel 6 proposes the anchor for the copy kept in REQ-SAG-0019. The proposers' text is otherwise unedited.
 
+- **Pending**: `inputs/annotations.json`, the reviewer annotations for the red and yellow cells. It is not checked in yet, so every red and yellow cell shows "No reviewer annotation yet." and the Proposed fixes tab lists them under "Cells without a reviewer annotation". The lead will fill it from the `anchor-cleanup-proposer` agents' `annotations` output; `build-examples.py` passes it to `trace --annotations` once it exists.
+
 The report is replayed offline from the fixture answers. So the generated trace shows `model_answered: fixture` and no session ids. The original Jev session ids are in the live trace, which is not checked in.
 
 ## Reproduce

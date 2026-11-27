@@ -29,6 +29,7 @@ defaults:
   proposal_warnings: []
   level: ""
   not_proposed: []
+  unannotated_cells: []
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -179,6 +180,15 @@ defaults:
       <ul>
 {% for w in proposal_warnings %}
         <li>{{ w | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% if unannotated_cells %}
+      <h3>Cells without a reviewer annotation ({{ unannotated_cells | length }})</h3>
+      <p class="small">Every red and yellow cell needs one before the report goes to the owner (references/record-cleanup.md).</p>
+      <ul>
+{% for x in unannotated_cells %}
+        <li>{{ x | e }}</li>
 {% endfor %}
       </ul>
 {% endif %}

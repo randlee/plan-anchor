@@ -27,7 +27,8 @@ Inputs
                        page templates/trace-report.html.j2); --anchors and --baseline-rev are then not used
   --fields P,...       with --trace: show only these record/anchor field paths (RECORD_FIELDS, ANCHOR_PANEL_FIELDS)
   --proposals P        with --trace: record-cleanup proposals (references/record-cleanup.md) as numbered panels on a
-                       third tab, "Proposed fixes", with the totals if all are approved
+                       third tab, "Proposed fixes", with the totals if all are approved and the red and yellow cells
+                       with no reviewer annotation (also data.unannotated_cells)
   --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
                        in DIR/<name>/
 
@@ -1080,6 +1081,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
             prop_panels.append(target.as_posix())
         if proposals is not None:
             totals, warnings = proposal_effect(proposals, t, records)
+        unannotated = [f"{c['record']}/{c['anchor']}" for c in t["cells"] if c["class"] in TRACE_DETAIL and not c.get("annotation")]
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -1111,7 +1113,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                      {"label": "Statements", "before": str(totals["statements_before"]), "after": str(totals["statements_after"])},
                      {"label": "Duplicates", "before": str(totals["duplicates"]), "after": str(totals["duplicates"] - totals["duplicates_cleared"])},
                      {"label": "Conflicts", "before": str(totals["conflicts"]), "after": str(totals["conflicts"] - totals["conflicts_resolved"])}],
-                 "proposal_warnings": warnings, "level": level,
+                 "proposal_warnings": warnings, "level": level, "unannotated_cells": unannotated,
                  "not_proposed": [f"{x['slice']}: {x['reason']}" for x in not_proposed]}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
@@ -1120,7 +1122,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"]),
                "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
-               "warnings": warnings, "level": level or None, "not_proposed": not_proposed})
+               "warnings": warnings, "level": level or None, "not_proposed": not_proposed, "unannotated_cells": unannotated})
 
 
 # ---------------------------------------------------------------- command

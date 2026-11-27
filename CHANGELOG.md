@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.1 — 2026-11-27
+
+- Record cleanup now produces the reviewer annotations `trace --annotations` takes. The `anchor-cleanup-proposer` agent returns one annotation per red or yellow cell of its slice in `data.annotations`, beside `data.proposals`: the offending clauses quoted exactly, what exceeds or conflicts, the remedy its proposal makes, and `jev_disputed` with the reason. `references/record-cleanup.md`: the lead merges every proposer's annotations into one file, re-runs the trace with `--annotations` and renders the report from it; before the report goes to the owner every red and yellow cell of the wave has an annotation.
+- `change_report.py --trace` reports the red and yellow cells with no reviewer annotation in `data.unannotated_cells`, and with `--proposals` lists them on the Proposed fixes tab under "Cells without a reviewer annotation (N)". The build is not refused; the cell panel text is unchanged.
+- `scripts/build-examples.py` passes `inputs/annotations.json` to `trace --annotations` when it exists, and takes `--inputs DIR`. The record-cleanup example's annotations are pending.
+
 ## 0.16.0 — 2026-11-27
 
 - Add the record-cleanup workflow (`references/record-cleanup.md`): preflight on validated anchors and Raptor-compliant records; diagnose with `trace` and background proposers (at most 4 at once, 600 s each) while the owner reviews; an owner-approved "Proposed fixes" tab; repair per wave by background agents (Raptor schema, anchors, and judge-jev quality on modified records handed to judge-jev's fix workflow, never a stop); one `/sc-gh-stack` PR per wave, planned up front. `SKILL.md` gains its row and a description clause for trace, duplicates and record cleanup; its Raptor check names record cleanup; `references/record-trace.md` points to it.

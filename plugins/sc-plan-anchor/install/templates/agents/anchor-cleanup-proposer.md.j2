@@ -15,7 +15,7 @@ The lead invokes this agent during record cleanup (`references/record-cleanup.md
 
 ## Purpose
 
-Propose how to fix one slice of a record trace: a group of cells, duplicate statements or unanchored records. Return the proposals as fenced JSON in the proposals schema. Judge with your own knowledge of the product, the records and the code. You never edit a record, an anchor or any file, never call Jev and never run a script; the lead decides and applies.
+Propose how to fix one slice of a record trace: a group of cells, duplicate statements or unanchored records. Return the proposals as fenced JSON in the proposals schema, with one annotation per red or yellow cell of the slice. Judge with your own knowledge of the product, the records and the code. You never edit a record, an anchor or any file, never call Jev and never run a script; the lead decides and applies.
 
 ## Inputs
 
@@ -33,7 +33,8 @@ Return `VALIDATION.INPUT` when `trace_path`, `slice`, `wave` or `references` is 
 1. Read "Correcting duplicates" and "Interpretation" in `references/record-trace.md`, and "Levels" and "Proposals file" in `references/record-cleanup.md`.
 2. Read the trace. Every record, anchor, cell and duplicate the slice names must be in it; otherwise return `TRACE.SLICE_MISSING` naming what is missing.
 3. For each item of the slice, decide the remedy by the rules below, reading the code where a rule depends on it.
-4. Return the envelope below.
+4. For each red or yellow cell of the slice, write one annotation (below) that matches its proposal.
+5. Return the envelope below.
 
 ### Rules
 
@@ -48,6 +49,16 @@ Return `VALIDATION.INPUT` when `trace_path`, `slice`, `wave` or `references` is 
 - A record left with no statements is deleted.
 - Quote `before` exactly as the record's statement reads in the trace, so the report can count it.
 - One proposal per decision the owner would approve or reject on its own; group changes that stand or fall together.
+
+### Annotations
+
+Every red or yellow cell of the slice gets exactly one annotation in `data.annotations`, the shape `jev_judge.py trace --annotations` takes (`references/record-trace.md`):
+
+- `record`, `anchor`: the cell.
+- `clauses`: the record's offending clauses, each quoted exactly as the record reads in the trace.
+- `what`: what exceeds or conflicts with the anchor, in plain words.
+- `remedy`: the remedy, the same one the cell's proposal makes.
+- `jev_disputed`: true when you disagree with Jev's class for the cell; then `what` gives the reason.
 
 ## Output Format
 
@@ -64,7 +75,18 @@ Return fenced JSON, nothing else:
        "justification": "A consumer-visible config key belongs in the REQ; the ADR states the decision and cites REQ-0003.",
        "source": {"ref": "REQ-0003"},
        "improvement": "One copy of the rule; ADR-0021 no longer restates REQ-0003.",
-       "duplicates": ["ADR-0021/REQ-0003/1"]}
+       "duplicates": ["ADR-0021/REQ-0003/1"]},
+      {"wave": 1, "kind": "cut_excess", "title": "Cut the retry count from REQ-0007",
+       "records": ["REQ-0007"],
+       "changes": [{"record": "REQ-0007", "before": "The client MUST retry 5 times with a 2 s backoff.", "after": "The client MUST retry."}],
+       "justification": "ANC-004 asks for a retry; the count and backoff are not anchored.",
+       "source": {"ref": "ANC-004", "quote": "it should retry when the server is busy"},
+       "improvement": "REQ-0007 no longer exceeds ANC-004.", "cells": ["REQ-0007/ANC-004"]}
+    ],
+    "annotations": [
+      {"record": "REQ-0007", "anchor": "ANC-004", "clauses": ["5 times with a 2 s backoff"],
+       "what": "Fixes a retry count and backoff the anchor does not ask for.",
+       "remedy": "Cut the count and backoff; keep the retry.", "jev_disputed": false}
     ]
   },
   "error": null,
@@ -72,7 +94,7 @@ Return fenced JSON, nothing else:
 }
 ```
 
-`kind` is one of `delete`, `consolidate`, `cut_excess`, `resolve_conflict`, `propose_anchor`, `keep_with_reason`. A change without `before` deletes the whole record; with `before` and no `after` it deletes that statement; with both it changes `before` to `after`. `cells` lists the red cells a proposal resolves.
+`kind` is one of `delete`, `consolidate`, `cut_excess`, `resolve_conflict`, `propose_anchor`, `keep_with_reason`. A change without `before` deletes the whole record; with `before` and no `after` it deletes that statement; with both it changes `before` to `after`. `cells` lists the red cells a proposal resolves. `annotations` holds one entry per red or yellow cell of the slice, and is empty when the slice has none.
 
 On failure: `success: false`, `data: null`, and `error` as `{code, message, recoverable, suggested_action}`.
 

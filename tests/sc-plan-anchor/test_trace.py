@@ -517,8 +517,9 @@ class ProposedFixesTests(unittest.TestCase):
         answers = write(self.tmp, "answers.json", {"REQ-001/ANC-001": cell(serves=0.8), "ADR-002/ANC-001": cell(conflicts=0.7),
                                                     "NFR-003/ANC-001": cell(),
                                                     "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": ans(0.9)}})
-        code, out = run_cli(["trace", "--anchors", anchors, "--index", write(self.tmp, "core.json", CORE),
-                             "--index", write(self.tmp, "ui.json", UI), "--answers-file", answers, "--out-dir", str(Path(self.tmp) / "out")])
+        self.trace_argv = ["trace", "--anchors", anchors, "--index", write(self.tmp, "core.json", CORE),
+                           "--index", write(self.tmp, "ui.json", UI), "--answers-file", answers, "--out-dir", str(Path(self.tmp) / "out")]
+        code, out = run_cli(self.trace_argv)
         self.assertEqual(code, 0, out)
         self.trace = out["data"]["trace_path"]
 
@@ -646,6 +647,39 @@ class ProposedFixesTests(unittest.TestCase):
                      "proposal 2 change 1: resolution cut only deletes words", "proposal 3: resolve_conflict needs resolution",
                      "proposal 4: resolution propose_anchor needs proposed_anchor"):
             self.assertIn(text, problems)
+
+    def test_red_and_yellow_cells_without_an_annotation_are_listed_not_refused(self):
+        rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(env["data"]["unannotated_cells"], ["ADR-002/ANC-001"])
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
+        self.assertIn("<h3>Cells without a reviewer annotation (1)</h3>", tab)
+        self.assertIn("<li>ADR-002/ANC-001</li>", tab)
+        red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
+        self.assertIn("No reviewer annotation yet.", red)
+
+    def test_proposer_annotations_merge_into_the_trace_and_show_on_the_red_cell(self):
+        # A proposer's envelope (agents/anchor-cleanup-proposer.md): the lead merges data.annotations into one file.
+        proposer = {"success": True, "error": None, "metadata": {"correlation_id": "wave-1-red"}, "data": {
+            "proposals": [PROPOSALS["proposals"][1]],
+            "annotations": [{"record": "ADR-002", "anchor": "ANC-001", "clauses": ["Runtime crates must be written from scratch."],
+                             "what": "Forbids the copy the anchor asks for.", "remedy": "Delete ADR-002.", "jev_disputed": False}]}}
+        notes = write(self.tmp, "annotations.json", proposer["data"]["annotations"])
+        code, out = run_cli([*self.trace_argv, "--annotations", notes])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["data"]["warnings"], [])
+        self.trace = out["data"]["trace_path"]
+        rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(env["data"]["unannotated_cells"], [])
+        tab = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertNotIn("Cells without a reviewer annotation", tab)
+        red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
+        self.assertNotIn("No reviewer annotation yet.", red)
+        for text in ("“Runtime crates must be written from scratch.”", "Forbids the copy the anchor asks for.", "Delete ADR-002.",
+                     "reviewer text, not Jev"):
+            self.assertIn(text, red)
 
 
 STATEMENT_START = "The runtime crates are created by copying"
