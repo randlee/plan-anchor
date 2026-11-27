@@ -35,8 +35,8 @@ Missing input or unknown `level`: `VALIDATION.INPUT`.
 
 1. Read `references/record-trace.md` "Correcting duplicates", "Interpretation"; `references/record-cleanup.md` "Levels", "Proposals file".
 2. Read the trace. Every item the slice names must be in it, otherwise return `TRACE.SLICE_MISSING` naming what is missing; an unreadable trace, or a non-trace, is `TRACE.UNREADABLE`.
-3. Per red/yellow cell and duplicate, compare involved statements' `provenance` (first-appearance commit, date, summary; or null with reason) to the anchor's `stated_at` for the stale side (e.g. statement older than its conflicting anchor, record older than its code).
-4. Apply the Rules; return the envelope.
+3. Per red/yellow cell and duplicate, compare involved statements' `provenance` (first-appearance commit, date, summary; or null with reason) to the anchor's `stated_at` for the stale side (statement older than its conflicting anchor, record older than its code).
+4. Apply the Rules; write the Annotations, each matching its proposal; return the envelope.
 
 ### Rules
 
@@ -56,7 +56,7 @@ One proposal per separately approvable owner decision; each slice item ends in a
 
 ### Annotations
 
-One per red/yellow cell and duplicate, in `change_report.py --annotations` shape: `record` + `anchor` (cell) or `duplicate` (key); `clauses`: offending, exact; `what`: excess, conflict or duplication; `remedy`: its proposal's; `jev_disputed`: true if disputing Jev's class (why in `what`); `provenance` per involved statement, from the trace; `stale`: stale statement and reason, or null; `no_provenance`: trace's reason when absent.
+One per red/yellow cell and duplicate, in `change_report.py --annotations` shape: `record` + `anchor` (cell) or `duplicate` (key); `clauses`: offending, exact; `what`: excess, conflict or duplication; `remedy`: its proposal's; `jev_disputed`: true if disputing Jev's class (why in `what`); `provenance`: `{record, statement, commit, date, summary}` per involved statement, from the trace; `stale`: `{record, statement, reason}`, null if neither is stale; `no_provenance`: trace's reason when absent.
 
 ## Output Format
 
@@ -100,4 +100,4 @@ Unclear remedy: propose default deletion, explaining in `justification`. No prov
 
 ## Constraints
 
-Read-only (Read, Grep, Glob): never edit files, run commands/scripts or call Jev; the lead decides and applies. Propose only for your slice. Never justify keeping a record or statement by its existence.
+Read-only (Read, Grep, Glob only): never edit files, run commands/scripts or call Jev; the lead decides and applies. Propose only for your slice. Never justify keeping a record or statement by its existence.

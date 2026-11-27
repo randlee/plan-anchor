@@ -30,7 +30,7 @@ python3 scripts/change_report.py --trace DIR/trace-<UTC>.json [--annotations not
 
 The report's folder, name, saved sources, index entry and wording follow `references/html-reporting-guidelines.md`.
 
-- Records come only from Raptor. `--source <repo>` runs Raptor's importer (`--raptor <checkout>`) on a repository with a `.raptor/` inventory; `--index` takes a saved Raptor import index. Nothing parses record Markdown, splits headings or finds obligations in text. Errors: missing Raptor `DEPENDENCY.RAPTOR` (with install command), no inventory `RAPTOR.NO_INVENTORY`, importer failure `RAPTOR.IMPORT_FAILED`.
+- Records come only from Raptor. `--source <repo>` runs Raptor's importer (`--raptor <checkout>`) on a repository with a `.raptor/` inventory; `--index` takes a saved Raptor import index as Raptor wrote it. Nothing parses record Markdown, splits headings or finds obligations in text. Errors: missing Raptor `DEPENDENCY.RAPTOR` (with install command), no inventory `RAPTOR.NO_INVENTORY`, importer failure `RAPTOR.IMPORT_FAILED`.
 - Each record: `id`, `kind` (ADR for Raptor's decisions; REQ or NFR from the id), `repository` (Raptor's URN; no per-record file path), the whole served record (`raptor`), its import `diagnostics`, and `obligations`: Raptor's `requirement_statement.statements` verbatim, or, when Raptor serves none, `statements: null` with a note. Never synthesized.
 - `--ids` (one id per line) traces only those; an unserved requested id is listed in `not_served` with Raptor's reason, never read another way.
 - Jev receives the served record (`state.record.raptor`).
@@ -65,12 +65,12 @@ Home order:
 
 1. A rule shared across repositories lives in its owning repository's records; dependents' copies are deleted.
 2. A consumer-visible, testable obligation (wire format, file another tool reads, config key, CLI or public API behaviour) lives in a REQ, or an NFR for a quality attribute. An ADR cites the REQ id instead of restating it.
-3. A choice between alternatives, with its reasons, lives in the ADR; a REQ restating it deletes it.
+3. A choice between alternatives, with its reasons, lives in the ADR; a REQ restating the choice deletes it.
 4. Between two REQs, the record whose title and subject it belongs to; failing that, the higher judge-jev score.
 
 The correction is a deletion: remove the duplicate, adding only the keeping record's id, only where the remaining text would not read without it. Don't reword the kept statement in that pass. Delete a record left with no statements or fully restated elsewhere.
 
-These rules alone decide where an obligation lives, not when statements came in. Provenance matters only when copies differ in meaning: a conflict, not a duplicate, sent to the owner with both texts quoted, provenance showing which wording is stale.
+These rules alone decide where an obligation lives; statement age does not. Provenance matters only when copies differ in meaning: a conflict, not a duplicate, sent to the owner with both texts quoted, provenance showing which wording is stale.
 
 Outside record cleanup, the deduplicating agent decides; during it, every correction is an owner-approved proposal (`references/record-cleanup.md`, which takes precedence).
 
