@@ -1,0 +1,517 @@
+[
+  {
+    "duplicate": "REQ-SAG-0019/REQ-SAG-0801/7",
+    "clauses": [
+      "Configuration MUST NOT change where a paid API's key is sent."
+    ],
+    "what": "REQ-SAG-0801 restates REQ-SAG-0019's rule that configuration must not change a paid API's base address, which REQ-SAG-0019 defines as the only place the key is sent. Jev duplicate, confidence 0.86.",
+    "remedy": "Delete the statement from REQ-SAG-0801 and keep REQ-SAG-0019's.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "Configuration MUST NOT change where a paid API's key is sent.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "Configuration MUST NOT change a paid API's base address.",
+        "commit": "b98b411",
+        "date": "2026-11-25",
+        "summary": "phase-j records: REQ-SAG-0018 is the owner's consumer statement; REQ-SAG-0019 and 0102 cut to develop size"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "duplicate": "REQ-SAG-0019/REQ-SAG-0801/0",
+    "clauses": [
+      "A local endpoint's address MUST be settable in configuration."
+    ],
+    "what": "REQ-SAG-0019 states that a local endpoint's address is settable in configuration, and REQ-SAG-0801 states that each local decision runner's network address must come from configuration. Jev possible duplicate, confidence 0.5. The wording differs but the obligation is the same.",
+    "remedy": "Delete the statement from REQ-SAG-0019 and keep REQ-SAG-0801's.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "Each local decision runner's network address MUST come from configuration.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "A local endpoint's address MUST be settable in configuration.",
+        "commit": "b98b411",
+        "date": "2026-11-25",
+        "summary": "phase-j records: REQ-SAG-0018 is the owner's consumer statement; REQ-SAG-0019 and 0102 cut to develop size"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0801",
+    "anchor": "ANC-001",
+    "clauses": [
+      "A selection of `decider` MUST resolve to the 4b decider model."
+    ],
+    "what": "Pins the short name `decider` to the `decider-4b-v2.1` row. ANC-001 makes a short name select the newest row, which config may override.",
+    "remedy": "Cut the statement. REQ-SAG-0102 keeps the newest-row rule.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "A selection of `decider` MUST resolve to the 4b decider model.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0801",
+      "statement": "A selection of `decider` MUST resolve to the 4b decider model.",
+      "reason": "Written 2026-11-25, before ANC-001 was stated on 2026-11-26."
+    }
+  },
+  {
+    "record": "REQ-SAG-0801",
+    "anchor": "ANC-009",
+    "clauses": [
+      "Each local decision runner's network address MUST come from configuration.",
+      "Each local decision runner's model MUST have a fixed model id in the model table.",
+      "`sc-agent` MUST NOT hard-code the network address of any local decision runner.",
+      "Configuration MUST NOT change where a paid API's key is sent."
+    ],
+    "what": "ANC-009 asks that the model table accept extra rows from config. These statements add rules about runner addresses, fixed ids and paid API keys that the anchor does not ask for. Two restate REQ-SAG-0102 and REQ-SAG-0019.",
+    "remedy": "Cut the fixed-model-id and paid-API-key statements. Cut the two runner-address statements unless the owner anchors them.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "Each local decision runner's network address MUST come from configuration.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "Each local decision runner's model MUST have a fixed model id in the model table.",
+        "commit": "aa1190b",
+        "date": "2026-11-24",
+        "summary": "Amend phase-j records to match plan v4 and the fixed-model-id ruling"
+      },
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "`sc-agent` MUST NOT hard-code the network address of any local decision runner.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      },
+      {
+        "record": "REQ-SAG-0801",
+        "statement": "Configuration MUST NOT change where a paid API's key is sent.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0003",
+    "anchor": "ANC-005",
+    "clauses": [
+      "A session log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+      "A run log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+      "sc-agent MUST NOT contain code that removes a general log.",
+      "sc-agent MUST NOT remove a session log.",
+      "sc-agent MUST NOT remove a run log."
+    ],
+    "what": "Adds a log-retention guarantee (never remove or age out general, session or run logs). ANC-005 asks only for the log root, folder and file naming.",
+    "remedy": "Cut the five retention statements and propose an anchor for the retention rule.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "A session log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+        "commit": "f023c0d",
+        "date": "2026-11-19",
+        "summary": "Records: one sc-observability Logger per process, one wheel, fixed log paths"
+      },
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "A run log MUST remain in `~/.sc-agent/sessions/` whatever its age.",
+        "commit": "13c4513",
+        "date": "2026-11-24",
+        "summary": "docs(phase-j): round-3 rulings: runs.jsonl link table, haiku/luna keyless"
+      },
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "sc-agent MUST NOT contain code that removes a general log.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      },
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "sc-agent MUST NOT remove a session log.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "sc-agent MUST NOT remove a run log.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0003",
+    "anchor": "ANC-015",
+    "clauses": [
+      "When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs."
+    ],
+    "what": "Jev flags this cell as exceeding. I disagree. REQ-SAG-0003 is an sc-agent record, and ANC-015 says rules that apply to every decidr-based tool (logging first) must be specified only in sc-agent's records. The client log-root rule is that kind of rule, so it belongs here. ANC-015's scope is records of judge-jev, plan-anchor or other derivative tools, which this record is not.",
+    "remedy": "No change. Listed as not proposed because Jev's class is disputed.",
+    "jev_disputed": true,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs.",
+        "commit": "22f4a5b",
+        "date": "2026-11-25",
+        "summary": "phase-j records: fix ai-qa clean-up findings"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0003",
+    "anchor": "ANC-016",
+    "clauses": [
+      "With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`."
+    ],
+    "what": "Jev flags this cell as exceeding (P(exceeds) 0.62, P(relates) 0.60, both near threshold). I disagree. ANC-016 asks that sc-agent's records define the logger-injection path and that derivative tools use it only in tests. The record's statements describe the default (non-injected) path and the root override. They add no constraint on injection and do not apply outside the anchor's scope.",
+    "remedy": "No change. Listed as not proposed because Jev's class is disputed.",
+    "jev_disputed": true,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0003",
+        "statement": "With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`.",
+        "commit": "f023c0d",
+        "date": "2026-11-19",
+        "summary": "Records: one sc-observability Logger per process, one wheel, fixed log paths"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0008",
+    "anchor": "ANC-005",
+    "clauses": [
+      "The wheel MUST NOT depend on the `sc-observability` Python package."
+    ],
+    "what": "Adds a packaging constraint (no dependency on the Python package). ANC-005 asks only for default loggers to use the configured log root and fixed folder and file names.",
+    "remedy": "Cut the dependency ban.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0008",
+        "statement": "The wheel MUST NOT depend on the `sc-observability` Python package.",
+        "commit": "f023c0d",
+        "date": "2026-11-19",
+        "summary": "Records: one sc-observability Logger per process, one wheel, fixed log paths"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0008",
+    "anchor": "ANC-016",
+    "clauses": [
+      "The wheel MUST NOT depend on the `sc-observability` Python package."
+    ],
+    "what": "Adds a packaging constraint (no dependency on the Python package). ANC-016 asks only that the injection path be defined in sc-agent's records and not used by derivative tools' production code.",
+    "remedy": "Cut the dependency ban (same cut as for ANC-005).",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0008",
+        "statement": "The wheel MUST NOT depend on the `sc-observability` Python package.",
+        "commit": "f023c0d",
+        "date": "2026-11-19",
+        "summary": "Records: one sc-observability Logger per process, one wheel, fixed log paths"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0019",
+    "anchor": "ANC-001",
+    "clauses": [
+      "A model entry MUST override the model its name selects."
+    ],
+    "what": "Jev flags this cell as exceeding. I disagree. The obligations on ANC-001's topic (a model entry adds a row, and a model entry overrides the model its name selects) are the config override that ANC-001 allows ('config can override default'). The statements that go beyond model resolution (local endpoint address, paid API base address) are not on ANC-001's topic; they are handled under ANC-009.",
+    "remedy": "No change. Listed as not proposed because Jev's class is disputed.",
+    "jev_disputed": true,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "A model entry MUST add one row to the model table.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "A model entry MUST override the model its name selects.",
+        "commit": "4354e4e",
+        "date": "2026-11-25",
+        "summary": "REQ-SAG-0019: configuration overrides the model a name selects (owner ruling 2026-11-25)"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0019",
+    "anchor": "ANC-009",
+    "clauses": [
+      "A local endpoint's address MUST be settable in configuration.",
+      "Configuration MUST NOT change a paid API's base address."
+    ],
+    "what": "Adds provider-address configuration rules. ANC-009 asks only that the model table accept extra model rows from config. Both obligations are also stated in REQ-SAG-0801, in the same or nearly the same words.",
+    "remedy": "Cut both statements, as two proposals.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "A local endpoint's address MUST be settable in configuration.",
+        "commit": "b98b411",
+        "date": "2026-11-25",
+        "summary": "phase-j records: REQ-SAG-0018 is the owner's consumer statement; REQ-SAG-0019 and 0102 cut to develop size"
+      },
+      {
+        "record": "REQ-SAG-0019",
+        "statement": "Configuration MUST NOT change a paid API's base address.",
+        "commit": "b98b411",
+        "date": "2026-11-25",
+        "summary": "phase-j records: REQ-SAG-0018 is the owner's consumer statement; REQ-SAG-0019 and 0102 cut to develop size"
+      }
+    ],
+    "stale": null
+  },
+  {
+    "record": "REQ-SAG-0101",
+    "anchor": "ANC-001",
+    "clauses": [
+      "Each cloud short name MUST resolve to a model in the `sc-agent` model table.",
+      "Each local short name MUST resolve to a local model in the model table."
+    ],
+    "what": "Fixes lists of cloud and local short names. ANC-001 asks only that `jev` select the newest Jev model, with a config override.",
+    "remedy": "Delete the record; owner to anchor the short-name list if needed.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0101",
+        "statement": "Each cloud short name MUST resolve to a model in the `sc-agent` model table.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      },
+      {
+        "record": "REQ-SAG-0101",
+        "statement": "Each local short name MUST resolve to a local model in the model table.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0101",
+      "statement": "Each local short name MUST resolve to a local model in the model table.",
+      "reason": "Written 2026-11-25, before ANC-001 (2026-11-26), and covers local short names outside the anchor."
+    }
+  },
+  {
+    "record": "REQ-SAG-0101",
+    "anchor": "ANC-009",
+    "clauses": [
+      "Each cloud short name MUST resolve to a model in the `sc-agent` model table.",
+      "Each local short name MUST resolve to a local model in the model table."
+    ],
+    "what": "Fixes lists of short names that must resolve. ANC-009 asks only that config can add model rows.",
+    "remedy": "Delete the record; owner to anchor the short-name list if needed.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0101",
+        "statement": "Each cloud short name MUST resolve to a model in the `sc-agent` model table.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      },
+      {
+        "record": "REQ-SAG-0101",
+        "statement": "Each local short name MUST resolve to a local model in the model table.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0101",
+      "statement": "Each cloud short name MUST resolve to a model in the `sc-agent` model table.",
+      "reason": "Written 2026-11-25, before ANC-009 (2026-11-26); a fixed list is the kind of hard-coded row set ANC-009 says goes stale."
+    }
+  },
+  {
+    "record": "REQ-SAG-0102",
+    "anchor": "ANC-001",
+    "clauses": [
+      "A full model id MUST select its row exactly.",
+      "`sc-agent` MUST NOT branch on a catalog name."
+    ],
+    "what": "Adds exact full-id selection and a ban on branching on any catalog name. ANC-001 covers only the `jev` short name selecting the newest Jev row, with a config default.",
+    "remedy": "Delete both statements; owner to anchor them if needed.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0102",
+        "statement": "A full model id MUST select its row exactly.",
+        "commit": "66369ba",
+        "date": "2026-11-21",
+        "summary": "docs: records follow the reduction plan"
+      },
+      {
+        "record": "REQ-SAG-0102",
+        "statement": "`sc-agent` MUST NOT branch on a catalog name.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0102",
+      "statement": "A full model id MUST select its row exactly.",
+      "reason": "Older than ANC-001 (2026-11-26) and beyond it."
+    }
+  },
+  {
+    "record": "REQ-SAG-0102",
+    "anchor": "ANC-009",
+    "clauses": [
+      "A full model id MUST select its row exactly.",
+      "`sc-agent` MUST NOT branch on a catalog name."
+    ],
+    "what": "Adds exact full-id selection and a repository-wide ban on branching on catalog names. ANC-009 asks only that config can add model rows.",
+    "remedy": "Delete both statements; owner to anchor them if needed.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0102",
+        "statement": "A full model id MUST select its row exactly.",
+        "commit": "66369ba",
+        "date": "2026-11-21",
+        "summary": "docs: records follow the reduction plan"
+      },
+      {
+        "record": "REQ-SAG-0102",
+        "statement": "`sc-agent` MUST NOT branch on a catalog name.",
+        "commit": "1a9af55",
+        "date": "2026-11-25",
+        "summary": "phase-j records: D41 cache rule, D42 restores, D43 gate pass"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0102",
+      "statement": "`sc-agent` MUST NOT branch on a catalog name.",
+      "reason": "Written 2026-11-25, before ANC-009 (2026-11-26), and applies outside the anchor's scope."
+    }
+  },
+  {
+    "record": "REQ-SAG-0103",
+    "anchor": "ANC-009",
+    "clauses": [
+      "sc-agent MUST be able to send requests through Together.",
+      "sc-agent MUST be able to send requests through OpenRouter.",
+      "When configuration names a provider for a model, sc-agent MUST send that model's requests to that provider.",
+      "When no provider is configured for a model, sc-agent MUST prefer a provider that needs no key over one that needs a key.",
+      "When no provider is configured for a model and every provider serving it needs a key, sc-agent MUST use the first of them whose key is found.",
+      "The provider that sends requests to the OpenAI API MUST have the name `openai`.",
+      "A short name MUST NOT encode its provider.",
+      "A request MUST NOT require the caller to name a provider."
+    ],
+    "what": "Adds named required providers, provider-selection order and provider naming rules. ANC-009 asks only that config can add model rows.",
+    "remedy": "Delete these eight statements; owner to anchor them if needed. The two row-shape statements stay.",
+    "jev_disputed": false,
+    "provenance": [
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "sc-agent MUST be able to send requests through Together.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "sc-agent MUST be able to send requests through OpenRouter.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "When configuration names a provider for a model, sc-agent MUST send that model's requests to that provider.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "When no provider is configured for a model, sc-agent MUST prefer a provider that needs no key over one that needs a key.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "When no provider is configured for a model and every provider serving it needs a key, sc-agent MUST use the first of them whose key is found.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "The provider that sends requests to the OpenAI API MUST have the name `openai`.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "A short name MUST NOT encode its provider.",
+        "commit": "22f4a5b",
+        "date": "2026-11-25",
+        "summary": "phase-j records: fix ai-qa clean-up findings"
+      },
+      {
+        "record": "REQ-SAG-0103",
+        "statement": "A request MUST NOT require the caller to name a provider.",
+        "commit": "67203e2",
+        "date": "2026-11-25",
+        "summary": "phase-j records: clean-up to the owner decisions (D1-D40)"
+      }
+    ],
+    "stale": {
+      "record": "REQ-SAG-0103",
+      "statement": "When no provider is configured for a model, sc-agent MUST prefer a provider that needs no key over one that needs a key.",
+      "reason": "Older than ANC-009 (2026-11-26) and covers provider routing the anchor does not."
+    }
+  }
+]

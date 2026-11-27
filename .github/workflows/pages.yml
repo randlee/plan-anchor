@@ -41,6 +41,12 @@ jobs:
         run: python3 scripts/install_sc_compose_ci.py
         env:
           GH_TOKEN: ${{ github.token }}
+      # The record-cleanup example reads git provenance from the records' public repository (inputs/source.json):
+      # build-examples.py makes a full clone there (git log -S reads every blob); the cache saves re-cloning it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/plan-anchor-examples
+          key: examples-records-${{ hashFiles('site/examples/*/inputs/source.json') }}
       - name: Build examples
         run: python3 scripts/build-examples.py
       - uses: actions/configure-pages@v5

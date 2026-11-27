@@ -24,9 +24,10 @@ R="<this skill's directory>/scripts/change_report.py"
 python3 "$R" --anchors "$A" --baseline-rev <commit before the round> \
   --fixture-checks <check-fixtures output, oldest first> ... \
   --tuning-result <tournament result_vars.json, oldest first> ... \
-  --drift-file "$P/anchor-tuning/drift-review-<date>.json" \
-  --out "$P/reports" --name <phase>-changes
+  --drift-file "$P/anchor-tuning/drift-review-<date>.json"
 ```
+
+Where the page is saved, its name, the sources saved beside it, the reports index and the page's wording follow `references/html-reporting-guidelines.md`.
 
 | Flag | Meaning |
 | --- | --- |
@@ -38,11 +39,11 @@ python3 "$R" --anchors "$A" --baseline-rev <commit before the round> \
 | `--fixture-checks` | `check-fixtures` JSON outputs, oldest first; per anchor the first file holding it is "before", the last "after" |
 | `--tuning-result` | each tournament's `result_vars.json`, oldest first; "default" is the first tournament's `baseline_exact` cases, "tuned" the last accepted one's `semantic_score.stable_cases` |
 | `--drift-file` | the drift review JSON (`assets/schemas/drift-review.schema.json`); optional |
-| `--out`, `--name` | writes `<out>/<name>.html`, the JSON sidecar `<out>/<name>.json` and one XHTML panel per unit in `<out>/<name>/` (default name `change-report`) |
+| `--out`, `--name` | writes `<out>/<name>.html`, the JSON sidecar `<out>/<name>.json`, one XHTML panel per unit in `<out>/<name>/` and the sources in `<out>/<name>/sources/`; defaults: `reports_dir` and `YYYYMMDD-HHMMSS-change-<plan folder>` (`references/html-reporting-guidelines.md`) |
 | `--title` | page title |
 | `--repository-root` | where `.sc/plan-anchor/settings.yaml` is looked up (default `.`) |
 
-Output is the JSON envelope `{success, data, error}`: `data` names the page, sidecar and panels, the overall `status` and any `warnings` (an item with no run, an item whose earlier text was not found). Exit 0 when the report was written; 2 with a typed error: `VALIDATION.INPUT`, `SCRIPT.IO`, `GIT.BASELINE` (not a git repository, or the revision does not hold the file), `DRIFT.INVALID` (`data.problems` lists every schema violation), `DEPENDENCY.SC_COMPOSE`, `RENDER.FAILED`, `SETTINGS.*`, `SCRIPT.INTERNAL`; 130 on interrupt.
+Output is the JSON envelope `{success, data, error}`: `data` names the page, sidecar, panels and `sources`, gives the `index_entry`, the overall `status` and any `warnings` (an item with no run, an item whose earlier text was not found). Exit 0 when the report was written; 2 with a typed error: `VALIDATION.INPUT`, `SCRIPT.IO`, `GIT.BASELINE` (not a git repository, or the revision does not hold the file), `DRIFT.INVALID` (`data.problems` lists every schema violation), `DEPENDENCY.SC_COMPOSE`, `RENDER.FAILED`, `SETTINGS.*`, `SCRIPT.INTERNAL`; 130 on interrupt.
 
 ## What it shows
 
@@ -57,4 +58,4 @@ Each panel has Copy JSON and Copy Context buttons; the page has a table of conte
 
 Two templates, as the sc-compose html-report pattern prescribes: each panel is one strict, render-checked `sc-compose render` of `templates/sprint-panel.xhtml.j2`, `templates/anchor-panel.xhtml.j2` or `templates/drift-panel.xhtml.j2`; the page is one render of `templates/change-report.html.j2`, which receives only top-level arrays and the rendered panels. The script assembles no HTML except the word-diff fragments (escaped text inside `<del>` and `<ins>`). The sidecar holds the whole data model, item texts included.
 
-Showing the user the page is mandatory: the round is not finished until they have it. Send the page and say where the sidecar is. In the same message, list in prose every ADR, REQ, NFR and ANC change by id with what changed, or say there are none. Commit both beside the plan with the drift review JSON when the plan is committed.
+Showing the user the page is mandatory: the round is not finished until they have it. Send the page and say where the sidecar and sources are, and add it to the reports index (`references/html-reporting-guidelines.md`). In the same message, list in prose every ADR, REQ, NFR and ANC change by id with what changed, or say there are none. Commit the page, its folder and the sidecar with the plan.

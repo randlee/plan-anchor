@@ -72,8 +72,8 @@ and once per destination:
   <dest>/.sc/plan-anchor/settings.yaml         ``anchor_tracker`` set to the tracker, and
                                                ``allow_remote_judge`` when a flag gives it;
                                                written when either value changes; a
-                                               ``plan_dir`` or ``issue_url_template``
-                                               it holds is kept
+                                               ``plan_dir``, ``reports_dir`` or
+                                               ``issue_url_template`` it holds is kept
   <dest>/.sc/plan-anchor/install-lock.json     version, tracker, targets, sha256 per file
   <dest>/.sc/plan-anchor/triage/              triage defaults (plan-questions.jsonl, rules.json,
                                                README.md), written only when the folder is
@@ -477,7 +477,8 @@ def lock_text(version: str, tracker: str, targets: List[str], files: Dict[str, s
 
 SCHEMA_VERSION = 1
 SETTINGS_RELPATH = ".sc/plan-anchor/settings.yaml"
-SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "issue_url_template")
+SETTINGS_KEYS = ("schema_version", "anchor_tracker", "allow_remote_judge", "plan_dir", "reports_dir", "issue_url_template")
+REPORTS_DIR_DEFAULT = "site/reports/plan-anchor"
 PLAN_DIR_CONVENTION = "docs/plans/phase-<current>"
 METADATA_RELPATH = ".beads/metadata.json"
 INIT_TIMEOUT_SECONDS = 120
@@ -496,6 +497,10 @@ PLAN_DIR_LINES = """\
 plan_dir: {value}
 """
 ID_TOKEN = "{id}"
+REPORTS_DIR_LINES = """\
+# reports_dir: the website folder plan-anchor reports and their sources are saved in (references/html-reporting-guidelines.md).
+reports_dir: {value}
+"""
 ISSUE_URL_COMMENT = ("# issue_url_template: link for tracker ids in the change report; the id replaces "
                      + ID_TOKEN + ".\n")
 DOLT_OUT_OF_SCOPE = (
@@ -515,6 +520,7 @@ class Settings:
     allow_remote_judge: Optional[bool] = None
     plan_dir: Optional[str] = None
     issue_url_template: Optional[str] = None
+    reports_dir: Optional[str] = None
 
 
 def issue_url_problem(value: Any) -> Optional[str]:
@@ -528,6 +534,12 @@ def issue_url_problem(value: Any) -> Optional[str]:
     if value.count(ID_TOKEN) != 1:
         return "must hold " + ID_TOKEN + " exactly once, where the tracker id goes"
     return None
+
+
+def reports_dir_problem(value: Any) -> Optional[str]:
+    """Why ``value`` is not a usable ``reports_dir``, or None (the installed plan_anchor_settings.py rule)."""
+    problem = plan_dir_problem(value)
+    return problem.replace("docs/plans/phase-b", REPORTS_DIR_DEFAULT) if problem else None
 
 
 def plan_dir_problem(value: Any) -> Optional[str]:
@@ -601,13 +613,18 @@ def parse_settings(text: str, yaml: Any) -> Result[Settings, ToolError]:
     problem = plan_dir_problem(plan_dir) if "plan_dir" in data else None
     if problem:
         return err("SETTINGS.INVALID_PLAN_DIR", f"{path} plan_dir is {plan_dir!r}: it {problem}", fix)
+    reports = data.get("reports_dir")
+    problem = reports_dir_problem(reports) if "reports_dir" in data else None
+    if problem:
+        return err("SETTINGS.INVALID_REPORTS_DIR", f"{path} reports_dir is {reports!r}: it {problem}",
+                   f"Edit {path}: set reports_dir to a relative folder such as {REPORTS_DIR_DEFAULT}, or remove the key.")
     link = data.get("issue_url_template")
     problem = issue_url_problem(link) if "issue_url_template" in data else None
     if problem:
         return err("SETTINGS.INVALID_ISSUE_URL", f"{path} issue_url_template is {link!r}: it {problem}",
                    f"Edit {path}: set issue_url_template to an http(s) URL holding " + ID_TOKEN + ", or remove the key.")
     return Ok(Settings(schema_version=version, anchor_tracker=tracker, allow_remote_judge=remote, plan_dir=plan_dir,
-                       issue_url_template=link))
+                       issue_url_template=link, reports_dir=reports))
 
 
 def settings_path(root: Path) -> Path:
@@ -647,6 +664,8 @@ def render_settings(settings: Settings) -> str:
         text += REMOTE_JUDGE_LINES.format(value="true" if settings.allow_remote_judge else "false")
     if settings.plan_dir is not None:
         text += PLAN_DIR_LINES.format(value=json.dumps(settings.plan_dir, ensure_ascii=False))  # quoted: always a string
+    if settings.reports_dir is not None:
+        text += REPORTS_DIR_LINES.format(value=json.dumps(settings.reports_dir, ensure_ascii=False))
     if settings.issue_url_template is not None:
         text += ISSUE_URL_COMMENT + "issue_url_template: " + json.dumps(settings.issue_url_template, ensure_ascii=False) + "\n"
     return text
@@ -888,6 +907,7 @@ class Plan:
     allow_remote_judge: Optional[bool] = None  # the value the settings file holds after the install
     plan_dir: Optional[str] = None  # kept from the destination's own settings file
     issue_url_template: Optional[str] = None  # kept likewise
+    reports_dir: Optional[str] = None  # kept likewise
     br_init: bool = False
     triage_seed: Dict[str, bytes] = field(default_factory=dict)  # key -> bytes; written only when the folder is absent
 
@@ -1088,6 +1108,7 @@ def build_plan(root: Path, package: Package, renderer: Renderer, choice: Tracker
     plan.allow_remote_judge = choice.settings.allow_remote_judge if choice.settings is not None else None
     plan.plan_dir = choice.settings.plan_dir if choice.settings is not None else None
     plan.issue_url_template = choice.settings.issue_url_template if choice.settings is not None else None
+    plan.reports_dir = choice.settings.reports_dir if choice.settings is not None else None
     plan.backup = sorted(set(plan.backup))
     plan.remove = sorted(set(plan.remove))
     return Ok(plan)
@@ -1180,7 +1201,7 @@ def apply_plan(plan: Plan, choice: TrackerChoice, run: Runner) -> Result[List[st
     if plan.settings_change is not None or plan.remote_judge_change is not None:
         saved = write_settings(root, Settings(schema_version=SCHEMA_VERSION, anchor_tracker=plan.tracker,
                                               allow_remote_judge=plan.allow_remote_judge, plan_dir=plan.plan_dir,
-                                              issue_url_template=plan.issue_url_template))
+                                              issue_url_template=plan.issue_url_template, reports_dir=plan.reports_dir))
         if isinstance(saved, Err):
             return saved
     changed = plan.create + plan.replace + plan.remove

@@ -2,21 +2,21 @@
 # Paths are relative to the install root (the folder install.py --dest named).
 agents:
   anchor-cleanup-proposer:
-    version: 0.16.0
+    version: 0.16.1
     path: .claude/agents/anchor-cleanup-proposer.md
   anchor-plan-review:
-    version: 0.16.0
+    version: 0.16.1
     path: .claude/agents/anchor-plan-review.md
   anchor-sprint-review:
-    version: 0.16.0
+    version: 0.16.1
     path: .claude/agents/anchor-sprint-review.md
   anchor-tuning:
-    version: 0.16.0
+    version: 0.16.1
     path: .claude/agents/anchor-tuning.md
 
 skills:
   plan-anchoring:
-    version: 0.16.0
+    version: 0.16.1
     path: .claude/skills/plan-anchoring/SKILL.md
     depends_on:
       anchor-cleanup-proposer: "0.x"
