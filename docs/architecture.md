@@ -36,7 +36,7 @@ language models cannot count, gate reliably, or keep a request byte-identical.
 ### Decision
 
 Three tiers. `scripts/jev_judge.py` owns IDs, request composition,
-gating, run files, coverage, diffs and reports. Live calls use the lazily
+gating, run files, coverage, diffs and reports. Live calls use the
 imported `sc-decidr` wheel through the generated `decidr_client.py`.
 The main session owns capture, approval and triage. Jev answers independent typed questions about one
 anchor and one item. Agents run the script once and return its result. See
