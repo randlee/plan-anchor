@@ -3577,7 +3577,7 @@ def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict,
     if not args.source and not args.index:
         return fail("VALIDATION.INPUT", "pass at least one --source <repository root> (read through Raptor) or --index <Raptor index>",
                     action="trace reads records only through Raptor.")
-    saved_repo = git_toplevel(getattr(args, "repository_root", "") or ".")
+    saved_repo = git_toplevel(getattr(args, "history", "") or getattr(args, "repository_root", "") or ".")
     indexes, raptor = [(i, saved_repo) for i in args.index], None
     if args.source:
         got = raptor_checkout(args.raptor)
@@ -5083,6 +5083,8 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--ids", default="", help="file of record ids, one per line: trace only these; ids Raptor did not serve are listed in not_served")
     tr.add_argument("--no-provenance", dest="provenance", action="store_false",
                     help="skip the git lookup of where each red, yellow or duplicated statement's text first appeared")
+    tr.add_argument("--history", default="", help="the git checkout --index records' provenance is read from "
+                    "(default: the checkout holding --repository-root)")
     tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
     tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
     tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")

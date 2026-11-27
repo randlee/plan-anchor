@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 from child_support import run_test_child
 import sys
 import tempfile
@@ -20,6 +21,8 @@ EXAMPLE = ROOT / "site" / "examples" / "record-cleanup"
 def build(out: Path, *extra: str) -> Path:
     if shutil.which("sc-compose") is None:
         raise AssertionError("the sc-compose CLI is required to build the site examples (scripts/install_sc_compose_ci.py)")
+    if "--records-checkout" not in extra:
+        extra = ("--no-provenance", *extra)  # offline: no clone of the records' repository
     proc = run_test_child([sys.executable, str(ROOT / "scripts" / "build-examples.py"), "--out", str(out), *extra],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
@@ -121,6 +124,49 @@ class RecordCleanupAnnotationsTests(unittest.TestCase):
         c = cells[0]
         self.assertIn(f"test annotation {c['record']}/{c['anchor']}", page)
         self.assertIn("test: no history", page)
+
+
+@unittest.skipUnless(shutil.which("git"), "provenance is read from git")
+class RecordCleanupProvenanceTests(unittest.TestCase):
+    """With a records checkout, the trace carries real git provenance, and an index that does not match the files at
+    inputs/source.json's commit fails the build."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="site-examples-prov-", ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.inputs = self.tmp / "inputs"
+        shutil.copytree(EXAMPLE / "inputs", self.inputs)
+        (self.inputs / "annotations.json").unlink(missing_ok=True)
+        trace = json.loads((build(self.tmp / "offline", "--inputs", str(self.inputs)) / "trace.json").read_text(encoding="utf-8"))
+        self.statements = [x["text"] for r in trace["records"] for x in (r["obligations"]["statements"] or [])]
+
+    def repo(self, statements):
+        repo = self.tmp / "records"
+        run = lambda *a: subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *a],
+                                        check=True, capture_output=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "records.md").write_text("".join(f"- {t}\n" for t in statements), encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-q", "-m", "Add the records")
+        sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        (self.inputs / "source.json").write_text(json.dumps({"repository": str(repo), "commit": sha}), encoding="utf-8")
+        return repo
+
+    def test_real_provenance_from_the_records_checkout(self):
+        repo = self.repo(self.statements)
+        built = build(self.tmp / "prov", "--inputs", str(self.inputs), "--records-checkout", str(repo))
+        rows = [x for r in json.loads((built / "trace.json").read_text(encoding="utf-8"))["records"] for x in r.get("provenance") or []]
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertTrue(all(x["provenance"]["summary"] == "Add the records" for x in rows), rows[:2])
+
+    def test_an_index_that_does_not_match_the_commit_fails(self):
+        repo = self.repo(self.statements[1:])
+        proc = run_test_child([sys.executable, str(ROOT / "scripts" / "build-examples.py"), "--out", str(self.tmp / "bad"),
+                               "--inputs", str(self.inputs), "--records-checkout", str(repo)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("the Raptor index does not match", proc.stderr)
 
 
 if __name__ == "__main__":

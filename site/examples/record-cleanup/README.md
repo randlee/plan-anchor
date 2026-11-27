@@ -21,6 +21,7 @@ The overlap run's 6 ADRs were dropped because the live run split an ADR's decisi
   - `anchors.json`: the trace's embedded anchors.
   - `raptor-sc-agent.json`: the saved Raptor index, keeping only the 8 records, each unchanged.
   - `ids.txt`: the 8 record ids.
+  - `source.json`: the records' repository and the commit they were read at.
   - `answers.json`: the live Jev answers. Cells are keyed `<record>/<anchor>` and overlap requests `<item>/overlap`. There is no `*` fallback and no made-up answer.
 - **Agent-written**: `inputs/proposals.json`. The `anchor-cleanup-proposer` agents wrote it at level `aggressive` from slices of the trace, and the lead merged it. No person or Jev wrote these proposals. Where each one came from:
 
@@ -33,7 +34,7 @@ Four proposers ran in parallel, one per slice, each with no shared context.
 
 The lead dropped one proposal. `wave-1-red-0801` proposed deleting REQ-SAG-0801's paid-API key rule and anchoring it. Panel 1 already deletes that statement as a duplicate, and panel 6 proposes the anchor for the copy kept in REQ-SAG-0019. The proposers' text is otherwise unedited.
 
-- **Pending**: `inputs/annotations.json`, the `anchor-cleanup-proposer` annotations, each citing the trace's provenance, for every red cell, yellow cell and duplicate. It is not checked in yet. Until it is, those panels show "No reviewer annotation yet." and the Proposed fixes tab lists the items under "Cells and duplicates without an annotation with git history". The lead will fill it from the proposers' `annotations` output. `build-examples.py` passes it to `change_report.py --annotations` once it exists. The example always renders with `--draft`, so the page carries the draft banner while any gap remains. The offline trace reads a saved Raptor index with no repository checkout, so each statement's `provenance` is null with that reason. The dropped proposal above is not yet recorded in the proposals file's `dropped` list either.
+- **Pending**: `inputs/annotations.json`, the `anchor-cleanup-proposer` annotations, each citing the trace's provenance, for every red cell, yellow cell and duplicate. It is not checked in yet. Until it is, those panels show "No reviewer annotation yet." and the Proposed fixes tab lists the items under "Cells and duplicates without an annotation with git history". The lead will fill it from the proposers' `annotations` output. `build-examples.py` passes it to `change_report.py --annotations` once it exists. The example always renders with `--draft`, so the page carries the draft banner while any gap remains. Each statement's `provenance` is real: `build-examples.py` reads it from the records' repository at the commit in `inputs/source.json`, the one the live trace read, 7 minutes before it ran. It fails if any of the 8 records' statements is not in the files at that commit. `--no-provenance` builds offline, with no provenance. The dropped proposal above is not yet recorded in the proposals file's `dropped` list either.
 
 The report is replayed offline from the fixture answers. So the generated trace shows `model_answered: fixture` and no session ids. The original Jev session ids are in the live trace, which is not checked in.
 

@@ -13,6 +13,12 @@ artifacts and are never committed (site/examples/.gitignore).
                   build-machine paths, and the rendered references/record-trace.md is written beside the report
                   as the target of its "Correcting duplicates" links.
 
+Provenance: the trace reads each statement's git provenance from the records' repository at the commit in
+inputs/source.json ({repository, commit}). --records-checkout DIR uses an existing checkout (HEAD must be that
+commit); otherwise a partial clone (--filter=blob:none, full history, as git log -S needs) is made or reused under
+--cache (default ~/.cache/plan-anchor-examples) and that commit is checked out. Every statement of the traced records
+must be found in the files at that commit (git grep), else the build fails. --no-provenance builds offline (the tests).
+
 Needs the sc-compose CLI on PATH (the scripts are rendered with it, and change_report renders the report with
 it), as the tests do. Usage: python3 scripts/build-examples.py [--out DIR]
 (--out writes <DIR>/<example>/ instead of site/examples/<example>/, and --inputs reads the record-cleanup inputs from
@@ -25,7 +31,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, Optional
 import shutil
 import subprocess
 import sys
@@ -105,7 +111,57 @@ def run(argv: list, cwd: Path) -> dict:
     return envelope["data"]
 
 
-def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: Path) -> dict:
+def git(*argv: str, cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *argv], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=dict(os.environ, GIT_TERMINAL_PROMPT="0"), check=False)
+
+
+def records_checkout(inputs: Path, given: str, cache: Path) -> Path:
+    """The records' repository at inputs/source.json's commit: --records-checkout, else a cached partial clone."""
+    try:
+        source = json.loads((inputs / "source.json").read_text(encoding="utf-8"))
+        url, commit = source["repository"], source["commit"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        die(f"{inputs / 'source.json'} must be {{repository, commit}}: {exc}")
+    if given:
+        repo = Path(given).resolve()
+        head = git("rev-parse", "HEAD", cwd=repo)
+        if head.returncode != 0 or head.stdout.strip() != commit:
+            die(f"--records-checkout {repo} must have {commit} checked out (HEAD is {head.stdout.strip() or head.stderr.strip()})")
+        return repo
+    repo = cache / url.rstrip("/").rsplit("/", 1)[-1]
+    if not (repo / ".git").exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        got = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none", "--no-checkout", url, str(repo)],
+                             capture_output=True, text=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"), check=False)
+        if got.returncode != 0:
+            die(f"could not clone {url}: {got.stderr.strip()[-500:]}")
+    if git("cat-file", "-e", f"{commit}^{{commit}}", cwd=repo).returncode != 0:
+        git("fetch", "--quiet", "origin", commit, cwd=repo)
+    got = git("checkout", "--quiet", "--detach", commit, cwd=repo)
+    if got.returncode != 0:
+        die(f"could not check out {commit} in {repo}: {got.stderr.strip()[-500:]}")
+    return repo
+
+
+def check_statements(trace: dict, repo: Path, commit: str) -> None:
+    """Fail unless every traced record's statements are in the files at ``commit``: the index and the checkout agree."""
+    missing = []
+    for r in trace["records"]:
+        listed = (r.get("obligations") or {}).get("statements") or []
+        texts = [x.get("text", "") for x in listed if isinstance(x, dict)]
+        if not texts:
+            d = (r.get("raptor") or {}).get("decision")
+            texts = [d.get("text") if isinstance(d, dict) else d] if d else []
+        for t in texts:
+            needle = (t or "").strip().splitlines()[0][:60] if (t or "").strip() else ""
+            if needle and git("grep", "-q", "-F", "-e", needle, commit, "--", ".", cwd=repo).returncode != 0:
+                missing.append(f"{r['id']}: {needle}")
+    if missing:
+        die(f"the Raptor index does not match {repo} at {commit}; not found:\n  " + "\n  ".join(missing))
+
+
+def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: Path, history: Optional[Path] = None) -> dict:
     inputs = scratch / "inputs"
     shutil.copytree(source_inputs, inputs)
     annotations = inputs / "annotations.json"
@@ -115,7 +171,11 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: 
     trace = run([str(scripts / "jev_judge.py"), "trace", "--anchors", str(inputs / "anchors.json"),
                  "--index", str(inputs / "raptor-sc-agent.json"), "--ids", str(inputs / "ids.txt"),
                  "--answers-file", str(inputs / "answers.json"), "--out-dir", str(runs),
-                 "--repository-root", str(scratch)], scratch)
+                 "--repository-root", str(scratch),
+                 *(["--history", str(history)] if history else ["--no-provenance"])], scratch)
+    if history:
+        check_statements(json.loads(Path(trace["trace_path"]).read_text(encoding="utf-8")), history,
+                         json.loads((inputs / "source.json").read_text(encoding="utf-8"))["commit"])
     for stale in ("report.html", "report.json", "trace.json", "record-trace.md"):
         (example / stale).unlink(missing_ok=True)
     shutil.rmtree(example / "report", ignore_errors=True)
@@ -135,13 +195,23 @@ def main() -> int:
     parser.add_argument("--out", default=str(EXAMPLES), help="folder the examples are written under (default site/examples)")
     parser.add_argument("--inputs", default=str(EXAMPLES / "record-cleanup" / "inputs"),
                         help="folder holding the record-cleanup inputs (default site/examples/record-cleanup/inputs)")
+    parser.add_argument("--records-checkout", default="", help="an existing checkout of inputs/source.json's repository at its commit")
+    parser.add_argument("--cache", default=str(Path.home() / ".cache" / "plan-anchor-examples"),
+                        help="where the records' repository is cloned when --records-checkout is not given")
+    parser.add_argument("--no-provenance", action="store_true", help="build offline: no clone, no git provenance")
     args = parser.parse_args()
     out_root, inputs = Path(args.out).resolve(), Path(args.inputs).resolve()
     with tempfile.TemporaryDirectory(prefix="build-examples-") as tmp:
         scratch = Path(tmp)
         scripts = render_skill(scratch / "skill" / ".claude" / "skills" / "plan-anchoring")
-        built = record_cleanup(scripts, scratch, out_root, inputs)
+        history = None if args.no_provenance else records_checkout(inputs, args.records_checkout, Path(args.cache))
+        built = record_cleanup(scripts, scratch, out_root, inputs, history)
     t, r = built["trace"], built["report"]
+    rows = [x for rec in json.loads((out_root / "record-cleanup" / "trace.json").read_text(encoding="utf-8"))["records"]
+            for x in rec.get("provenance") or []]
+    found = sum(1 for x in rows if x.get("provenance"))
+    print(f"record-cleanup provenance: {found} statements with a commit, {len(rows) - found} null"
+          + ("" if rows else " (--no-provenance)"))
     print(f"record-cleanup: {t['cells']} cells, {t['overlap']} overlap statements, "
           f"{r.get('proposals')} proposals, {len(r.get('unannotated_cells') or [])} red or yellow cells and duplicates without "
           f"an annotation with git history -> {out_root / 'record-cleanup' / 'report.html'}")
