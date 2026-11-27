@@ -6,9 +6,9 @@ scripts as an install renders them, so a change to the scripts or templates need
 runs this at deploy, beside build-site.py; the generated report, sidecar, panels and trace are build
 artifacts and are never committed (site/examples/.gitignore).
 
-  record-cleanup  jev_judge.py trace --index --ids --anchors --answers-file (fixture answers: no network), with
-                  --annotations inputs/annotations.json when that file exists, then
-                  change_report.py --trace --proposals --out site/examples/record-cleanup/. The inputs are copied
+  record-cleanup  jev_judge.py trace --index --ids --anchors --answers-file (fixture answers: no network), then
+                  change_report.py --trace --proposals --draft --out site/examples/record-cleanup/, with
+                  --annotations inputs/annotations.json when that file exists. The inputs are copied
                   into the scratch repository root first, so the trace records them as inputs/<file>, never as
                   build-machine paths, and the rendered references/record-trace.md is written beside the report
                   as the target of its "Correcting duplicates" links.
@@ -115,8 +115,7 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: 
     trace = run([str(scripts / "jev_judge.py"), "trace", "--anchors", str(inputs / "anchors.json"),
                  "--index", str(inputs / "raptor-sc-agent.json"), "--ids", str(inputs / "ids.txt"),
                  "--answers-file", str(inputs / "answers.json"), "--out-dir", str(runs),
-                 "--repository-root", str(scratch),
-                 *(["--annotations", str(annotations)] if annotations.is_file() else [])], scratch)
+                 "--repository-root", str(scratch)], scratch)
     for stale in ("report.html", "report.json", "trace.json", "record-trace.md"):
         (example / stale).unlink(missing_ok=True)
     shutil.rmtree(example / "report", ignore_errors=True)
@@ -124,7 +123,8 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: 
     shutil.copyfile(scripts.parent / "references" / "record-trace.md", example / "record-trace.md")
     report = run([str(scripts / "change_report.py"), "--trace", str(example / "trace.json"),
                   "--proposals", str(inputs / "proposals.json"), "--out", str(example), "--name", "report",
-                  "--guidance-url", "record-trace.md#correcting-duplicates",
+                  "--guidance-url", "record-trace.md#correcting-duplicates", "--draft",
+                  *(["--annotations", str(annotations)] if annotations.is_file() else []),
                   "--title", "Record cleanup example: sc-agent records against phase-j anchors",
                   "--repository-root", str(scratch)], scratch)
     return {"trace": trace, "report": report}

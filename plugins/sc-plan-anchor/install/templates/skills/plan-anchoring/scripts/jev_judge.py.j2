@@ -3430,11 +3430,7 @@ OVERLAP_CRITERIA = {
     "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."}
 TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
 TRACE_ANNOTATED = ("exceeds", "conflicts")
-OVERLAP_ANNOTATED = ("duplicate", "possible")
-TRACE_AUTHOR = "anchor-cleanup-proposer"
-TRACE_AUTHOR_LABEL = "written by the anchor-cleanup-proposer agent, not Jev"
-ANNOTATION_SHAPE = ("[{record, anchor | duplicate, clauses, what, remedy, jev_disputed, "
-                    "provenance: [{record, statement, commit, date, summary}], stale: {record, statement, reason}, no_provenance}]")
+PROVENANCE_PREFIX = 60  # git log -S searches the first 60 characters of a statement's first line: a wrapped line still matches
 # Records are read only through Raptor (https://github.com/randlee/raptor): its import index is the one source of record
 # identity, text and obligation statements. Nothing here parses Markdown or finds obligations in text.
 RAPTOR_PIN = "8ce2be8363318be2f7c2e2b79d1f646399cab2fd"  # the Raptor revision judge-jev pins
@@ -3581,7 +3577,8 @@ def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict,
     if not args.source and not args.index:
         return fail("VALIDATION.INPUT", "pass at least one --source <repository root> (read through Raptor) or --index <Raptor index>",
                     action="trace reads records only through Raptor.")
-    indexes, raptor = list(args.index), None
+    saved_repo = git_toplevel(getattr(args, "repository_root", "") or ".")
+    indexes, raptor = [(i, saved_repo) for i in args.index], None
     if args.source:
         got = raptor_checkout(args.raptor)
         if isinstance(got, Err):
@@ -3591,9 +3588,9 @@ def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict,
             made = raptor_import(raptor, src, out_dir / f"trace-{stamp_}.raptor-{n}.json")
             if isinstance(made, Err):
                 return made
-            indexes.append(made.value)
+            indexes.append((made.value, git_toplevel(src)))
     records, seen, not_imported, repos = [], {}, {}, []
-    for path in indexes:
+    for path, repo in indexes:
         got = raptor_index_records(path)
         if isinstance(got, Err):
             return got
@@ -3604,7 +3601,7 @@ def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict,
                 return fail("VALIDATION.INPUT", f"record id {r['id']} is served by two Raptor indexes ({seen[r['id']]}, {path})",
                             action="Pass each repository once.")
             seen[r["id"]] = path
-            records.append(r)
+            records.append(dict(r, _repo=repo))
     not_served = []
     if args.ids:
         try:
@@ -3622,42 +3619,6 @@ def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict,
         return fail("INPUT.EMPTY", "Raptor served no records to trace", action="Check the --source/--index repositories and --ids.")
     return Ok({"records": records, "not_served": not_served, "repositories": repos,
                "raptor": {k: raptor[k] for k in ("root", "revision")} if raptor else None})
-
-
-def _strings(obj, keys) -> bool:
-    return isinstance(obj, dict) and all(isinstance(obj.get(k), str) for k in keys)
-
-
-def load_trace_annotations(path: str) -> Result[list, ClientError]:
-    """Reviewer annotations for red/yellow cells (record + anchor) or duplicates (duplicate: '<item>/<partner>/<index>'),
-    each with the git history of the statements involved (provenance) or the reason none was found (no_provenance)."""
-    if not path:
-        return Ok([])
-    loaded = load_json(path, "annotations file")
-    if isinstance(loaded, Err):
-        return loaded
-    rows = loaded.value
-    if not isinstance(rows, list):
-        return fail("INPUT.MALFORMED", f"annotations must be a JSON array of {ANNOTATION_SHAPE}")
-    out = []
-    for n, row in enumerate(rows, start=1):
-        cell = isinstance(row, dict) and _strings(row, ("record", "anchor")) and "duplicate" not in row
-        dup = isinstance(row, dict) and isinstance(row.get("duplicate"), str) and "record" not in row and "anchor" not in row
-        if not (cell or dup) or not isinstance(row.get("clauses", []), list) or not all(isinstance(c, str) for c in row.get("clauses", [])) \
-                or not isinstance(row.get("what", ""), str) or not isinstance(row.get("remedy", ""), str) \
-                or not isinstance(row.get("jev_disputed", False), bool) \
-                or not isinstance(row.get("provenance", []), list) \
-                or not all(_strings(x, ("record", "statement", "commit", "date", "summary")) for x in row.get("provenance", [])) \
-                or row.get("stale") is not None and not _strings(row["stale"], ("record", "statement", "reason")) \
-                or not isinstance(row.get("no_provenance", ""), str):
-            return fail("INPUT.MALFORMED", f"annotation {n} must match {ANNOTATION_SHAPE}: record and anchor (a cell) or duplicate "
-                                           "(a key), and every field of the type shown")
-        out.append(dict({"record": row["record"], "anchor": row["anchor"]} if cell else {"duplicate": row["duplicate"]},
-                        clauses=list(row.get("clauses", [])), what=row.get("what", ""), remedy=row.get("remedy", ""),
-                        jev_disputed=row.get("jev_disputed", False), provenance=list(row.get("provenance", [])),
-                        stale=row.get("stale"), no_provenance=row.get("no_provenance", ""),
-                        author=TRACE_AUTHOR, author_label=TRACE_AUTHOR_LABEL))
-    return Ok(out)
 
 
 def trace_answer_json(answer) -> dict:
@@ -3678,6 +3639,48 @@ def trace_summary(cells: list, records: list, anchors: list) -> dict:
     return {"per_anchor": per_anchor, "totals": totals,
             "records_with_no_relation": [r["id"] for r in records if r["id"] not in related],
             "conflicts": [{"record": c["record"], "anchor": c["anchor"]} for c in cells if c["class"] == "conflicts"]}
+
+
+def git_toplevel(path: str) -> str:
+    """The git checkout holding ``path``, or "" (not a repository, or git is missing)."""
+    try:
+        proc = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def statement_provenance(repo: str, statement: str) -> dict:
+    """Where a statement's text first appeared in the record's repository: the oldest commit whose diff adds or removes
+    its first PROVENANCE_PREFIX characters (git log -S, argument lists, no shell). ``provenance`` is null with a reason
+    when there is no repository or no match. Mechanical: which copy is stale is the reviewer's call."""
+    if not repo:
+        return {"provenance": None, "reason": "the record's repository is not a git checkout (or git is missing)"}
+    needle = (statement or "").strip().splitlines()[0][:PROVENANCE_PREFIX] if (statement or "").strip() else ""
+    if not needle:
+        return {"provenance": None, "reason": "the statement is empty"}
+    try:
+        proc = subprocess.run(["git", "-C", repo, "log", "--reverse", "--format=%h%x09%as%x09%s", "-S", needle, "--"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"provenance": None, "reason": f"git log failed: {type(exc).__name__}"}
+    first = proc.stdout.splitlines()[0] if proc.returncode == 0 and proc.stdout.strip() else ""
+    if not first:
+        return {"provenance": None, "reason": "no commit in the repository's history adds this text" if proc.returncode == 0
+                else f"git log failed: {proc.stderr.strip()[:200]}"}
+    commit, date, summary = (first.split("\t", 2) + ["", ""])[:3]
+    return {"provenance": {"commit": commit, "date": date, "summary": summary}}
+
+
+def trace_provenance(records: list, cells: list, overlap) -> None:
+    """Add ``provenance`` per statement to every record in a red or yellow cell or a duplicate (item and partner)."""
+    wanted = {c["record"] for c in cells if c.get("class") in TRACE_ANNOTATED}
+    wanted |= {x for o in overlap or [] if o.get("class") == "duplicate" for x in (o["item"], o["partner"])}
+    for r in records:
+        if r["id"] in wanted:
+            r["provenance"] = [dict({"statement_index": i, "statement": st}, **statement_provenance(r.get("_repo", ""), st))
+                               for i, st in enumerate(record_statements(r))]
 
 
 def record_statements(r: dict) -> list:
@@ -3818,9 +3821,6 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         return loaded_records
     source = loaded_records.value
     records = Ok(source["records"])
-    annotations = load_trace_annotations(args.annotations)
-    if isinstance(annotations, Err):
-        return annotations
     loaded = answers_file(args.answers_file, "'<record>/<anchor>', '<anchor>', '<item record>/overlap' or 'overlap'")
     if isinstance(loaded, Err):
         return loaded
@@ -3842,8 +3842,6 @@ def cmd_trace(args) -> Result[dict, ClientError]:
     replies = trace_replies(args, jobs, fixture)
     if isinstance(replies, Err):
         return replies
-    notes = {(n["record"], n["anchor"]): n for n in annotations.value if "record" in n}
-    dup_notes = {n["duplicate"]: n for n in annotations.value if "duplicate" in n}
     cells, failures, warnings = [], [], []
     for job, reply in zip(jobs, replies.value):
         cell = {"record": job.item_id, "anchor": job.anchor_id, "request_id": job.request_id}
@@ -3863,14 +3861,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         cls = trace_class(p_yes, thresholds["conflicts"], thresholds["relation"], thresholds["exceeds"])
         cell.update({"class": cls, "p_yes": p_yes, "answers": {q: trace_answer_json(answers[q]) for q in TRACE_QUESTIONS},
                      "session_id": session_id})
-        note = notes.pop((job.item_id, job.anchor_id), None)
-        if note is not None:
-            if cls in TRACE_ANNOTATED:
-                cell["annotation"] = {k: v for k, v in note.items() if k not in ("record", "anchor")}
-            else:
-                warnings.append(f"annotation for {job.item_id}/{job.anchor_id} not merged: the cell is {cls}, not exceeds or conflicts")
         cells.append(cell)
-    warnings += [f"annotation for {r}/{a} not merged: no such record or locked anchor" for r, a in notes]
 
     overlap, overlap_replies = None, []
     if args.overlap:
@@ -3892,14 +3883,9 @@ def cmd_trace(args) -> Result[dict, ClientError]:
                                 "class": overlap_class(answer.choice, answer.confidence, thresholds["duplicate"], thresholds["possible"])})
                 if overlap[-1]["class"] == "duplicate":
                     overlap[-1]["action"] = "correct"
-                note = dup_notes.pop(f"{job.item_id}/{partner}/{i}", None)
-                if note is not None and overlap[-1]["class"] in OVERLAP_ANNOTATED:
-                    overlap[-1]["annotation"] = {k: v for k, v in note.items() if k != "duplicate"}
-                elif note is not None:
-                    warnings.append(f"annotation for duplicate {job.item_id}/{partner}/{i} not merged: the statement is "
-                                    f"{overlap[-1]['class']}, not duplicate or possible")
         overlap.sort(key=lambda o: (o["item"], o["partner"], o["statement_index"]))
-    warnings += [f"annotation for duplicate {k} not merged: no such overlap statement" for k in dup_notes]
+    if args.provenance:
+        trace_provenance(records.value, cells, overlap)
     answered = [r for r in replies.value + overlap_replies if not isinstance(r, ClientError)]
     judged = [c for c in cells if c["class"] != "error"]
     summary = trace_summary(judged, records.value, anchors)
@@ -3918,7 +3904,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
         "anchors": [dict(a, scope=a.get("scope") or "", quote=anchor_quote(a)) for a in anchors],
         "raptor": source["raptor"], "not_served": source["not_served"],
         "repositories": [dict(x, index=repo_relative(x["index"], args.repository_root)) for x in source["repositories"]],
-        "records": [dict({k: r[k] for k in ("id", "kind", "repository", "raptor", "obligations", "diagnostics")},
+        "records": [dict({k: r[k] for k in ("id", "kind", "repository", "raptor", "obligations", "diagnostics", "provenance") if k in r},
                          index=repo_relative(r["index"], args.repository_root)) for r in records.value],
         "cells": cells, "overlap": overlap, "actions": actions, "summary": summary, "warnings": warnings,
     }
@@ -5095,7 +5081,8 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--index", action="append", default=[], help="a saved Raptor import index (scripts/extract.py --output), used as Raptor wrote it (repeatable)")
     tr.add_argument("--raptor", default="", help="Raptor checkout with .venv; required with --source")
     tr.add_argument("--ids", default="", help="file of record ids, one per line: trace only these; ids Raptor did not serve are listed in not_served")
-    tr.add_argument("--annotations", default="", help="JSON annotations (references/record-trace.md) merged into exceeds/conflicts cells and duplicate/possible overlap statements, labelled as written by the anchor-cleanup-proposer agent, not Jev")
+    tr.add_argument("--no-provenance", dest="provenance", action="store_false",
+                    help="skip the git lookup of where each red, yellow or duplicated statement's text first appeared")
     tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
     tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
     tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")

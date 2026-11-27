@@ -34,6 +34,8 @@ defaults:
   uncovered: []
   dropped: []
   owner_reply: ""
+  not_ready: []
+  draft: ""
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -77,6 +79,7 @@ defaults:
     table.grid th.anc { writing-mode: vertical-rl; font-weight: 400; }
     .c-serves { background: #2e7d32; } .c-related { background: #90caf9; } .c-exceeds { background: #f9a825; }
     .c-conflicts { background: #c62828; } .c-none { background: #f5f5f5; } .c-error { background: #6b7280; }
+    .banner { border: 2px solid #dc2626; background: #fef2f2; color: #7f1d1d; padding: 6px 12px; margin: 8px 0; }
     .legend span { padding: 2px 8px; margin-right: 4px; color: #111; }
     #side { position: sticky; top: 8px; flex: 1 1 520px; max-height: 95vh; overflow: auto; }
     #side .trace-panel { display: none; background: var(--panel); }
@@ -98,6 +101,16 @@ defaults:
     <p class="subtitle">{{ subtitle | e }}</p>
 {% endif %}
     <p class="generated-at">Generated: {{ generated_at | e }}</p>
+{% if not_ready %}
+    <div class="banner" role="alert">
+      <p><strong>{% if draft %}Draft: not for the owner.{% else %}Not ready for the owner.{% endif %}</strong> Fill these gaps first (references/record-cleanup.md):</p>
+      <ul>
+{% for x in not_ready %}
+        <li>{{ x | e }}</li>
+{% endfor %}
+      </ul>
+    </div>
+{% endif %}
     <nav class="tabs" role="tablist">
       <button type="button" class="tab active" role="tab" data-tab="tab-grid">Anchors × Records</button>
       <button type="button" class="tab" role="tab" data-tab="tab-dup">Duplicates{% if overlap_run %}{% if dup_rows %} <span class="badge">(!)</span>{% endif %} {{ dup_count | e }}{% endif %}</button>

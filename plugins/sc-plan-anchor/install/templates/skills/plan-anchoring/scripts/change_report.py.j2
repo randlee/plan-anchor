@@ -768,6 +768,47 @@ def trace_anchor_vars(anchor: dict, keep: Optional[set] = None) -> dict:
 
 
 ANNOTATION_NOTE = "written by the anchor-cleanup-proposer agent, not Jev"
+ANNOTATION_AUTHOR = "anchor-cleanup-proposer"
+ANNOTATION_SHAPE = ("[{record, anchor | duplicate, clauses, what, remedy, jev_disputed, "
+                    "provenance: [{record, statement, commit, date, summary}], stale: {record, statement, reason}, no_provenance}]")
+
+
+def _strings(obj: Any, keys: Sequence[str]) -> bool:
+    return isinstance(obj, dict) and all(isinstance(obj.get(k), str) for k in keys)
+
+
+def merge_annotations(t: dict, rows: Any) -> Result[List[str], ToolError]:
+    """Merge the anchor-cleanup-proposer annotations into the trace in memory: cells by record and anchor (exceeds and
+    conflicts only), duplicates by ``<item>/<partner>/<statement_index>`` (duplicate and possible only). Returns the
+    warnings for annotations that name nothing they can merge into."""
+    if not isinstance(rows, list):
+        return err("ANNOTATIONS.INVALID", f"annotations must be a JSON array of {ANNOTATION_SHAPE}", "Fix the annotations file.")
+    cells = {(c["record"], c["anchor"]): c for c in t["cells"]}
+    dups = {dup_key(o): o for o in t.get("overlap") or []}
+    warnings = []
+    for n, row in enumerate(rows, start=1):
+        cell = _strings(row, ("record", "anchor")) and "duplicate" not in row
+        dup = isinstance(row, dict) and isinstance(row.get("duplicate"), str) and "record" not in row and "anchor" not in row
+        if not (cell or dup) or not _str_list(row.get("clauses", [])) or not _strings(dict(row, what=row.get("what", ""), remedy=row.get("remedy", "")), ("what", "remedy")) \
+                or not isinstance(row.get("jev_disputed", False), bool) or not isinstance(row.get("provenance", []), list) \
+                or not all(_strings(x, ("record", "statement", "commit", "date", "summary")) for x in row.get("provenance", [])) \
+                or row.get("stale") is not None and not _strings(row["stale"], ("record", "statement", "reason")) \
+                or not isinstance(row.get("no_provenance", ""), str):
+            return err("ANNOTATIONS.INVALID", f"annotation {n} must match {ANNOTATION_SHAPE}: record and anchor (a cell) or "
+                       "duplicate (a key), and every field of the type shown", "Fix the annotations file.")
+        note = {k: row.get(k, d) for k, d in (("clauses", []), ("what", ""), ("remedy", ""), ("jev_disputed", False),
+                                             ("provenance", []), ("stale", None), ("no_provenance", ""))}
+        note.update(author=ANNOTATION_AUTHOR, author_label=ANNOTATION_NOTE)
+        target = cells.get((row["record"], row["anchor"])) if cell else dups.get(row["duplicate"])
+        allowed = TRACE_DETAIL if cell else ("duplicate", "possible")
+        name = f"{row['record']}/{row['anchor']}" if cell else f"duplicate {row['duplicate']}"
+        if target is None:
+            warnings.append(f"annotation for {name} not merged: the trace has no such {'cell' if cell else 'overlap statement'}")
+        elif target["class"] not in allowed:
+            warnings.append(f"annotation for {name} not merged: it is {target['class']}, not {' or '.join(allowed)}")
+        else:
+            target["annotation"] = note
+    return Ok(warnings)
 
 
 def annotated(note: Optional[dict]) -> bool:
@@ -775,15 +816,23 @@ def annotated(note: Optional[dict]) -> bool:
     return bool(note) and bool(note.get("provenance") or note.get("no_provenance"))
 
 
+def trace_history(records: Sequence[dict]) -> List[dict]:
+    """Where each statement's text first appeared, as `jev_judge.py trace` found it in git (mechanical)."""
+    rows = []
+    for r in records:
+        for x in r.get("provenance") or []:
+            got = x.get("provenance")
+            rows.append(f"{r['id']} statement {x['statement_index'] + 1}: " + (f"{got['commit']} {got['date']}: {got['summary']}"
+                                                                               if got else f"none ({x.get('reason', '')})"))
+    return [{"heading": "History (git)", "note": "found by jev_judge.py trace", "items": rows, "list": True}] if rows else []
+
+
 def history_blocks(note: dict) -> List[dict]:
-    """The annotation's git provenance (when each statement came in, by which commit) and which side is stale."""
-    rows = [f"{x['record']} “{_norm(x['statement'])}” — {x['commit']} {x['date']}: {x['summary']}" for x in note.get("provenance") or []]
-    if not rows:
-        rows = [f"None found: {note['no_provenance']}" if note.get("no_provenance") else "Not determined yet."]
-    out = [{"heading": "History (git)", "note": ANNOTATION_NOTE, "items": rows, "list": len(rows) > 1}]
+    """The stale side the anchor-cleanup-proposer decided from the trace's provenance, or why it found none."""
+    out = [{"heading": "No history found", "note": ANNOTATION_NOTE, "items": [note["no_provenance"]]}] if note.get("no_provenance") else []
     stale = note.get("stale")
     if stale:
-        out.append({"heading": "Stale", "items": [f"{stale['record']} “{_norm(stale['statement'])}”: {stale['reason']}"]})
+        out.append({"heading": "Stale", "note": ANNOTATION_NOTE, "items": [f"{stale['record']} “{_norm(stale['statement'])}”: {stale['reason']}"]})
     return out
 
 
@@ -804,6 +853,7 @@ def trace_cell_vars(c: dict, anchor: dict, record: dict, props: Sequence[int] = 
     blocks.append({"heading": "Anchor", "items": [anchor["statement"], f"Owner said: “{anchor['quote']}”", f"Scope: {anchor['scope']}"]})
     blocks.append({"heading": "Record statements", "items": stm or [(record.get("obligations") or {}).get("note") or "No obligation statements."],
                    "list": bool(stm)})
+    blocks += trace_history([record])
     jev = "Jev P(yes): " + " · ".join(f"{q} {c['p_yes'][q]:.2f}" for q in TRACE_QUESTION_ORDER if q in c["p_yes"])
     blocks.append({"items": [jev], "style": "small"})
     title = f"{c['record']} × {c['anchor']} — {cls}"
@@ -836,6 +886,7 @@ def trace_pair_vars(item: dict, partner: dict, entries: List[dict], by_dup: Opti
             if note:
                 blocks.append({"heading": "Proposed remedy", "note": ANNOTATION_NOTE, "items": [note.get("remedy", "")]})
                 blocks += history_blocks(note)
+    blocks += trace_history([item, partner])
     for r in (item, partner):
         blocks.append({"heading": " ".join(filter(None, [r["id"], (r.get("raptor") or {}).get("title")])), "items": []})
         blocks += trace_record_vars(r, PAIR_FIELDS)["blocks"]
@@ -887,7 +938,7 @@ def is_cut(before: str, after: str, ids: set) -> bool:
     return all(w in ids or w.lower() in words for w in WORD_RE.findall(after))
 
 
-def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> List[str]:
+def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set, owner_quotes: Sequence[str] = ()) -> List[str]:
     """Every way a proposals file breaks the small schema in references/record-cleanup.md (all listed, not the first)."""
     if not isinstance(doc, dict) or doc.get("schema") != PROPOSALS_SCHEMA or not isinstance(doc.get("proposals"), list):
         return [f"schema must be {PROPOSALS_SCHEMA} with a proposals array"]
@@ -932,6 +983,10 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
                 or not all(isinstance(src.get(k, ""), str) for k in ("quote", "commit")):
             out.append(f"proposal {n}: source must be an object with ref (an anchor or record id) and optional quote and commit strings")
             src = {}
+        quote = _norm(src.get("quote"))
+        if quote and not any(quote in _norm(q) for q in owner_quotes):
+            out.append(f"proposal {n}: source.quote is not the owner's words: it is not part of any anchor's quote, "
+                       "quoted exactly (git history shows when text arrived, not who decided it)")
         harmonized = p.get("harmonized_with", [])
         if not isinstance(harmonized, list) or not all(_panel(m, count) and m != n for m in harmonized):
             out.append(f"proposal {n}: harmonized_with must list other proposal numbers")
@@ -1186,6 +1241,15 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     out, name = where.value
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         return err("VALIDATION.INPUT", f"--name {name!r} must be a file stem of letters, digits, '.', '_' or '-'", "Pass --name like trace-phase-b.")
+    note_warnings: List[str] = []
+    if args.annotations:
+        rows = read_json(Path(args.annotations), "annotations file")
+        if isinstance(rows, Err):
+            return rows
+        merged = merge_annotations(t, rows.value)
+        if isinstance(merged, Err):
+            return merged
+        note_warnings = merged.value
     anchors = {a["id"]: a for a in t["anchors"]}
     records = {r["id"]: r for r in t["records"]}
     proposals, level, not_proposed = None, "", []
@@ -1194,7 +1258,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
         if isinstance(loaded, Err):
             return loaded
         no_relation = set((t.get("summary") or {}).get("records_with_no_relation") or [])
-        problems = proposal_problems(loaded.value, records, no_relation)
+        problems = proposal_problems(loaded.value, records, no_relation, [str(a.get("quote") or "") for a in t["anchors"]])
         if problems:
             return err("PROPOSALS.INVALID", f"{args.proposals} breaks the proposals schema: " + "; ".join(problems[:5]),
                        "Fix every problem in data.problems (references/record-cleanup.md, Proposals file) and rerun.",
@@ -1280,12 +1344,20 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
             totals, warnings = proposal_effect(proposals, t, records)
             warnings += [x for _, _, x in clashes]
             uncovered = coverage(t, proposals, not_proposed)
-        warnings = place_warnings + warnings
+        warnings = place_warnings + note_warnings + warnings
         gaps = [(f"{c['record']}/{c['anchor']}", f"{c['record']} × {c['anchor']} ({c['class']})", dom_id("cell", f"{c['record']}-{c['anchor']}"))
                 for c in t["cells"] if c["class"] in TRACE_DETAIL and not annotated(c.get("annotation"))]
         gaps += [(dup_key(o), f"{o['item']} restates {o['partner']} statement {o['statement_index'] + 1}", dom_id("dup", f"{o['item']}-{o['partner']}"))
                  for o in t.get("overlap") or [] if o["class"] == "duplicate" and not annotated(o.get("annotation"))]
         unannotated = [k for k, _, _ in gaps]
+        not_ready = []
+        if proposals is not None:
+            disagree = [x for _, _, x in clashes]
+            for n_, what in ((len(gaps), "red cells, yellow cells or duplicates have no annotation with git history"),
+                             (len(uncovered or []), "items end in neither a proposal nor a not_proposed entry"),
+                             (len(disagree), "pairs of proposals disagree")):
+                if n_:
+                    not_ready.append(f"{n_} {what}")
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -1322,21 +1394,29 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                  "unannotated_cells": [{"text": text, "panel": dom} for _, text, dom in gaps],
                  "uncovered": uncovered or [], "dropped": [f"{x['title']} ({x['correlation_id']}): {x['reason']}" for x in dropped],
                  "owner_reply": (approvals or {}).get("reply", ""),
+                 "not_ready": not_ready, "draft": "yes" if args.draft else "",
                  "not_proposed": [f"{x['slice']}: {x['reason']}" for x in not_proposed]}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
-    # The trace holds every record as Raptor served it (the record snapshot) and the merged annotations.
-    sources = save_sources(panels_dir, [("trace.json", Path(args.trace))] + ([("proposals.json", Path(args.proposals))] if args.proposals else []))
+    # The trace holds every record as Raptor served it (the record snapshot) and each statement's git provenance.
+    sources = save_sources(panels_dir, [("trace.json", Path(args.trace))]
+                           + ([("proposals.json", Path(args.proposals))] if args.proposals else [])
+                           + ([("annotations.json", Path(args.annotations))] if args.annotations else []))
     if isinstance(sources, Err):
         return sources
-    return Ok({"html": page.as_posix(), "sources": sources.value, "index_entry": index_entry(name),
+    data = {"html": page.as_posix(), "sources": sources.value, "index_entry": index_entry(name), "not_ready": not_ready,
                "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"]),
                "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
                "warnings": warnings, "level": level or None, "not_proposed": not_proposed, "unannotated_cells": unannotated,
-               "uncovered": uncovered, "dropped": dropped, "approvals": approvals})
+               "uncovered": uncovered, "dropped": dropped, "approvals": approvals}
+    if not_ready and not args.draft:
+        return err("PROPOSALS.NOT_READY", "the record-cleanup report is not ready for the owner: " + "; ".join(not_ready),
+                   "Fill every gap the page's banner lists (references/record-cleanup.md, Diagnose) and rerun; --draft renders "
+                   "a draft that is never sent to the owner.", data=data)
+    return Ok(data)
 
 
 # ---------------------------------------------------------------- command
@@ -1414,11 +1494,118 @@ def index_entry(name: str) -> str:
     return f'<li><a href="{E(name)}.html">{E(name)}</a></li>'
 
 
+def index_statements(doc: Any) -> Dict[str, List[Tuple[str, str]]]:
+    """Each record of a Raptor import index: its statements as (text, text with the modal written out), or an ADR's
+    decision as one statement."""
+    out = {}
+    for r in (doc.get("requirements") or []) if isinstance(doc, dict) else []:
+        listed = (r.get("requirement_statement") or {}).get("statements") or []
+        out[r["id"]] = [(_norm(x.get("text")), _norm(statements({"obligations": {"statements": [x]}})[0])) for x in listed if isinstance(x, dict)]
+    for r in (doc.get("decisions") or []) if isinstance(doc, dict) else []:
+        d = r.get("decision")
+        text = _norm(d.get("text") if isinstance(d, dict) else d)
+        out[r["id"]] = [(text, text)] if text else []
+    return out
+
+
+def verify_repair(args: argparse.Namespace) -> Result[dict, ToolError]:
+    """Check a wave's repair against the owner's approvals (references/record-cleanup.md, Finish condition): every
+    statement that changed between the --before and --after Raptor indexes is an approved change, or a listed judge-jev
+    quality edit (--quality-edits [{record, before, after}]) in a record the wave modified that adds no statement.
+    Proposals the owner changed are listed for a check by hand. Exit 2 REPAIR.UNAPPROVED when anything else changed."""
+    loaded = [read_json(Path(x), what) for x, what in ((args.proposals, "proposals file"), (args.before, "--before index"),
+                                                        (args.after, "--after index"))]
+    for x in loaded:
+        if isinstance(x, Err):
+            return x
+    doc, before, after = (x.value for x in loaded)
+    decisions = {d.get("panel"): d for d in ((doc.get("approvals") or {}).get("decisions") or [])} if isinstance(doc, dict) else {}
+    if not decisions:
+        return err("REPAIR.NO_APPROVALS", f"{args.proposals} records no owner decisions (approvals)",
+                   "Write the owner's reply and decisions into the proposals file first (references/record-cleanup.md).")
+    old, new = index_statements(before), index_statements(after)
+    expected = {rid: [s_ for s_, _ in st] for rid, st in old.items()}
+    unapproved, not_applied, by_hand, wave, hand = [], [], [], set(), set()
+
+    def take(rid: str, quote: str) -> Optional[int]:
+        q = _norm(quote)
+        for i, (raw, shown) in enumerate(old.get(rid, [])):
+            if q in (raw, shown) and raw in expected.get(rid, []):
+                return expected[rid].index(raw)
+        return next((i for i, x in enumerate(expected.get(rid, [])) if x == q), None)
+
+    for n, p in enumerate(doc.get("proposals") or [], start=1):
+        d = decisions.get(n) or {}
+        if d.get("status") == "changed":
+            by_hand += [f"proposal {n} ({rid}): changed by the owner to: {d.get('text', '')}" for rid in p.get("records", [])]
+            hand |= set(p.get("records", []))
+            wave |= set(p.get("records", []))
+            continue
+        if d.get("status") != "approved":
+            continue
+        wave |= set(p.get("records", []))
+        for c in p.get("changes", []):
+            rid = c["record"]
+            if c.get("before") is None:
+                expected.pop(rid, None)
+                continue
+            i = take(rid, c["before"])
+            if i is None:
+                not_applied.append(f"proposal {n}: {rid} has no statement “{_norm(c['before'])[:80]}” before the repair")
+            elif c.get("after") is None:
+                expected[rid].pop(i)
+            else:
+                expected[rid][i] = _norm(c["after"])
+    edits = read_json(Path(args.quality_edits), "--quality-edits file") if args.quality_edits else Ok([])
+    if isinstance(edits, Err):
+        return edits
+    for e in edits.value if isinstance(edits.value, list) else []:
+        rid = e.get("record") if isinstance(e, dict) else None
+        if rid not in wave or not e.get("before") or not e.get("after"):
+            unapproved.append(f"quality edit {e!r}: only a rewording (before and after) of a record the wave modified is allowed")
+            continue
+        i = take(rid, e["before"])
+        if i is None:
+            unapproved.append(f"quality edit on {rid}: “{_norm(e['before'])[:80]}” is not one of its statements")
+        else:
+            expected[rid][i] = _norm(e["after"])
+    for rid in sorted(set(expected) | set(new), key=natural):
+        if rid in hand:
+            continue
+        if rid not in expected:
+            (not_applied if rid in old else unapproved).append(f"{rid}: " + ("an approved deletion was not applied" if rid in old
+                                                                              else "a record added without approval"))
+            continue
+        if rid not in new:
+            unapproved.append(f"{rid}: deleted without approval")
+            continue
+        got = [raw for raw, _ in new[rid]]
+        shown = {raw: sh for raw, sh in new[rid]}
+        rest = list(got)
+        for want in expected[rid]:
+            hit = next((x for x in rest if want in (x, shown[x])), None)
+            if hit is None:
+                not_applied.append(f"{rid}: expected “{want[:80]}” after the repair")
+            else:
+                rest.remove(hit)
+        unapproved += [f"{rid}: “{x[:80]}” is not an approved change" for x in rest]
+    data = {"pass": not unapproved and not not_applied, "unapproved": unapproved, "not_applied": not_applied, "check_by_hand": by_hand}
+    if not data["pass"]:
+        return err("REPAIR.UNAPPROVED", f"the repair does not match the approvals: {len(unapproved)} unapproved, {len(not_applied)} not applied",
+                   "Revert every unapproved edit (or make it a proposal for the next wave) and apply every approved change.", data=data)
+    return Ok(data)
+
+
 def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, ToolError]:
+    if args.verify_repair:
+        if not (args.proposals and args.before and args.after):
+            return err("VALIDATION.INPUT", "--verify-repair needs --proposals, --before and --after",
+                       "Pass the wave's proposals file and the Raptor indexes before and after the repair.")
+        return verify_repair(args)
     if args.trace:
         return build_trace(args, run)
-    if args.proposals:
-        return err("VALIDATION.INPUT", "--proposals needs --trace", "Pass --trace <trace.json> with --proposals.")
+    if args.proposals or args.annotations or args.draft:
+        return err("VALIDATION.INPUT", "--proposals, --annotations and --draft need --trace", "Pass --trace <trace.json> with them.")
     if not args.anchors or not args.baseline_rev:
         return err("VALIDATION.INPUT", "--anchors and --baseline-rev are required (or pass --trace)",
                    "Pass --anchors <anchors.json> --baseline-rev <rev>, or --trace <trace.json>.")
@@ -1589,6 +1776,16 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline-rev", default="", help="git revision holding anchors.json before the round (required unless --trace)")
     p.add_argument("--trace", default="", help="render this `jev_judge.py trace` file instead of a change report")
     p.add_argument("--proposals", default="", help="with --trace: record-cleanup proposals JSON shown on the Proposed fixes tab")
+    p.add_argument("--verify-repair", action="store_true", help="check a wave's repair against the owner's approvals: "
+                   "--proposals P --before <Raptor index> --after <Raptor index> [--quality-edits Q]")
+    p.add_argument("--before", default="", help="with --verify-repair: the Raptor import index before the wave's repair")
+    p.add_argument("--after", default="", help="with --verify-repair: the Raptor import index after it")
+    p.add_argument("--quality-edits", default="", help="with --verify-repair: the judge-jev quality edits listed in the PR "
+                   "body, [{record, before, after}]")
+    p.add_argument("--annotations", default="", help="with --trace: the anchor-cleanup-proposer annotations JSON, merged "
+                   "into the red and yellow cells and the duplicates")
+    p.add_argument("--draft", action="store_true", help="with --proposals: render even while the report is not ready for "
+                   "the owner (exit 0, the page carries a draft banner)")
     p.add_argument("--guidance-url", default="", help="with --trace: where the Duplicates rows link for Correcting duplicates "
                    "(default: the installed references/record-trace.md)")
     p.add_argument("--fields", default="", help="with --trace: comma-separated field paths record and anchor panels show (default all listed)")

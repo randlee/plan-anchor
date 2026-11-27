@@ -76,8 +76,9 @@ class TraceTests(unittest.TestCase):
 
     def trace(self, answers, *extra):
         path = write(self.tmp, "answers.json", answers)
+        root = [] if "--repository-root" in extra else ["--repository-root", self.tmp]  # not git: no history lookup
         return run_cli(["trace", "--anchors", self.anchors, "--index", self.core, "--index", self.ui, "--answers-file", path,
-                        "--out-dir", str(Path(self.tmp) / "out"), *extra])
+                        "--out-dir", str(Path(self.tmp) / "out"), *root, *extra])
 
     def fake_raptor(self, index, exit_code=0):
         """A Raptor checkout whose importer writes ``index``: the stub sits at Raptor's CLI boundary, as judge-jev's does."""
@@ -213,7 +214,9 @@ class TraceTests(unittest.TestCase):
             self.assertEqual(code, 0, (argv, out))
             self.assertTrue(out["success"], argv)
 
-    def test_annotations_merge_only_into_yellow_and_red(self):
+    @unittest.skipUnless(HAS_SC_COMPOSE, "sc-compose renders the report")
+    def test_change_report_merges_annotations_only_into_yellow_red_and_duplicates(self):
+        """Annotations merge in change_report.py (no re-trace); trace takes none."""
         notes = write(self.tmp, "notes.json", [
             {"record": "ADR-002", "anchor": "ANC-001", "clauses": ["written from scratch"], "what": "Forbids the copy.",
              "remedy": "Copy instead.", "jev_disputed": False, "provenance": [HISTORY],
@@ -221,24 +224,55 @@ class TraceTests(unittest.TestCase):
             {"record": "REQ-001", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": True},
             {"record": "REQ-404", "anchor": "ANC-001", "clauses": [], "what": "x", "remedy": "y", "jev_disputed": False},
             {"duplicate": "REQ-001/ADR-002/0", "what": "x", "remedy": "y", "no_provenance": "not a git checkout"}])
-        code, out = self.trace({"ADR-002/ANC-001": cell(conflicts=0.9), "*": cell(serves=0.9)}, "--annotations", notes, "--no-overlap")
+        code, out = self.trace({"ADR-002/ANC-001": cell(conflicts=0.9), "*": cell(serves=0.9)}, "--no-overlap")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.trace({"*": cell()}, "--annotations", notes)[1]["error"]["code"], "VALIDATION.INPUT")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main(["--trace", out["data"]["trace_path"], "--annotations", notes, "--out", str(Path(self.tmp) / "r")])
+        env = json.loads(buf.getvalue())
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(len(env["data"]["warnings"]), 3, env["data"]["warnings"])
+        self.assertEqual(env["data"]["unannotated_cells"], [])
+        red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
+        for text in ("Copy instead.", "<h3>Stale</h3>", "Older than ANC-001.", "written by the anchor-cleanup-proposer agent, not Jev"):
+            self.assertIn(text, red)
+        green = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-REQ-001-ANC-001" in x)
+        self.assertNotIn("Reviewer disputes Jev", green)
+
+    @unittest.skipUnless(shutil.which("git"), "provenance is read from git history")
+    def test_trace_records_where_each_red_or_yellow_statement_first_appeared(self):
+        repo = Path(self.tmp) / "repo"
+        (repo / "docs").mkdir(parents=True)
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "docs" / "REQ-001.md").write_text("- The tool MUST copy the legacy crates.\n", encoding="utf-8")
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "Add REQ-001 copy rule"], check=True)
+        answers = {"REQ-001/ANC-001": cell(serves=0.8, exceeds=0.8), "*": cell()}
+        code, out = self.trace(answers, "--no-overlap", "--repository-root", str(repo))
         self.assertEqual(code, 0, out)
         trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
-        by = {c["record"]: c for c in trace["cells"]}
-        note = by["ADR-002"]["annotation"]
-        self.assertEqual(note["author"], "anchor-cleanup-proposer")
-        self.assertEqual(note["author_label"], "written by the anchor-cleanup-proposer agent, not Jev")
-        self.assertEqual(note["remedy"], "Copy instead.")
-        self.assertEqual(note["provenance"], [HISTORY])
-        self.assertEqual(note["stale"]["reason"], "Older than ANC-001.")
-        self.assertNotIn("annotation", by["REQ-001"])
-        self.assertEqual(len(out["data"]["warnings"]), 3)
+        by = {r["id"]: r for r in trace["records"]}
+        first, second = by["REQ-001"]["provenance"]
+        self.assertEqual((first["statement_index"], first["provenance"]["summary"]), (0, "Add REQ-001 copy rule"))
+        self.assertRegex(first["provenance"]["date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertIsNone(second["provenance"])
+        self.assertIn("no commit", second["reason"])
+        self.assertNotIn("provenance", by["ADR-002"], "only records in a red or yellow cell or a duplicate are looked up")
+        code, out = self.trace(answers, "--no-overlap", "--repository-root", str(repo), "--no-provenance")
+        trace = json.loads(Path(out["data"]["trace_path"]).read_text(encoding="utf-8"))
+        self.assertFalse(any("provenance" in r for r in trace["records"]))
 
     def test_malformed_annotations_are_refused(self):
+        code, out = self.trace({"*": cell()}, "--no-overlap")
         for bad in ([{"record": "ADR-002", "anchor": "ANC-001", "provenance": [{"record": "ADR-002"}]}],
-                    [{"record": "ADR-002", "anchor": "ANC-001", "duplicate": "A/B/0"}], [{"duplicate": 3}]):
-            code, out = self.trace({"*": cell()}, "--annotations", write(self.tmp, "bad.json", bad), "--no-overlap")
-            self.assertEqual((code, out["error"]["code"]), (2, "INPUT.MALFORMED"), bad)
+                    [{"record": "ADR-002", "anchor": "ANC-001", "duplicate": "A/B/0"}], [{"duplicate": 3}], {"not": "a list"}):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = cr.main(["--trace", out["data"]["trace_path"], "--annotations", write(self.tmp, "bad.json", bad),
+                              "--out", str(Path(self.tmp) / "r")])
+            self.assertEqual((rc, json.loads(buf.getvalue())["error"]["code"]), (2, "ANNOTATIONS.INVALID"), bad)
 
     def test_no_locked_anchor_is_a_typed_error(self):
         self.anchors = write(self.tmp, "anchors.json", record(anchor("ANC-001", status="proposed")))
@@ -286,12 +320,11 @@ class TraceTests(unittest.TestCase):
         notes = write(self.tmp, "notes.json", [{"record": "ADR-002", "anchor": "ANC-001", "clauses": ["written from scratch"],
                                                 "what": "Forbids the copy.", "remedy": "Copy instead.", "jev_disputed": True}])
         code, out = self.trace({"REQ-001/ANC-001": cell(serves=0.8), "ADR-002/ANC-001": cell(conflicts=0.7),
-                                "NFR-003/ANC-001": cell(), "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": OVERLAP_NO}},
-                               "--annotations", notes)
+                                "NFR-003/ANC-001": cell(), "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": OVERLAP_NO}})
         self.assertEqual(code, 0, out)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = cr.main(["--trace", out["data"]["trace_path"], "--out", str(Path(self.tmp) / "report")])
+            rc = cr.main(["--trace", out["data"]["trace_path"], "--annotations", notes, "--out", str(Path(self.tmp) / "report")])
         env = json.loads(buf.getvalue())
         self.assertEqual(rc, 0, env)
         self.assertEqual(env["data"]["cells"], 2)
@@ -380,7 +413,7 @@ class TraceOverlapTests(unittest.TestCase):
         return write(self.tmp, "answers.json", got)
 
     def run_trace(self, *extra):
-        return run_cli(["trace", "--anchors", self.anchors, "--index", self.index, "--out-dir", str(self.out), *extra])
+        return run_cli(["trace", "--anchors", self.anchors, "--index", self.index, "--out-dir", str(self.out), "--no-provenance", *extra])
 
     def test_candidate_pairs_come_from_the_cell_table(self):
         cells = [{"record": r, "anchor": "A1", "class": c} for r, c in (("R-3", "serves"), ("R-1", "related"), ("R-2", "conflicts"),
@@ -511,7 +544,7 @@ class TraceOverlapTests(unittest.TestCase):
 
 def proposal(n_kind, records, changes=(), **extra):
     return dict({"wave": 1, "kind": n_kind, "title": f"{n_kind} title", "records": list(records), "changes": list(changes),
-                 "justification": "Each obligation lives in one record.", "source": {"ref": "ANC-001", "quote": "copy them"},
+                 "justification": "Each obligation lives in one record.", "source": {"ref": "ANC-001", "quote": "copy the libraries"},
                  "improvement": "One record fewer to keep in step."}, **extra)
 
 
@@ -538,15 +571,17 @@ class ProposedFixesTests(unittest.TestCase):
                                                     "NFR-003/ANC-001": cell(),
                                                     "overlap": {"REQ_001_s0": OVERLAP_NO, "REQ_001_s1": ans(0.9)}})
         self.trace_argv = ["trace", "--anchors", anchors, "--index", write(self.tmp, "core.json", CORE),
-                           "--index", write(self.tmp, "ui.json", UI), "--answers-file", answers, "--out-dir", str(Path(self.tmp) / "out")]
+                           "--index", write(self.tmp, "ui.json", UI), "--answers-file", answers, "--out-dir", str(Path(self.tmp) / "out"),
+                           "--repository-root", self.tmp]  # not a git checkout: provenance is null with its reason, and fast
         code, out = run_cli(self.trace_argv)
         self.assertEqual(code, 0, out)
         self.trace = out["data"]["trace_path"]
 
-    def report(self, *extra):
+    def report(self, *extra, draft=True):
+        """Render with --draft unless the test is about the readiness gate (the setUp trace has unannotated items)."""
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = cr.main(["--trace", self.trace, "--out", str(Path(self.tmp) / "report"), *extra])
+            rc = cr.main(["--trace", self.trace, "--out", str(Path(self.tmp) / "report"), *extra, *(["--draft"] if draft else [])])
         return rc, json.loads(buf.getvalue())
 
     def test_panels_are_numbered_with_a_copy_icon_and_totals(self):
@@ -591,7 +626,7 @@ class ProposedFixesTests(unittest.TestCase):
         second = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
         self.assertIn("Delete record ADR-002 (1 statements).", second)
         self.assertIn("Resolution: cut.", second)
-        self.assertIn("ANC-001 — Owner said: “copy them”", second)
+        self.assertIn("ANC-001 — Owner said: “copy the libraries”", second)
         third = Path(env["data"]["proposal_panels"][2]).read_text(encoding="utf-8")
         self.assertIn("Wave 2 · cut excess", third)
         self.assertIn("“The tool MUST copy the legacy crates.” → “The tool MUST copy the crates.”", third)
@@ -695,11 +730,8 @@ class ProposedFixesTests(unittest.TestCase):
                             {"duplicate": "ADR-002/REQ-001/1", "clauses": [], "what": "Both log every copy.",
                              "remedy": "Keep it in ADR-002.", "jev_disputed": False, "no_provenance": "the records were never committed"}]}}
         notes = write(self.tmp, "annotations.json", proposer["data"]["annotations"])
-        code, out = run_cli([*self.trace_argv, "--annotations", notes])
-        self.assertEqual(code, 0, out)
-        self.assertEqual(out["data"]["warnings"], [])
-        self.trace = out["data"]["trace_path"]
-        rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS))
+        rc, env = self.report("--proposals", write(self.tmp, "proposals.json", PROPOSALS), "--annotations", notes)
+        self.assertNotIn("not merged", " ".join(env["data"]["warnings"]))
         self.assertEqual(rc, 0, env)
         self.assertEqual(env["data"]["unannotated_cells"], [])
         tab = Path(env["data"]["html"]).read_text(encoding="utf-8")
@@ -708,11 +740,11 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertNotIn("No reviewer annotation yet.", red)
         for text in ("“Runtime crates must be written from scratch.”", "Forbids the copy the anchor asks for.", "Delete ADR-002.",
                      "written by the anchor-cleanup-proposer agent, not Jev", "<h3>History (git)</h3>",
-                     "ADR-002 “Runtime crates must be written from scratch.” — abc1234 2026-01-02: Add ADR-002",
+                     "found by jev_judge.py trace", "ADR-002 statement 1: none (the record&#x27;s repository is not a git checkout",
                      "<h3>Stale</h3>", "Added before the copy anchor; the anchor is newer.", "Proposals: 2"):
             self.assertIn(text, red)
         pair = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["pair_panels"])
-        for text in ("REQ-001 statement 2 (0.90)", "Proposals: 1", "Both log every copy.", "None found: the records were never committed",
+        for text in ("REQ-001 statement 2 (0.90)", "Proposals: 1", "Both log every copy.", "No history found", "the records were never committed",
                      "The matching copy in the item is not identified"):
             self.assertIn(text, pair)
 
@@ -783,7 +815,7 @@ class ProposedFixesTests(unittest.TestCase):
         def render():
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rc = cr.main(["--trace", self.trace, "--proposals", proposals, "--repository-root", self.tmp])
+                rc = cr.main(["--trace", self.trace, "--proposals", proposals, "--repository-root", self.tmp, "--draft"])
             env = json.loads(buf.getvalue())
             self.assertEqual(rc, 0, env)
             return env, Path(env["data"]["html"])
@@ -810,17 +842,93 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertNotEqual(pages[0], pages[1], "two runs never share a name")
         self.assertTrue(pages[0].is_file() and pages[1].is_file())
 
+    def test_the_owner_gets_only_a_ready_report(self):
+        """While an item lacks an annotation or a proposal, or two proposals disagree, --proposals exits PROPOSALS.NOT_READY
+        and still writes the page with a banner; --draft renders it with a draft banner; a ready report has none."""
+        rc, env = self.report("--proposals", write(self.tmp, "p.json", PROPOSALS), draft=False)
+        self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.NOT_READY"))
+        self.assertEqual(len(env["data"]["not_ready"]), 2, env["data"]["not_ready"])  # unannotated items, disagreeing proposals
+        page = Path(env["data"]["html"]).read_text(encoding="utf-8")
+        self.assertIn("Not ready for the owner.", page)
+        rc, env = self.report("--proposals", write(self.tmp, "p.json", PROPOSALS))
+        self.assertEqual(rc, 0, env)
+        self.assertIn("Draft: not for the owner.", Path(env["data"]["html"]).read_text(encoding="utf-8"))
+        ready = {"schema": PROPOSALS["schema"], "level": "standard",
+                 "not_proposed": [{"slice": "unanchored", "reason": "judged separately", "items": ["NFR-003"]}],
+                 "proposals": [proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001"], resolution="cut")]}
+        notes = [{"record": "ADR-002", "anchor": "ANC-001", "what": "x", "remedy": "Delete ADR-002.", "no_provenance": "not committed"},
+                 {"duplicate": "ADR-002/REQ-001/1", "what": "x", "remedy": "Delete ADR-002.", "no_provenance": "not committed"}]
+        rc, env = self.report("--proposals", write(self.tmp, "r.json", ready), "--annotations", write(self.tmp, "a.json", notes), draft=False)
+        self.assertEqual((rc, env["data"]["not_ready"]), (0, []), env)
+        self.assertNotIn('class="banner"', Path(env["data"]["html"]).read_text(encoding="utf-8"))
+
     def test_aggressive_keep_of_an_unanchored_record_needs_code_or_an_owner_quote(self):
         keep = proposal("keep_with_reason", ["NFR-003"], source={"ref": "NFR-003"})
         doc = {"schema": PROPOSALS["schema"], "level": "aggressive", "proposals": [keep]}
         rc, env = self.report("--proposals", write(self.tmp, "k.json", doc))
         self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
         self.assertIn("keep_with_reason at aggressive needs evidence", env["data"]["problems"][0])
-        for evidence in ({"code": "src/page.rs:load"}, {"source": {"ref": "NFR-003", "quote": "pages must load in a second"}}):
+        for evidence in ({"code": "src/page.rs:load"}, {"source": {"ref": "ANC-001", "quote": "copy the libraries from the legacy repo"}}):
             rc, env = self.report("--proposals", write(self.tmp, "k.json", dict(doc, proposals=[dict(keep, **evidence)])))
             self.assertEqual(rc, 0, env)
+        # The owner's words are verified against the anchors' quotes; prose or a commit summary is not the owner's.
+        rc, env = self.report("--proposals", write(self.tmp, "k.json", dict(doc, proposals=[dict(keep, source={"ref": "NFR-003", "quote": "pages must load in a second"})])))
+        self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
+        self.assertIn("source.quote is not the owner's words", " ".join(env["data"]["problems"]))
         rc, env = self.report("--proposals", write(self.tmp, "k.json", {"schema": PROPOSALS["schema"], "proposals": [keep]}))
         self.assertIn("level must be one of", env["data"]["problems"][0], "the level is the owner's; there is no default")
+
+
+class VerifyRepairTests(unittest.TestCase):
+    """change_report.py --verify-repair: the wave's records after repair differ from before only by approved changes and
+    listed quality edits."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.before = write(self.tmp, "before.json", CORE)
+        cut = proposal("cut_excess", ["REQ-001"], [{"record": "REQ-001", "before": "It shall log every copy."}])
+        keep = proposal("delete", ["ADR-002"], [{"record": "ADR-002"}])
+        self.doc = {"schema": PROPOSALS["schema"], "level": "standard", "proposals": [cut, keep],
+                    "approvals": {"reply": "approve 1, reject 2", "decisions": [{"panel": 1, "status": "approved"},
+                                                                                {"panel": 2, "status": "rejected"}]}}
+
+    def verify(self, after, *extra, doc=None):
+        argv = ["--verify-repair", "--proposals", write(self.tmp, "p.json", doc or self.doc), "--before", self.before,
+                "--after", write(self.tmp, "after.json", after), *extra]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cr.main(argv)
+        return rc, json.loads(buf.getvalue())
+
+    def core(self, statements, decisions=True):
+        return raptor_index("core", requirements=[req("REQ-001", [{"modal": "Must", "text": t} for t in statements],
+                                                      text="Definitions: a crate is a Rust package.")],
+                            decisions=[adr("ADR-002", "Runtime crates must be written from scratch.")] if decisions else [])
+
+    def test_only_approved_changes_pass(self):
+        rc, env = self.verify(self.core(["The tool MUST copy the legacy crates."]))
+        self.assertEqual((rc, env["data"]["pass"]), (0, True), env)
+
+    def test_unapproved_rewording_and_deletion_are_reported(self):
+        rc, env = self.verify(self.core(["The tool MUST copy the crates."], decisions=False))
+        self.assertEqual((rc, env["error"]["code"]), (2, "REPAIR.UNAPPROVED"))
+        text = " ".join(env["data"]["unapproved"] + env["data"]["not_applied"])
+        self.assertIn("ADR-002: deleted without approval", text)
+        self.assertIn("“The tool MUST copy the crates.” is not an approved change", text)
+
+    def test_listed_quality_edits_in_the_wave_pass_others_do_not(self):
+        after = self.core(["The tool MUST copy the crates."])
+        edit = [{"record": "REQ-001", "before": "The tool MUST copy the legacy crates.", "after": "The tool MUST copy the crates."}]
+        rc, env = self.verify(after, "--quality-edits", write(self.tmp, "q.json", edit))
+        self.assertEqual((rc, env["data"]["pass"]), (0, True), env)
+        outside = [{"record": "ADR-002", "before": "Runtime crates must be written from scratch.", "after": "Crates are written anew."}]
+        rc, env = self.verify(self.core(["The tool MUST copy the legacy crates."]), "--quality-edits", write(self.tmp, "q.json", outside))
+        self.assertEqual((rc, env["error"]["code"]), (2, "REPAIR.UNAPPROVED"))
+
+    def test_no_recorded_approvals_is_refused(self):
+        rc, env = self.verify(self.core([]), doc=dict(self.doc, approvals=None))
+        self.assertEqual((rc, env["error"]["code"]), (2, "REPAIR.NO_APPROVALS"))
 
 
 STATEMENT_START = "The runtime crates are created by copying"

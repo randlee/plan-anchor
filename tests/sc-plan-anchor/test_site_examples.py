@@ -114,14 +114,13 @@ class RecordCleanupAnnotationsTests(unittest.TestCase):
         notes += [dict(common, duplicate=f"{o['item']}/{o['partner']}/{o['statement_index']}", what="test duplicate") for o in dups]
         (self.inputs / "annotations.json").write_text(json.dumps(notes), encoding="utf-8")
         built = build(self.tmp / "with", "--inputs", str(self.inputs))
-        cells2, dups2 = self.red_yellow_and_duplicates(built)
-        self.assertTrue(all(x["annotation"]["author"] == "anchor-cleanup-proposer" for x in cells2 + dups2))
+        self.assertTrue((built / "report" / "sources" / "annotations.json").is_file(), "change_report.py merged and saved them")
         page = (built / "report.html").read_text(encoding="utf-8")
         self.assertNotIn("without an annotation with git history", page)
         self.assertNotIn("No reviewer annotation yet.", page)
         c = cells[0]
         self.assertIn(f"test annotation {c['record']}/{c['anchor']}", page)
-        self.assertIn("None found: test: no history", page)
+        self.assertIn("test: no history", page)
 
 
 if __name__ == "__main__":
