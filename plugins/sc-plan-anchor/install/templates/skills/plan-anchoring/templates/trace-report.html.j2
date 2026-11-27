@@ -244,7 +244,7 @@ defaults:
 {% endif %}
 {% if not_proposed %}
       <h3>Not proposed</h3>
-      <p class="small">A proposer failed or timed out on these slices; nothing was proposed for them.</p>
+      <p class="small">Nothing was proposed for these items; each line gives the reason (a proposer failed or timed out, or the proposer disputes Jev's class).</p>
       <ul>
 {% for x in not_proposed %}
         <li>{{ x | e }}</li>

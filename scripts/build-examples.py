@@ -162,7 +162,8 @@ def check_statements(trace: dict, repo: Path, commit: str) -> None:
         die(f"the Raptor index does not match {repo} at {commit}; not found:\n  " + "\n  ".join(missing))
 
 
-def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: Path, history: Optional[Path] = None) -> dict:
+def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: Path, history: Optional[Path] = None,
+                   draft: bool = False) -> dict:
     inputs = scratch / "inputs"
     shutil.copytree(source_inputs, inputs)
     annotations = inputs / "annotations.json"
@@ -184,7 +185,9 @@ def record_cleanup(scripts: Path, scratch: Path, out_root: Path, source_inputs: 
     shutil.copyfile(scripts.parent / "references" / "record-trace.md", example / "record-trace.md")
     report = run([str(scripts / "change_report.py"), "--trace", str(example / "trace.json"),
                   "--proposals", str(inputs / "proposals.json"), "--out", str(example), "--name", "report",
-                  "--guidance-url", "record-trace.md#correcting-duplicates", "--draft",
+                  "--guidance-url", "record-trace.md#correcting-duplicates",
+                  # Offline (no history) the annotations cannot be checked against git, so that build is a draft.
+                  *(["--draft"] if draft or not history else []),
                   *(["--annotations", str(annotations)] if annotations.is_file() else []),
                   "--title", "Record cleanup example: sc-agent records against phase-j anchors",
                   "--repository-root", str(scratch)], scratch)
@@ -199,6 +202,7 @@ def main() -> int:
     parser.add_argument("--records-checkout", default="", help="an existing checkout of inputs/source.json's repository at its commit")
     parser.add_argument("--cache", default=str(Path.home() / ".cache" / "plan-anchor-examples"),
                         help="where the records' repository is cloned when --records-checkout is not given")
+    parser.add_argument("--draft", action="store_true", help="render the report as a draft (the not-ready gate does not fail the build)")
     parser.add_argument("--no-provenance", action="store_true", help="build offline: no clone, no git provenance")
     args = parser.parse_args()
     out_root, inputs = Path(args.out).resolve(), Path(args.inputs).resolve()
@@ -206,7 +210,7 @@ def main() -> int:
         scratch = Path(tmp)
         scripts = render_skill(scratch / "skill" / ".claude" / "skills" / "plan-anchoring")
         history = None if args.no_provenance else records_checkout(inputs, args.records_checkout, Path(args.cache))
-        built = record_cleanup(scripts, scratch, out_root, inputs, history)
+        built = record_cleanup(scripts, scratch, out_root, inputs, history, args.draft)
     t, r = built["trace"], built["report"]
     rows = [x for rec in json.loads((out_root / "record-cleanup" / "trace.json").read_text(encoding="utf-8"))["records"]
             for x in rec.get("provenance") or []]

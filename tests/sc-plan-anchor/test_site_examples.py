@@ -155,7 +155,7 @@ class RecordCleanupProvenanceTests(unittest.TestCase):
 
     def test_real_provenance_from_the_records_checkout(self):
         repo = self.repo(self.statements)
-        built = build(self.tmp / "prov", "--inputs", str(self.inputs), "--records-checkout", str(repo))
+        built = build(self.tmp / "prov", "--inputs", str(self.inputs), "--records-checkout", str(repo), "--draft")
         rows = [x for r in json.loads((built / "trace.json").read_text(encoding="utf-8"))["records"] for x in r.get("provenance") or []]
         self.assertGreaterEqual(len(rows), 1)
         self.assertTrue(all(x["provenance"]["summary"] == "Add the records" for x in rows), rows[:2])

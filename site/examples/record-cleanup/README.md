@@ -23,18 +23,13 @@ The overlap run's 6 ADRs were dropped because the live run split an ADR's decisi
   - `ids.txt`: the 8 record ids.
   - `source.json`: the records' repository and the commit they were read at.
   - `answers.json`: the live Jev answers. Cells are keyed `<record>/<anchor>` and overlap requests `<item>/overlap`. There is no `*` fallback and no made-up answer.
-- **Agent-written**: `inputs/proposals.json`. The `anchor-cleanup-proposer` agents wrote it at level `aggressive` from slices of the trace, and the lead merged it. No person or Jev wrote these proposals. Where each one came from:
-
-Four proposers ran in parallel, one per slice, each with no shared context.
-
-- Panel 1: `wave-1-dups` (the duplicate REQ-SAG-0019/REQ-SAG-0801/7).
-- Panels 2–3: `wave-1-red-0801` (REQ-SAG-0801 at ANC-001, red, and at ANC-009).
-- Panels 4–7: `wave-1-yellow-a` (the yellow cells of REQ-SAG-0003, 0008 and 0019).
-- Panels 8–13: `wave-1-yellow-b` (the yellow cells of REQ-SAG-0101, 0102 and 0103).
-
-The lead dropped one proposal. `wave-1-red-0801` proposed deleting REQ-SAG-0801's paid-API key rule and anchoring it. Panel 1 already deletes that statement as a duplicate, and panel 6 proposes the anchor for the copy kept in REQ-SAG-0019. The proposers' text is otherwise unedited.
-
-- **Pending**: `inputs/annotations.json`, the `anchor-cleanup-proposer` annotations, each citing the trace's provenance, for every red cell, yellow cell and duplicate. It is not checked in yet. Until it is, those panels show "No reviewer annotation yet." and the Proposed fixes tab lists the items under "Cells and duplicates without an annotation with git history". The lead will fill it from the proposers' `annotations` output. `build-examples.py` passes it to `change_report.py --annotations` once it exists. The example always renders with `--draft`, so the page carries the draft banner while any gap remains. Each statement's `provenance` is real: `build-examples.py` reads it from the records' repository at the commit in `inputs/source.json`, the one the live trace read, 7 minutes before it ran. It fails if any of the 8 records' statements is not in the files at that commit. `--no-provenance` builds offline, with no provenance. The dropped proposal above is not yet recorded in the proposals file's `dropped` list either.
+- **Agent-written**: `inputs/proposals.json` and `inputs/annotations.json`. Four `anchor-cleanup-proposer` agents wrote them at level `aggressive`, in parallel, one per slice, with no shared context; no person or Jev wrote them. Each read the trace with its git provenance (below), decided which side is stale, and returned proposals plus one annotation per red cell, yellow cell and duplicate.
+  - `wave-1-dups`: the duplicate REQ-SAG-0019/REQ-SAG-0801/7 and the possible duplicate REQ-SAG-0019/REQ-SAG-0801/0.
+  - `wave-1-0801`: REQ-SAG-0801 at ANC-001 (red) and ANC-009.
+  - `wave-1-yellow-a`: the yellow cells of REQ-SAG-0003, 0008 and 0019.
+  - `wave-1-yellow-b`: the yellow cells of REQ-SAG-0101, 0102 and 0103.
+- **Lead-harmonized**: the lead merged the proposers' output and harmonized proposals that disagreed. Three proposers treated the paid-API key rule and the local-runner address rule differently (one kept a copy another deleted), so panels 1 and 2 replace five proposals, listed under "Dropped or merged by the lead", and panel 4 drops the statement panel 1 now covers. The proposers' other text is unedited. `wave-1-yellow-a` disputed Jev on three cells; those are listed under "Not proposed" with its reasons.
+- **Real git provenance**: `build-examples.py` reads each statement's history from the records' repository at the commit in `inputs/source.json`, the one the live trace read, 7 minutes before it ran. It fails if any of the 8 records' statements is not in the files at that commit. `--no-provenance` builds offline with no provenance; that build is a draft.
 
 The report is replayed offline from the fixture answers. So the generated trace shows `model_answered: fixture` and no session ids. The original Jev session ids are in the live trace, which is not checked in.
 
