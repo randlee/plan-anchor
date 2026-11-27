@@ -6,6 +6,10 @@
 - Drop the record trim's deleted references from the shipped prompts and references.
 - `coverage` no longer skips run files marked `dry_run`: dry runs write no run files (REQ-PA-0083), so the skip only served old files.
 
+## 0.13.1 — 2026-11-25
+
+- Re-render the plan-anchor client from sc-decidr 0.4.1 (Jev requests use `jev-latest`) and update its pinned wheel version.
+
 ## 0.13.0 — 2026-11-23
 
 - Re-render the plan-anchor client from sc-decidr 0.4.0 and update its pinned wheel version.
