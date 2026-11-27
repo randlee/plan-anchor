@@ -15,6 +15,8 @@ description: Judge REQ, ADR and NFR records against the locked anchors with Jev 
 
 # Record trace
 
+**Cleaning up records.** To clean the records up (proposals the owner approves, then repair in waves), follow `references/record-cleanup.md`. This page defines the trace and the remedies it uses.
+
 ## When to use
 
 After anchors are locked, to check the requirement records (REQ, ADR, NFR) against what the owner said: which records serve an anchor, which go beyond it (over-specification), and which contradict it. Not a gate; it informs record edits. A run with `duplicates_pass: false` is not finished until a re-run shows `true`, or the remaining items are recorded as conflicts for the owner.
@@ -59,7 +61,7 @@ Duplicate information is a defect. Each obligation is stated in exactly one reco
 
 Choose the one home for each duplicated statement, in this order:
 
-1. A rule for every tool built on sc-agent lives in sc-agent's records; a derivative tool's copy is deleted.
+1. A rule shared by several repositories lives in the records of the repository that owns it; a dependent repository's copy is deleted.
 2. A consumer-visible, testable obligation (wire format, a file another tool reads, a config key, CLI behaviour, public API behaviour) lives in a REQ, or an NFR for a quality attribute. An ADR states the decision and its reasons and cites the REQ id instead of restating the obligation.
 3. A choice between alternatives, with its reasons, lives in the ADR. A REQ that restates the choice deletes it.
 4. Between two REQs, keep the statement in the record whose title and subject it belongs to. If that does not decide it, keep it in the record with the higher judge-jev score.
@@ -88,11 +90,13 @@ Errors (exit 2): `ANCHOR.NONE_LOCKED`, `DEPENDENCY.RAPTOR`, `RAPTOR.NO_INVENTORY
 
 ## Interpretation
 
-- Red: the record contradicts the owner. Fix the record (or ask the owner), then re-trace.
-- Yellow (exceeds): the record goes beyond the anchor, and a record that exceeds an anchor is highly suspect. Remedy:
-  1. Delete the part that goes beyond the anchor; this is the default. Tuning down means cutting the record back to what the anchor states.
-  2. A record left empty is deleted.
-  3. Rewording is not a remedy.
-  4. If you believe the extra detail is necessary, do not keep it in the record: list it for the owner as a proposed anchor, in one line (record id, statement, why it is needed). Until the owner anchors it, the excess is deleted.
-- Judge each record in "Not covered by any anchor" on its own merits: is it valuable to the product? If not, delete it. A missing anchor is not a reason to delete, and existing is not a reason to keep.
+The cleanup level (`aggressive`, `standard`, `conservative`; `references/record-cleanup.md`, Levels) sets how yellow cells and unanchored records are treated. At every level deletion is the default, and rewording is allowed rarely, with a stated justification.
+
+- Red (conflicts): the record contradicts the owner. Every conflict is resolved, at every level, but not by an automatic cut. State the resolution and its source of truth: cut the record's conflicting text (the anchor is the owner's word), reconcile the wording (with a justification), or, when the anchor itself is wrong, ask the owner to change it (a proposed anchor). Then re-trace.
+- Yellow (exceeds): the record goes beyond the anchor, and a record that exceeds an anchor is highly suspect. Remedy, by level:
+  1. `aggressive`: delete the part that goes beyond the anchor, cutting the record back to what the anchor states. If you believe the extra detail is necessary, list it for the owner as a proposed anchor, in one line (record id, statement, why it is needed); until the owner anchors it, the excess is deleted.
+  2. `standard`: delete the excess unless it documents existing code behaviour, citing the code (`file:symbol`).
+  3. `conservative`: keep the excess when it is accurate to the code; delete it when it is wrong or of no value.
+  4. A record left empty is deleted.
+- Records in "Not covered by any anchor", by level: `aggressive` keeps one only when its value is stated; `standard` judges it on its value to the product; `conservative` keeps it unless it is wrong, duplicated or of no value. A missing anchor is not a reason to delete, and existing is not a reason to keep.
 - Annotations are a reviewer's reading. When `jev_disputed` is true the reviewer disagrees with Jev's class; read the record before acting.

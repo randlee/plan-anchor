@@ -237,12 +237,12 @@ class RenderingTests(unittest.TestCase):
         expected |= {f"scripts/{p.name[:-len('.j2')]}" for p in (source / "scripts").iterdir()}
         self.assertEqual(len([r for r in expected if r.startswith("scripts/")]), 9)
         self.assertEqual(set(self.package.rendered), expected)
-        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 24)
-        self.assertEqual(sorted(self.package.agents), ["anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
+        self.assertEqual(len([r for r in expected if r.startswith("references/")]), 25)
+        self.assertEqual(sorted(self.package.agents), ["anchor-cleanup-proposer.md", "anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md"])
 
     def test_every_template_renders_strictly_for_each_tracker(self):
         templates = [t for t in sorted(TEMPLATES.rglob("*.j2")) if inst.is_install_template(t)]
-        self.assertEqual(len(templates), 3 + 5 + 24 + 9)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
+        self.assertEqual(len(templates), 4 + 5 + 25 + 9)  # agents, SKILL.md + 4 assets templates (incl. triage README, guidelines example), references, scripts
         for template in templates:
             for tracker in inst.RENDERINGS:
                 self.render(template, tracker)
@@ -1042,7 +1042,7 @@ class RealInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_file(), source)
                     self.assertTrue(inst.is_install_template(source), source)
                     checked += 1
-            self.assertEqual(checked, 3 * (3 + 5 + 24 + 9) + 1)  # + the seeded triage README
+            self.assertEqual(checked, 3 * (4 + 5 + 25 + 9) + 1)  # + the seeded triage README
 
     def test_switching_trackers_equals_a_fresh_install(self):
         for first, second in (("br", "bd"), ("bd", "br")):

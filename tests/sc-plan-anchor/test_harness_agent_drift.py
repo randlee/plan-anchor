@@ -16,7 +16,7 @@ from layout_support import HARNESS, TRACKERS, rendered_agent
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "sc-plan-anchor"
 HARNESSES = ("claude", "codex", "cursor")
-AGENTS = ("anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md")
+AGENTS = ("anchor-cleanup-proposer.md", "anchor-plan-review.md", "anchor-sprint-review.md", "anchor-tuning.md")
 HARNESS_PATH = re.compile(r"\.(claude|codex|cursor)/")
 
 

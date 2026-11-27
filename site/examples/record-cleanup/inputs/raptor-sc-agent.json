@@ -1,0 +1,955 @@
+{
+  "metadata": {
+    "repository": "urn:raptor:repo:sc-agent",
+    "generated": "2026-11-26T22:48:26.877119+00:00",
+    "files": 51,
+    "records": 51
+  },
+  "requirements": [
+    {
+      "id": "REQ-SAG-0003",
+      "title": "Log locations and retention",
+      "status": "Approved",
+      "version": "0.9.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-24",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: sc-agent is the crates and CLIs of this repository. A CLI is one of the command-line programs decidr or sitr; `<cli>` is its name in lower case and `<CLI>` in upper case. A Logger is an sc-observability logger that a caller passes to a CLI's library entry point. The general log is the diagnostic log of one entry point (ADR-SAG-0021); decidr's is `decidr.log.jsonl` and sitr's is `sitr.log.jsonl`. A session log is the record of every session; a session is one model request with its own ULID `session_id`, and every send of that request, including busy resends, belongs to it. A link record ties one run to one session (REQ-SAG-0005). A run log is the file of link records that sits beside a session log in the same directory. To remove a log is to rotate, prune or delete it. The generated client is the Python module a consumer renders from the sc-decidr wheel's sc-compose template (REQ-SAG-0018). The client name is the consumer's product name, a constant in the generated client, and equals its `agent_role` (REQ-SAG-0004), such as `plan-anchor` or `judge-jev`. The client Logger is the Logger the generated client obtains from the wheel under the client name (REQ-SAG-0008). `<CLIENT>_LOG_ROOT` is the environment variable named by the client name uppercased with hyphens replaced by underscores. The default session files are the session files REQ-SAG-0005 names for an agent role. The client's logs are the general log the client Logger writes and the default session files.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "With no Logger injected, each CLI MUST write its general log to `~/.sc-agent/logs/<cli>.log.jsonl`."
+          },
+          {
+            "modal": "Must",
+            "text": "When `<CLI>_LOG_ROOT` is set and non-empty, that CLI MUST use its value in place of `~/.sc-agent`."
+          },
+          {
+            "modal": "Must",
+            "text": "When `<CLIENT>_LOG_ROOT` is set and not empty, the generated client MUST use that folder in place of `~/.sc-agent/` for its logs."
+          },
+          {
+            "modal": "Must",
+            "text": "Session logs MUST be written under `~/.sc-agent/sessions/` (REQ-SAG-0005)."
+          },
+          {
+            "modal": "Must",
+            "text": "A session log MUST remain in `~/.sc-agent/sessions/` whatever its age."
+          },
+          {
+            "modal": "Must",
+            "text": "A run log MUST remain in `~/.sc-agent/sessions/` whatever its age."
+          },
+          {
+            "modal": "MustNot",
+            "text": "sc-agent MUST NOT contain code that removes a general log."
+          },
+          {
+            "modal": "MustNot",
+            "text": "sc-agent MUST NOT remove a session log."
+          },
+          {
+            "modal": "MustNot",
+            "text": "sc-agent MUST NOT remove a run log."
+          }
+        ]
+      },
+      "rationale": "Session logs are the long-term record used to analyse tens of thousands of decisions, so losing any of them loses data. Link records are append-only and immutable, so the run log is kept the same way.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "A CLI run of decidr with nothing configured writes `~/.sc-agent/logs/decidr.log.jsonl`.",
+            "checked": false
+          },
+          {
+            "text": "A CLI run of sitr with nothing configured writes `~/.sc-agent/logs/sitr.log.jsonl`.",
+            "checked": false
+          },
+          {
+            "text": "A CLI run of decidr with `DECIDR_LOG_ROOT` set to `<dir>` writes `<dir>/logs/decidr.log.jsonl`.",
+            "checked": false
+          },
+          {
+            "text": "A CLI run of decidr with `DECIDR_LOG_ROOT` set to `<dir>` writes its session log under `<dir>/sessions/`.",
+            "checked": false
+          },
+          {
+            "text": "A unit test sets `<CLIENT>_LOG_ROOT` to a test folder, makes one sc-decidr call, and finds the general log and session rows under that folder and nothing under `~/.sc-agent/`.",
+            "checked": false
+          },
+          {
+            "text": "A CLI run of decidr with nothing configured writes its session log under `~/.sc-agent/sessions/`.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a session log older than the sc-observability retention age is still present after a new session.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a run log older than the sc-observability retention age is still present after a new session.",
+            "checked": false
+          },
+          {
+            "text": "Inspection of `rg -n 'rotat|prune|retention' crates/` shows no code that removes a general log.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a session log is unchanged and present after decidr runs a new session.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a run log's earlier lines are unchanged after decidr runs a new session.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a session log past the sc-observability rotation size has no rotated copy after a new session.",
+            "checked": false
+          },
+          {
+            "text": "A Rust unit test shows a run log past the sc-observability rotation size has no rotated copy after a new session.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "ADR-SAG-0002",
+            "note": null
+          },
+          {
+            "id": "ADR-SAG-0021",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0005",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0008",
+      "title": "Logger injection into the Rust API and the wheel",
+      "status": "Approved",
+      "version": "0.6.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-24",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: A Logger is an sc-observability crate `Logger`. The linked crate is the sc-observability Rust crate compiled into the wheel. The general logger writes the general log. Injecting a Logger means the caller passes in the Logger sc-agent uses. The wheel is the sc-decidr Python package, which holds the decidr and sitr Python APIs (ADR-SAG-0021).",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "The Rust API MUST accept an injected general Logger."
+          },
+          {
+            "modal": "Must",
+            "text": "When a Python caller requests a named Logger, the wheel MUST return a Logger built from the linked crate."
+          },
+          {
+            "modal": "MustNot",
+            "text": "The wheel MUST NOT depend on the `sc-observability` Python package."
+          }
+        ]
+      },
+      "rationale": "The wheel already links the sc-observability crate, so it hands that crate's Logger to Python and receives the same object back: one Logger, one queue, no bridge.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "Unit test: a Rust caller injects a general Logger with a test sink and finds every general-log record of the call in that sink.",
+            "checked": false
+          },
+          {
+            "text": "Python test: a program obtains a Logger named `t` from the wheel, writes one record, and finds its record in `~/.sc-agent/logs/t.log.jsonl`.",
+            "checked": false
+          },
+          {
+            "text": "Install check: in a fresh virtual environment, `pip install sc-decidr` installs no `sc-observability` package.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "REQ-SAG-0003",
+            "note": null
+          },
+          {
+            "id": "ADR-SAG-0019",
+            "note": null
+          },
+          {
+            "id": "ADR-SAG-0021",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0010",
+      "title": "No sleep()",
+      "status": "Approved",
+      "version": "0.2.1",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-24",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "`sc-agent` is this project. A sleep function includes `std::thread::sleep`, `std::thread::sleep_until` and `tokio::time::sleep`.",
+        "statements": [
+          {
+            "modal": "MustNot",
+            "text": "The source code of this project MUST NOT call any sleep function."
+          }
+        ]
+      },
+      "rationale": "A sleeping thread cannot react to cancellation or new work; waits are made on events or deadlines that cancellation can end. This requirement is met by a timed wait that cancellation can end, such as a wait on a channel or condition variable. It does not require a clock abstraction or an injected time source.\n\nOwner ruling (2026-11-20), Rand Lee: \"No sleep (is async requirement).\"",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "A workspace search of non-test source finds no call to a sleep function.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "REQ-SAG-0601",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0019",
+      "title": "Configuration file locations and lookup order",
+      "status": "Approved",
+      "version": "0.8.0",
+      "created": "2026-11-18",
+      "last_updated": "2026-11-24",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: A CLI is an sc-agent command-line program that reads configuration, such as `decidr`; `<cli>` is its program name. `sitr` reads no configuration. The shared file is `sc-agent.json`. A CLI file is `<cli>.json` or its optional override file `<cli>.local.json`. The global folder is `~/.sc-agent/`, the user's home directory joined with `.sc-agent` on every platform, relocated to the folder named by `SC_AGENT_HOME` when that variable is nonempty. An explicit `--config-dir` (or wheel `config_dir`) takes precedence over that variable. `<worktree>` is the root of the git work tree containing the folder the CLI runs in. The local folder is `<worktree>/.sc/sc-agent/`. A layer is one source of a setting's value. The local-folder layers are layers 3, 4 and 5. A typed error is an error value (REQ-SAG-0016). The key path is the dotted path of a configuration key within its file, such as `laya.port`. The shared settings are the defaults for configuration-reading CLIs that `sc-agent.json` holds. A model request is a request that asks a model for a reply, as `decidr send` does. The settings table has one row per setting and the columns `path`, `value` and `source`. The source of a value is the layer it comes from, shown as the flag, the environment variable name, the file path or `default`. A missing-setting error is a typed error that names the setting and every layer that can set it. A local endpoint is a keyless provider that runs a local model, such as laya and decider; its address is its host and port. A paid API is a remote model provider that requires an API key; its key is sent only to that provider's built-in base address. The failure location of a load error is the file path and the key path. A model entry is the configuration object `models.<alias>`; it adds a model row named `<alias>`.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "When a required setting has no built-in default and no layer sets it, the CLI MUST return a missing-setting error."
+          },
+          {
+            "modal": "Must",
+            "text": "Each configuration file MUST accept the shared settings."
+          },
+          {
+            "modal": "Must",
+            "text": "A CLI file MUST accept that CLI's settings."
+          },
+          {
+            "modal": "Must",
+            "text": "An unknown key in a configuration file MUST cause a typed load error."
+          },
+          {
+            "modal": "Must",
+            "text": "The `cache` setting MUST default to `true`."
+          },
+          {
+            "modal": "Must",
+            "text": "A model entry MUST add one row to the model table."
+          },
+          {
+            "modal": "Must",
+            "text": "A model entry MUST override the model its name selects."
+          },
+          {
+            "modal": "Must",
+            "text": "A local endpoint's address MUST be settable in configuration."
+          },
+          {
+            "modal": "Must",
+            "text": "When the CLI does not run inside a git work tree, it MUST skip the local-folder layers."
+          },
+          {
+            "modal": "Must",
+            "text": "Each CLI's `<cli> doctor` command, such as `decidr doctor`, MUST report the settings table."
+          },
+          {
+            "modal": "Must",
+            "text": "In each row of the settings table, the `source` cell MUST show the source of that row's value."
+          },
+          {
+            "modal": "Must",
+            "text": "`<cli> doctor` MUST report the path of every file in the nine layers."
+          },
+          {
+            "modal": "Must",
+            "text": "For each file in the nine layers, `<cli> doctor` MUST report whether it exists."
+          },
+          {
+            "modal": "Must",
+            "text": "When a CLI fails to load a configuration file, its error MUST name the failure location."
+          },
+          {
+            "modal": "MustNot",
+            "text": "A CLI MUST NOT read another CLI's `<cli>.json`."
+          },
+          {
+            "modal": "MustNot",
+            "text": "While it loads configuration, a CLI MUST NOT write to any configuration file."
+          },
+          {
+            "modal": "MustNot",
+            "text": "`<cli> doctor` MUST NOT send a model request."
+          },
+          {
+            "modal": "MustNot",
+            "text": "`<cli> doctor` MUST NOT write a file."
+          },
+          {
+            "modal": "MustNot",
+            "text": "Configuration MUST NOT change a paid API's base address."
+          }
+        ]
+      },
+      "rationale": "One file per CLI lets a CLI be added without changing another CLI's file. The shared file holds shared defaults that a CLI file may override. The local folder lets worktrees of one repository hold different settings, such as different phases, and keeps sc files under `.sc/`. A settable local endpoint host lets a local model run on another computer. Configuration may add model rows because built-in rows go stale; it may not redirect a paid API's key.\n\nOwner ruling 2026-11-21: records follow docs/plans/reduction-plan.md.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "CLI run (`decidr doctor`): with `SC_AGENT_HOME` set, global files are read from that folder and doctor reports those paths; an explicit configuration directory overrides it.",
+            "checked": false
+          },
+          {
+            "text": "CLI run (`decidr doctor`): with `workers` set to 4 in the global `decidr.json` and 2 in the local `decidr.json`, decidr uses 2 and reports the local `decidr.json` as its source.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (shared settings): with `project` set only in the global `sc-agent.json`, decidr uses it.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (missing setting): with a required setting set in no layer, the load fails with a missing-setting error.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (CLI file): a `decidr` setting in `decidr.local.json` is accepted.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (unknown key): an unknown key in the local `decidr.json` fails the load with a typed error naming that file and key path.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (work tree): outside a git work tree, a `.sc/sc-agent/decidr.json` in the current folder is not read.",
+            "checked": false
+          },
+          {
+            "text": "CLI run (`decidr doctor`): with `\"project\": \"phase-a\"` in `<worktree>/.sc/sc-agent/decidr.json`, `decidr doctor` reports the row `project | phase-a | <worktree>/.sc/sc-agent/decidr.json`.",
+            "checked": false
+          },
+          {
+            "text": "CLI run (`decidr doctor`): with `\"project\": \"phase-a\"` only in the local `sc-agent.json`, `decidr doctor` reports the `project` row with that file as its source.",
+            "checked": false
+          },
+          {
+            "text": "CLI run (`decidr doctor`): doctor lists the path of each of the nine layers' files and whether each exists.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (load error): a malformed local `decidr.json` fails the load with an error naming that file.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (other CLI): a key in a `sitr.json` beside `decidr.json` does not reach decidr's settings.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (no write): loading configuration leaves every configuration file's bytes and modification time unchanged.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (doctor offline): `decidr doctor` run through its Rust entry point with a provider stub that fails on any request completes without calling the stub.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (doctor no write): `decidr doctor` run in an empty temporary home and work tree leaves both directory listings unchanged.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (model entry): with `\"models\": {\"luna\": {\"provider\": \"nous\", \"id\": \"openai/gpt-6.1-luna\", \"released\": \"2026-11-20\"}}` in the global `sc-agent.json`, the model table has a `luna` row with id `openai/gpt-6.1-luna` and provider `nous`.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (paid API base address): a model entry whose `provider` is not a built-in provider fails the load with a typed error.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (local endpoint): with `laya.host` set to another computer's address in the global `sc-agent.json`, the resolved laya endpoint uses that host.",
+            "checked": false
+          },
+          {
+            "text": "Unit test (cache default): with no `cache` set in any layer, the resolved `cache` setting is `true`.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "REQ-SAG-0013",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0016",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0020",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0021",
+            "note": null
+          },
+          {
+            "id": "ADR-SAG-0020",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0101",
+      "title": "Model short names",
+      "status": "Approved",
+      "version": "0.5.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-26",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: A short name is a model name without a version. The cloud short names are `jev`, `haiku`, `sonnet`, `opus`, `fable`, `luna`, `terra`, `sol` and `astra`. The local short names are `laya` and `decider`. A local model is a row whose provider is an endpoint on a computer the user runs.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "Each cloud short name MUST resolve to a model in the `sc-agent` model table."
+          },
+          {
+            "modal": "Must",
+            "text": "Each local short name MUST resolve to a local model in the model table."
+          }
+        ]
+      },
+      "rationale": "sc-agent launches any model, not only decision models, and callers select models by short name.\n\nOwner ruling 2026-11-21: records follow docs/plans/reduction-plan.md.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "A unit test resolves each cloud short name to a model in the model table.",
+            "checked": false
+          },
+          {
+            "text": "A unit test resolves each local short name to a local model in the model table.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "REQ-SAG-0102",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0102",
+      "title": "Model catalog: built-in and configured model rows",
+      "status": "Approved",
+      "version": "0.9.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-26",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: `sc-agent` is the program this record governs. The model table is the list of models built into `sc-agent`, together with the rows configuration adds. Each row has a short name, a fixed model id, a release date and a provider. A built-in model is a row built into `sc-agent`, not added by configuration. A full model id is a row's fixed model id, such as `claude-haiku-5-5`. A model's published release date is the date its maker announced the model as available. A catalog name is a provider name, a short name or a model id. To branch on a catalog name is to compare it with a string literal to choose what the code does.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "The built-in rows of the model table MUST be sorted by release date, newest first."
+          },
+          {
+            "modal": "Must",
+            "text": "A short name MUST resolve to its newest row in the model table, unless a configured model entry for that name overrides it (REQ-SAG-0019)."
+          },
+          {
+            "modal": "Must",
+            "text": "A full model id MUST select its row exactly."
+          },
+          {
+            "modal": "Must",
+            "text": "Each built-in model MUST carry the model's published release date."
+          },
+          {
+            "modal": "MustNot",
+            "text": "`sc-agent` MUST NOT branch on a catalog name."
+          }
+        ]
+      },
+      "rationale": "When a new model is released, short names such as `haiku`, `luna`, `opus` and `sol` must launch it immediately. Hard-coded rows go stale quickly, so configuration can add rows, and a configured row wins its short name (owner ruling 2026-11-25). When several providers serve the newest row, REQ-SAG-0103 orders them. Provider and model are values carried in typed data, not names to branch on.\n\nOwner ruling 2026-11-21: records follow docs/plans/reduction-plan.md.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "A unit test verifies that, with a configuration row added, the built-in rows are sorted by release date, newest first, and the configuration row is selected for its short name.",
+            "checked": false
+          },
+          {
+            "text": "A unit test verifies that, of two rows sharing a short name, the short name resolves to the row with the later release date.",
+            "checked": false
+          },
+          {
+            "text": "A unit test verifies that selecting a built-in row's full model id returns that row.",
+            "checked": false
+          },
+          {
+            "text": "A unit test verifies that every built-in row has a release date.",
+            "checked": false
+          },
+          {
+            "text": "A search of `crates/sc-agent/src` finds no comparison of a catalog name with a string literal outside the model and provider tables.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "REQ-SAG-0101",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0103",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0103",
+      "title": "Provider and model are separate",
+      "status": "Approved",
+      "version": "0.5.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-25",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: sc-agent is this project's client library and command-line tool that sends model requests. A provider is the service a request is sent to, such as OpenRouter, Nous, Together, OpenAI or Anthropic. A model is what that provider runs. A model id is the name a provider uses for a model, such as `anthropic/claude-haiku-5.5` at OpenRouter. A short name is the name a caller uses for a model, such as `haiku`. The model table is the list of models sc-agent can send to, one row per model and provider (REQ-SAG-0102). A key is the secret credential a provider requires before it accepts a request; a keyless provider requires none. The OpenAI API is the request service run by OpenAI.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "A model-table row MUST store its provider in a field separate from its model."
+          },
+          {
+            "modal": "Must",
+            "text": "A request MUST carry the model id stored in the selected model-table row."
+          },
+          {
+            "modal": "Must",
+            "text": "sc-agent MUST be able to send requests through Together."
+          },
+          {
+            "modal": "Must",
+            "text": "sc-agent MUST be able to send requests through OpenRouter."
+          },
+          {
+            "modal": "Must",
+            "text": "When configuration names a provider for a model, sc-agent MUST send that model's requests to that provider."
+          },
+          {
+            "modal": "Must",
+            "text": "When no provider is configured for a model, sc-agent MUST prefer a provider that needs no key over one that needs a key."
+          },
+          {
+            "modal": "Must",
+            "text": "When no provider is configured for a model and every provider serving it needs a key, sc-agent MUST use the first of them whose key is found."
+          },
+          {
+            "modal": "Must",
+            "text": "The provider that sends requests to the OpenAI API MUST have the name `openai`."
+          },
+          {
+            "modal": "MustNot",
+            "text": "A short name MUST NOT encode its provider."
+          },
+          {
+            "modal": "MustNot",
+            "text": "A request MUST NOT require the caller to name a provider."
+          }
+        ]
+      },
+      "rationale": "The owner uses OpenRouter, Nous, Together, OpenAI and Anthropic today, and one model can be served by more than one provider. Making the caller pick a provider per call is poor UX and unreliable over time.\n\nOwner ruling 2026-11-21: records follow docs/plans/reduction-plan.md.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "Unit test: every model-table row stores its provider in a field separate from its model.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: a short name served by two providers is the same string for both rows.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: the short name `haiku` selects the same model through two different providers, and each sends its own id: `claude-haiku-5-5` through `anthropic` and `anthropic/claude-haiku-5.5` through `openrouter`.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: with `openrouter` configured for `haiku` and the `anthropic` key also found, a `haiku` request goes to `openrouter`.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: with no provider configured, a model served by a keyless provider and a keyed provider goes to the keyless one.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: with no provider configured and only the `openrouter` key found, a `haiku` request goes to `openrouter`.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: requests can be sent through `together` and through `openrouter`.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: a request that names only a model, with no provider, is sent.",
+            "checked": false
+          },
+          {
+            "text": "Unit test: the provider that sends to the OpenAI API is named `openai`.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": []
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    },
+    {
+      "id": "REQ-SAG-0801",
+      "title": "Local decision runners come from configuration",
+      "status": "Approved",
+      "version": "0.7.0",
+      "created": "2026-11-09",
+      "last_updated": "2026-11-25",
+      "owner": "Rand Lee",
+      "supersedes": null,
+      "superseded_by": null,
+      "requirement_statement": {
+        "text": "Definitions: The Jev API is the request and reply format of TypeSafe's Jev decision service (ADR-SAG-0001). A local decision runner is a daemon on the user's machine or network that serves a decision model through the Jev API. sc-agent has two, `laya` and `decider`. A runner's network address is its host and port. A decision model is a model that `sc-agent` can send a decision request to. The 4b decider model is the `decider-4b-v2.1` row. A local model is a model-table row whose model is served by a local decision runner. A paid API is a provider that needs an API key; its key is sent only to the provider's built-in endpoint.",
+        "statements": [
+          {
+            "modal": "Must",
+            "text": "Each local decision runner's network address MUST come from configuration."
+          },
+          {
+            "modal": "Must",
+            "text": "Each local decision runner's model MUST have a fixed model id in the model table."
+          },
+          {
+            "modal": "Must",
+            "text": "A selection of `decider` MUST resolve to the 4b decider model."
+          },
+          {
+            "modal": "Must",
+            "text": "Each local decision runner MUST be selectable by its name wherever a decision model is selected."
+          },
+          {
+            "modal": "Must",
+            "text": "`sc-agent` MUST send requests to a local decision runner in the Jev API format."
+          },
+          {
+            "modal": "Must",
+            "text": "Configuration MUST be able to add a local model that runs on another computer."
+          },
+          {
+            "modal": "MustNot",
+            "text": "`sc-agent` MUST NOT hard-code the network address of any local decision runner."
+          },
+          {
+            "modal": "MustNot",
+            "text": "Configuration MUST NOT change where a paid API's key is sent."
+          }
+        ]
+      },
+      "rationale": "People are building local runners that duplicate the Jev API, and they differ only in where they run and how they report their loaded models. decider is an alternative local model to laya with a different connection string.\n\nOwner ruling 2026-11-21: records follow docs/plans/reduction-plan.md.",
+      "success_criteria": {
+        "text": "",
+        "acceptance_criteria": [
+          {
+            "text": "A unit test sets `laya.host` and `laya.port` in configuration and checks the request goes to them with no rebuild.",
+            "checked": false
+          },
+          {
+            "text": "A unit test finds a fixed model id in the model-table row of every local decision runner model.",
+            "checked": false
+          },
+          {
+            "text": "A unit test resolves `decider` to the 4b decider row.",
+            "checked": false
+          },
+          {
+            "text": "A CLI run of each command that selects a decision model accepts `--model laya` and `--model decider`.",
+            "checked": false
+          },
+          {
+            "text": "A unit test with a stub local runner checks that the request it receives is in the Jev API format.",
+            "checked": false
+          },
+          {
+            "text": "A unit test sends to a local model row added in configuration with another computer's host and checks the request reaches that host.",
+            "checked": false
+          },
+          {
+            "text": "A search of the whole workspace, outside tests, finds no host or port literal for a local runner.",
+            "checked": false
+          },
+          {
+            "text": "A unit test with configuration naming another endpoint for a paid provider checks that the provider's key is still sent only to its built-in endpoint.",
+            "checked": false
+          }
+        ],
+        "test_evidence": []
+      },
+      "dependencies": {
+        "text": "",
+        "requires": [],
+        "related": [
+          {
+            "id": "ADR-SAG-0001",
+            "note": null
+          },
+          {
+            "id": "REQ-SAG-0201",
+            "note": null
+          }
+        ]
+      },
+      "product_applicability": {
+        "text": "",
+        "applies_to": [],
+        "does_not_apply_to": []
+      },
+      "implementation_notes": {
+        "text": "",
+        "key_considerations": []
+      },
+      "test_strategy": {
+        "text": "",
+        "test_types": []
+      },
+      "related_documents": {
+        "text": "",
+        "requirements": [],
+        "architecture_decisions": [],
+        "design_documents": [],
+        "work_items": [],
+        "external_references": []
+      }
+    }
+  ],
+  "decisions": [],
+  "diagnostics": {
+    "issues": [],
+    "summary": {
+      "records": 51,
+      "counts": {},
+      "groups": [],
+      "aliases": {}
+    }
+  }
+}

@@ -1,0 +1,78 @@
+---
+name: sc-plan-anchor-record-cleanup
+version: 1.0.0
+format: markdown
+description: sc-plan-anchor install-time text, rendered by install.py for exactly one tracker (br or bd).
+required_variables:
+  - tracker
+  - version
+---
+---
+name: record-cleanup
+version: {{ version }}
+description: Clean up REQ, ADR and NFR records against the locked anchors in planned waves - trace, parallel proposers, a Proposed fixes tab the owner approves, then repair by background agents and one stacked PR per wave.
+---
+
+# Record cleanup
+
+The lead runs this procedure. The tools report and push toward a fix; they decide nothing and edit no records. What to change, how to slice the work and how many waves to run are the lead's judgement. `$S` is `scripts/jev_judge.py` and `$R` is `scripts/change_report.py`.
+
+## Levels
+
+The lead sets the cleanup level per run (default `standard`), writes it in the proposals file as `level` and passes it to every proposer. The tab header shows it.
+
+| | aggressive | standard | conservative |
+|---|---|---|---|
+| Duplicates | deleted | deleted | deleted |
+| Excess beyond an anchor | deleted unless the owner anchors it | deleted unless it documents existing code behaviour, citing the code (`file:symbol`) | kept if accurate to the code; deleted if wrong or of no value |
+| Records no anchor covers | kept only when the value is stated | judged on value to the product | kept unless wrong, duplicated or of no value |
+| Conflicts | always resolved | always resolved | always resolved |
+
+At every level deletion is the default, and rewording is allowed rarely, with a stated justification. Every conflict is resolved, but not by an automatic cut: the proposal states the resolution (cut the record, reconcile the wording, or have the owner change the anchor) and the source of truth.
+
+## Preflight
+
+1. Start from validated anchors and Raptor-compliant records: `python3 "$S" validate --anchors "$A"` reports `valid: true`, and Raptor imports every record with no diagnostics. Fix those first. Cleanup does not start on a broken base.
+
+## Diagnose
+
+2. Run the trace with overlap and render it (`references/record-trace.md`):
+   `python3 "$S" trace --anchors "$A" --source <repo> ... --raptor "$RAPTOR"`, then `python3 "$R" --trace <trace.json> --out <folder>`.
+   Plan the waves now, before any edit. Each wave is a set of records small enough to repair and review in one pass, and one `/sc-gh-stack` PR stacked on the one before. Several waves are normal.
+3. While the owner reviews the trace report, launch `anchor-cleanup-proposer` agents in the background, one per slice (a group of red or yellow cells, a group of duplicates, or the unanchored records), each with `trace_path`, `slice`, `wave`, `level`, `references` and a `correlation_id` naming the slice. Run at most 4 at once, 600 s each. They return proposals and never edit. Launch them directly with the Agent tool (Cursor: Task); they take no runner envelope. A proposer that fails or times out has its slice listed in `not_proposed` with the reason, never dropped. The lead keeps, merges or drops each proposal by its own judgement and writes one proposals file.
+4. Render the third tab: `python3 "$R" --trace <trace.json> --proposals <proposals.json> --out <folder>`. "Proposed fixes" shows the reply line, the totals if all are approved and one numbered panel per proposal, each with a copy icon. Fix every `PROPOSALS.INVALID` problem and read every warning before sending.
+5. Open the report for the owner. The owner replies, e.g. "approve 1-5, reject 6, change 7 to: <text>". The lead reads the reply; no tool parses it.
+
+The remedies follow `references/record-trace.md`: duplicates by "Correcting duplicates", yellow and red cells and unanchored records by "Interpretation", at the run's level.
+
+## Repair, per wave
+
+6. Apply the approved changes, with each changed proposal as the owner wrote it. An anchor the owner adds is added with `add` and locked as any anchor is (`references/capture-and-maintenance-workflow.md`).
+7. Raptor schema: re-import. A background agent fixes each diagnostic and re-imports until there are none.
+8. Anchors: `validate` passes, and a re-trace of the wave's records shows no red cell and `duplicates_pass: true`. A background agent fixes what fails.
+9. If the judge-jev skill is installed, run judge-jev quality on every record the wave modified. Hand each failing record to its own background agent that runs that skill's fix workflow (`references/fix-strategy.md` of judge-jev; it launches judge-jev's `jev-fix-proposer` for each candidate edit). Use one agent per record, each in its own worktree. This is a specialized task. The lead does not fix quality failures itself, does not wait for them and never stops on them. A record still failing when the PR opens is listed in the PR body as handed to that agent.
+10. Commit, push and open the wave's PR with `/sc-gh-stack`. Send the owner the PR URL.
+
+## Finish condition, per wave
+
+- Approved changes are applied.
+- The Raptor schema passes.
+- Anchors pass.
+- A re-trace shows no red and `duplicates_pass: true` for the wave's records.
+- The wave's record and statement counts are not higher than before. Anchors the owner added are the one exception.
+
+judge-jev quality failures are not part of the finish condition. They are listed in the PR body as handed to the specialized agent. Then repair the next wave, diagnosing it again first when an earlier wave changed its records.
+
+## Proposals file
+
+```json
+{"schema": "plan-anchoring/record-cleanup-proposals/1", "level": "standard",
+ "not_proposed": [{"slice": "<slice>", "reason": "<why no proposal>"}],
+ "proposals": [{"wave": 1, "kind": "delete", "title": "...", "records": ["REQ-1"],
+                "changes": [{"record": "REQ-1", "before": "<statement>", "after": "<cut>", "reword_justification": "..."}],
+                "resolution": "cut", "code": "<file>:<symbol>",
+                "justification": "...", "source": {"ref": "ANC-001", "quote": "<owner's words>"},
+                "improvement": "...", "cells": ["REQ-1/ANC-001"], "duplicates": ["ADR-2/REQ-1/0"], "proposed_anchor": "..."}]}
+```
+
+Panel numbers are positions in `proposals`. `kind` is `delete`, `consolidate`, `cut_excess`, `resolve_conflict`, `propose_anchor` or `keep_with_reason`. A change with no `before` deletes the record. With `before` alone it deletes that statement. With both it changes `before` to `after`; anything but deleting words (or adding a record id) is a rewording and needs `reword_justification`, and the panel flags it. `cells` and `duplicates` name the trace entries a proposal clears. `resolve_conflict` needs `resolution` (`cut`, `reconcile` or `propose_anchor`, the last with `proposed_anchor`). `propose_anchor` needs `proposed_anchor` and changes that delete the excess. `keep_with_reason` changes nothing; for a record an anchor covers it needs `code` and is refused at `aggressive`. Totals are computed from the trace: an ADR's decision counts as one statement, and a record left empty is deleted.
