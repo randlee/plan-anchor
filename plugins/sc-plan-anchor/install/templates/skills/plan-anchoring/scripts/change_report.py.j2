@@ -26,6 +26,8 @@ Inputs
                        T's stem) with one panel per record, anchor and coloured cell in DIR/<name>/ (templates/trace-panel.xhtml.j2,
                        page templates/trace-report.html.j2); --anchors and --baseline-rev are then not used
   --fields P,...       with --trace: show only these record/anchor field paths (RECORD_FIELDS, ANCHOR_PANEL_FIELDS)
+  --proposals P        with --trace: record-cleanup proposals (references/record-cleanup.md) as numbered panels on a
+                       third tab, "Proposed fixes", with the totals if all are approved
   --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
                        in DIR/<name>/
 
@@ -38,7 +40,7 @@ render of templates/change-report.html.j2, which receives only top-level arrays 
 the word-diff fragments are built here (escaped text inside <del>/<ins>).
 
 Output: one JSON envelope ``{success, data, error}`` on stdout. Exit 0 when the report was written, 2 with a
-typed error (VALIDATION.INPUT, SCRIPT.IO, GIT.BASELINE, DRIFT.INVALID, TRACE.INVALID, DEPENDENCY.SC_COMPOSE, RENDER.FAILED,
+typed error (VALIDATION.INPUT, SCRIPT.IO, GIT.BASELINE, DRIFT.INVALID, TRACE.INVALID, PROPOSALS.INVALID, DEPENDENCY.SC_COMPOSE, RENDER.FAILED,
 SETTINGS.*, SCRIPT.INTERNAL), 130 on interrupt.
 """
 
@@ -791,6 +793,206 @@ def trace_pair_vars(item: dict, partner: dict, duplicates: List[dict]) -> dict:
             "copy_json": _dump(duplicates)}
 
 
+# ---------------------------------------------------------------- record-cleanup proposals (references/record-cleanup.md)
+
+PROPOSALS_SCHEMA = "plan-anchoring/record-cleanup-proposals/1"
+PROPOSAL_KINDS = {"delete": "delete", "consolidate": "consolidate", "cut_excess": "cut excess",
+                  "resolve_conflict": "resolve conflict", "propose_anchor": "propose anchor",
+                  "keep_with_reason": "keep with reason"}
+LEVELS = ("aggressive", "standard", "conservative")
+RESOLUTIONS = ("cut", "reconcile", "propose_anchor")
+CODE_RE = re.compile(r"\S+:\S+(?: \S+:\S+)*")
+REPLY_HINT = "Reply e.g.: approve 1-5, reject 6, change 7 to: <text>"
+WORD_RE = re.compile(r"[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*")
+
+
+def _norm(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def counted_statements(record: dict) -> List[str]:
+    """What a record's statement count counts, as the overlap step does: its statements, else an ADR's decision as one."""
+    listed = [x.get("text", "") if isinstance(x, dict) else str(x) for x in (record.get("obligations") or {}).get("statements") or []]
+    if listed:
+        return listed
+    decision = (record.get("raptor") or {}).get("decision")
+    text = decision.get("text") if isinstance(decision, dict) else decision
+    return [text] if text else []
+
+
+def statement_index(record: dict, text: str) -> Optional[int]:
+    """Index of the record statement ``text`` quotes: the raw text or as the report shows it (modal written out)."""
+    want = _norm(text)
+    for i, (raw, shown) in enumerate(zip(counted_statements(record), statements(record) or counted_statements(record))):
+        if want in (_norm(raw), _norm(shown)):
+            return i
+    return None
+
+
+def is_cut(before: str, after: str, ids: set) -> bool:
+    """True when ``after`` is ``before`` with words deleted (record ids may be added): a cut, not a rewording."""
+    words = iter(w.lower() for w in WORD_RE.findall(before))
+    return all(w in ids or w.lower() in words for w in WORD_RE.findall(after))
+
+
+def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> List[str]:
+    """Every way a proposals file breaks the small schema in references/record-cleanup.md (all listed, not the first)."""
+    if not isinstance(doc, dict) or doc.get("schema") != PROPOSALS_SCHEMA or not isinstance(doc.get("proposals"), list):
+        return [f"schema must be {PROPOSALS_SCHEMA} with a proposals array"]
+    out = []
+    level = doc.get("level", "standard")
+    if level not in LEVELS:
+        out.append(f"level must be one of {', '.join(LEVELS)}")
+    skipped = doc.get("not_proposed", [])
+    if not isinstance(skipped, list) or not all(isinstance(x, dict) and isinstance(x.get("slice"), str)
+                                                and isinstance(x.get("reason"), str) for x in skipped):
+        out.append("not_proposed must be a list of {slice, reason}")
+    for n, p in enumerate(doc["proposals"], start=1):
+        if not isinstance(p, dict):
+            out.append(f"proposal {n} must be an object")
+            continue
+        kind, changes = p.get("kind"), p.get("changes", [])
+        if not isinstance(p.get("wave"), int) or isinstance(p.get("wave"), bool) or p["wave"] < 1:
+            out.append(f"proposal {n}: wave must be a positive integer")
+        if kind not in PROPOSAL_KINDS:
+            out.append(f"proposal {n}: kind must be one of {', '.join(PROPOSAL_KINDS)}")
+        for key in ("title", "justification", "improvement"):
+            if not isinstance(p.get(key), str) or not p[key].strip():
+                out.append(f"proposal {n}: {key} must be a non-empty string")
+        src = p.get("source")
+        if not isinstance(src, dict) or not isinstance(src.get("ref"), str) or not src["ref"].strip():
+            out.append(f"proposal {n}: source must be an object with ref (an anchor or record id)")
+        recs = p.get("records")
+        if not isinstance(recs, list) or not recs or not all(isinstance(r, str) for r in recs):
+            out.append(f"proposal {n}: records must be a non-empty list of record ids")
+            recs = []
+        for r in recs:
+            if r not in records:
+                out.append(f"proposal {n}: record {r} is not in the trace")
+        for key in ("cells", "duplicates"):
+            if not isinstance(p.get(key, []), list) or not all(isinstance(k, str) for k in p.get(key, [])):
+                out.append(f"proposal {n}: {key} must be a list of keys")
+        if not isinstance(changes, list):
+            out.append(f"proposal {n}: changes must be an array")
+            continue
+        has_anchor = isinstance(p.get("proposed_anchor"), str) and bool(p["proposed_anchor"].strip())
+        resolution = p.get("resolution")
+        if kind == "keep_with_reason":
+            if changes:
+                out.append(f"proposal {n}: keep_with_reason changes nothing; move the changes to another proposal")
+            covered = [r for r in recs if r in records and r not in no_relation]
+            if covered and level == "aggressive":
+                out.append(f"proposal {n}: keep_with_reason is refused at aggressive for a record an anchor covers ({', '.join(covered)})")
+            elif covered and not CODE_RE.fullmatch(str(p.get("code") or "")):
+                out.append(f"proposal {n}: keep_with_reason for a record an anchor covers ({', '.join(covered)}) must cite the code it "
+                           "documents as code: \"file:symbol\"")
+        elif kind == "resolve_conflict":
+            if resolution not in RESOLUTIONS:
+                out.append(f"proposal {n}: resolve_conflict needs resolution, one of {', '.join(RESOLUTIONS)}")
+            elif resolution == "propose_anchor" and not has_anchor:
+                out.append(f"proposal {n}: resolution propose_anchor needs proposed_anchor (the anchor the owner would state)")
+            elif resolution != "propose_anchor" and not changes:
+                out.append(f"proposal {n}: resolution {resolution} must list its changes")
+        elif not changes:
+            out.append(f"proposal {n}: {kind} must list its changes")
+        if kind == "propose_anchor" and not has_anchor:
+            out.append(f"proposal {n}: propose_anchor needs proposed_anchor, and its changes delete the excess until the owner anchors it")
+        for m, c in enumerate(changes, start=1):
+            where = f"proposal {n} change {m}"
+            if not isinstance(c, dict) or c.get("record") not in recs:
+                out.append(f"{where}: record must be one of the proposal's records")
+                continue
+            before, after = c.get("before"), c.get("after")
+            if before is None and after is not None:
+                out.append(f"{where}: after needs before (the statement it changes)")
+            elif before is not None and not isinstance(before, str) or after is not None and not isinstance(after, str):
+                out.append(f"{where}: before and after must be strings")
+            elif before is not None and after is not None and not is_cut(before, after, set(records)):
+                if not isinstance(c.get("reword_justification"), str) or not c["reword_justification"].strip():
+                    out.append(f"{where}: after rewords before; rewording is rare and needs reword_justification")
+                elif kind == "resolve_conflict" and resolution == "cut":
+                    out.append(f"{where}: resolution cut only deletes words; a rewording is resolution reconcile")
+    return out
+
+
+def proposal_effect(proposals: List[dict], t: dict, records: Dict[str, dict]) -> Tuple[dict, List[str]]:
+    """Totals if ``proposals`` are all approved, computed from the trace; warnings for quotes the trace does not hold."""
+    warnings, deleted, cut = [], set(), {}
+    cells_keys, dup_keys = set(), set()
+    for n, p in proposals:
+        for c in p.get("changes", []):
+            rid, before = c["record"], c.get("before")
+            if before is None:
+                deleted.add(rid)
+                continue
+            i = statement_index(records[rid], before)
+            if i is None:
+                warnings.append(f"proposal {n}: “{_norm(before)[:80]}” is not one of {rid}'s statements; not counted")
+            elif c.get("after") is None:
+                cut.setdefault(rid, set()).add(i)
+        cells_keys |= set(p.get("cells", []))
+        dup_keys |= set(p.get("duplicates", []))
+    counts = {rid: len(counted_statements(r)) for rid, r in records.items()}
+    deleted |= {rid for rid, gone in cut.items() if counts[rid] and len(gone) >= counts[rid]}  # a record left empty is deleted
+    after = sum(n - len(cut.get(rid, ())) for rid, n in counts.items() if rid not in deleted)
+    dups = [o for o in t.get("overlap") or [] if o.get("class") == "duplicate"]
+    dup_cleared = sum(1 for o in dups if f"{o['item']}/{o['partner']}/{o['statement_index']}" in dup_keys
+                      or o["item"] in deleted or o["partner"] in deleted or o["statement_index"] in cut.get(o["partner"], ()))
+    conflicts = [c for c in t["cells"] if c["class"] == "conflicts"]
+    resolved = sum(1 for c in conflicts if f"{c['record']}/{c['anchor']}" in cells_keys or c["record"] in deleted)
+    known_cells = {f"{c['record']}/{c['anchor']}" for c in t["cells"] if c["class"] in TRACE_DETAIL}
+    known_dups = {f"{o['item']}/{o['partner']}/{o['statement_index']}" for o in dups}
+    warnings += [f"cell {k} is not an exceeds or conflicts cell of the trace" for k in sorted(cells_keys - known_cells)]
+    warnings += [f"duplicate {k} is not a duplicate in the trace" for k in sorted(dup_keys - known_dups)]
+    return {"records_before": len(records), "records_after": len(records) - len(deleted),
+            "statements_before": sum(counts.values()), "statements_after": after,
+            "duplicates_cleared": dup_cleared, "duplicates": len(dups),
+            "conflicts_resolved": resolved, "conflicts": len(conflicts)}, warnings
+
+
+def effect_line(e: dict) -> str:
+    return (f"Records {e['records_before']} → {e['records_after']}; statements {e['statements_before']} → {e['statements_after']}; "
+            f"duplicates cleared {e['duplicates_cleared']} of {e['duplicates']}; conflicts resolved {e['conflicts_resolved']} of {e['conflicts']}")
+
+
+def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict]) -> dict:
+    """One numbered "Proposed fixes" panel in the trace panel layout; its copy icon copies the panel as plain text."""
+    changes, reworded = [], []
+    for c in p.get("changes", []):
+        rid, before, after = c["record"], c.get("before"), c.get("after")
+        if before is None:
+            changes.append(f"Delete record {rid} ({len(counted_statements(records[rid]))} statements).")
+        elif after is None:
+            changes.append(f"Delete from {rid}: “{_norm(before)}”")
+        elif is_cut(before, after, set(records)):
+            changes.append(f"Cut {rid}: “{_norm(before)}” → “{_norm(after)}”")
+        else:
+            changes.append(f"Reword {rid}: “{_norm(before)}” → “{_norm(after)}”")
+            reworded.append(f"{rid}: {_norm(c['reword_justification'])}")
+    if p.get("resolution"):
+        changes.insert(0, f"Resolution: {p['resolution'].replace('_', ' ')}.")
+    if p["kind"] == "keep_with_reason":
+        changes.append("No change." + (f" Documents the code at {p['code']}." if p.get("code") else ""))
+    if p.get("proposed_anchor"):
+        changes.append(f"Proposed anchor for the owner: “{_norm(p['proposed_anchor'])}”")
+    src = p["source"]
+    effect, warnings = proposal_effect([(n, p)], t, records)
+    blocks = [{"heading": "Records", "items": [", ".join(p["records"])]},
+              {"heading": "Change", "items": changes, "list": len(changes) > 1},
+              {"heading": "Justification", "items": [p["justification"]]},
+              {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner: “{src['quote']}”" if src.get("quote") else "")]},
+              {"heading": "Expected improvement", "items": [p["improvement"], effect_line(effect)]}]
+    if reworded:
+        blocks.insert(2, {"heading": "Rewording (rare; justified)", "items": reworded, "list": len(reworded) > 1})
+    if warnings:
+        blocks.append({"heading": "Check before approving", "items": warnings, "list": True})
+    title, subtitle = f"{n}. {p['title']}", f"Wave {p['wave']} · {PROPOSAL_KINDS[p['kind']]}"
+    context = [title, subtitle, *[f"{b['heading']}: {b['items'][0]}" if len(b["items"]) == 1
+                                  else "\n".join([f"{b['heading']}:", *(f"- {x}" for x in b["items"])]) for b in blocks]]
+    return {"dom": f"prop-{n}", "cls": "proposal", "title": title, "subtitle": subtitle, "blocks": blocks,
+            "copy_json": "", "copy_label": "Copy panel text", "context_text": "\n".join(context)}
+
+
 def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
     """Render a trace file: a records x anchors grid page and one panel per coloured cell."""
     doc = read_json(Path(args.trace), "trace file")
@@ -804,11 +1006,24 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     name = args.name or Path(args.trace).stem
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         return err("VALIDATION.INPUT", f"--name {name!r} must be a file stem of letters, digits, '.', '_' or '-'", "Pass --name like trace-phase-b.")
+    anchors = {a["id"]: a for a in t["anchors"]}
+    records = {r["id"]: r for r in t["records"]}
+    proposals, level, not_proposed = None, "", []
+    if args.proposals:
+        loaded = read_json(Path(args.proposals), "proposals file")
+        if isinstance(loaded, Err):
+            return loaded
+        no_relation = set((t.get("summary") or {}).get("records_with_no_relation") or [])
+        problems = proposal_problems(loaded.value, records, no_relation)
+        if problems:
+            return err("PROPOSALS.INVALID", f"{args.proposals} breaks the proposals schema: " + "; ".join(problems[:5]),
+                       "Fix every problem in data.problems (references/record-cleanup.md, Proposals file) and rerun.",
+                       data={"problems": problems})
+        proposals = list(enumerate(loaded.value["proposals"], start=1))
+        level, not_proposed = loaded.value.get("level", "standard"), loaded.value.get("not_proposed", [])
     binary = find_sc_compose()
     if isinstance(binary, Err):
         return binary
-    anchors = {a["id"]: a for a in t["anchors"]}
-    records = {r["id"]: r for r in t["records"]}
     cells = {(c["record"], c["anchor"]): c for c in t["cells"]}
     out = Path(args.out).resolve()
     panels_dir = out / name
@@ -854,6 +1069,17 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
             pair_panels.append(target.as_posix())
             dup_rows += [{"pair": variables["title"], "statement": o["statement"], "confidence": f"{o['confidence']:.2f}",
                           "dom": variables["dom"]} for o in duplicates]
+        prop_sections, prop_panels, totals, warnings = [], [], None, []
+        for n, p in proposals or []:
+            variables = proposal_vars(n, p, t, records)
+            target = panels_dir / f"{name}-{variables['dom']}.xhtml"
+            text = render(binary.value, "trace-panel.xhtml.j2", variables, target, scratch, run)
+            if isinstance(text, Err):
+                return text
+            prop_sections.append(text.value)
+            prop_panels.append(target.as_posix())
+        if proposals is not None:
+            totals, warnings = proposal_effect(proposals, t, records)
         per_anchor = (t.get("summary") or {}).get("per_anchor") or {}
         summary_rows = [dict({k: str(v) for k, v in per_anchor.get(a["id"], {}).items()}, id=a["id"]) for a in t["anchors"]]
         summary_rows = [dict({k: "0" for k in ("serves", "related", "exceeds", "conflicts", "none")}, **r) for r in summary_rows]
@@ -877,13 +1103,24 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                  "dup_message": (t.get("actions") or {}).get("duplicates") or "",
                  "fully_restated_action": (t.get("actions") or {}).get("fully_restated") or "",
                  "guidance_url": (SKILL_DIR / "references" / "record-trace.md").as_uri() + "#correcting-duplicates",
-                 "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False)}
+                 "summary_copy_json": json.dumps(t.get("summary"), indent=2, sort_keys=True, ensure_ascii=False),
+                 "proposals_run": "yes" if proposals is not None else "", "proposal_count": str(len(prop_sections)),
+                 "proposal_sections": prop_sections, "reply_hint": REPLY_HINT,
+                 "totals_rows": [] if totals is None else [
+                     {"label": "Records", "before": str(totals["records_before"]), "after": str(totals["records_after"])},
+                     {"label": "Statements", "before": str(totals["statements_before"]), "after": str(totals["statements_after"])},
+                     {"label": "Duplicates", "before": str(totals["duplicates"]), "after": str(totals["duplicates"] - totals["duplicates_cleared"])},
+                     {"label": "Conflicts", "before": str(totals["conflicts"]), "after": str(totals["conflicts"] - totals["conflicts_resolved"])}],
+                 "proposal_warnings": warnings, "level": level,
+                 "not_proposed": [f"{x['slice']}: {x['reason']}" for x in not_proposed]}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
     return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
-               "records": len(t["records"]), "anchors": len(t["anchors"])})
+               "records": len(t["records"]), "anchors": len(t["anchors"]),
+               "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
+               "warnings": warnings, "level": level or None, "not_proposed": not_proposed})
 
 
 # ---------------------------------------------------------------- command
@@ -904,6 +1141,8 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
         return err("VALIDATION.INPUT", "--out is required", "Pass --out <folder> for the report.")
     if args.trace:
         return build_trace(args, run)
+    if args.proposals:
+        return err("VALIDATION.INPUT", "--proposals needs --trace", "Pass --trace <trace.json> with --proposals.")
     if not args.anchors or not args.baseline_rev:
         return err("VALIDATION.INPUT", "--anchors and --baseline-rev are required (or pass --trace)",
                    "Pass --anchors <anchors.json> --baseline-rev <rev>, or --trace <trace.json>.")
@@ -1065,6 +1304,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--anchors", default="", help="anchors.json now (required unless --trace)")
     p.add_argument("--baseline-rev", default="", help="git revision holding anchors.json before the round (required unless --trace)")
     p.add_argument("--trace", default="", help="render this `jev_judge.py trace` file instead of a change report")
+    p.add_argument("--proposals", default="", help="with --trace: record-cleanup proposals JSON shown on the Proposed fixes tab")
     p.add_argument("--fields", default="", help="with --trace: comma-separated field paths record and anchor panels show (default all listed)")
     p.add_argument("--plan-dir", default="", help="plan folder holding anchor-runs/ (default: the folder holding --anchors)")
     p.add_argument("--gate", choices=("plan", "dev"), default="plan")

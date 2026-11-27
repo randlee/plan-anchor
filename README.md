@@ -1,37 +1,57 @@
 # plan-anchor
 
-A Claude Code and Codex skill that keeps plans, and the code built from them, anchored to what you actually said while planning. Facts you state are captured verbatim as numbered **anchors**, turned into typed questions for [TypeSafe's Jev](https://typesafe.ai) decision model, and enforced mechanically at two gates: once against the plan, once against the delivered work. When something drifts, the report quotes your own words back.
+**Website: [randlee.github.io/plan-anchor](https://randlee.github.io/plan-anchor/)** — announcements, run reports, diagrams and worked examples.
 
-> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, and gate runs send scoped text to `api.typesafe.ai`. They require a TypeSafe credential (`TYPESAFE_API_KEY` or the documented platform credential store) and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
+A Claude Code, Codex and Cursor skill that keeps plans, records and the code built from them anchored to what you actually said while planning. Facts you state are captured verbatim as numbered **anchors** and turned into typed questions for [TypeSafe's Jev](https://typesafe.ai) decision model. Jev then checks plans, delivered work and requirement records against them, and every finding quotes your own words back.
+
+> **This skill requires Jev. Data leaves the machine only when you say so.** Capture rubric checks, question tuning, fixture checks, gate runs and record traces send scoped text to `api.typesafe.ai`. They require a TypeSafe credential (`TYPESAFE_API_KEY` or the documented platform credential store) and your recorded consent, `allow_remote_judge: true` in the committed `.sc/plan-anchor/settings.yaml`; without both, the skill refuses and sends nothing. You answer once per repository; agents never write the setting. The script redacts the live key and bearer tokens from every emitted value and never writes credentials to run files.
 
 ## The problem
 
-Over a long planning conversation the specific things you say get compressed out of an agent's context. You ask for something concrete, "copy these crates from the legacy repo as the starting point and strip the legacy-specific code", the agent writes it down, and several rounds later it quietly writes a new implementation from scratch. Nothing checks that the plan still says what you said, or that the delivered work matches the plan, so you re-state the same facts every time you re-open the plan.
+Over a long planning conversation the specific things you say get compressed out of an agent's context. You ask for something concrete, "copy these crates from the legacy repo as the starting point and strip the legacy-specific code", the agent writes it down, and several rounds later it quietly writes a new implementation from scratch. Requirement records drift the same way: they grow, restate each other and go beyond what you asked for. Nothing checks that the plan, the records or the delivered work still say what you said.
 
-## How it works
+## Features
 
-1. **Capture.** While you plan, the orchestrator watches for directives about *how* the work must be done. For each one it writes one testable requirement (the anchor `statement`), keeps your exact words as the `quote`, checks the statement against a testability rubric and existing anchors, and proposes both. Nothing is locked until you confirm. A phase needs five to fifteen anchors, not one per sentence.
-2. **Record and tune independently.** Locked anchors are numbered (`ANC-001`...) and stored with provenance in the current phase folder's `anchors.json` (`docs/plans/phase-<current>/anchors.json`, named by `plan_dir` in `.sc/plan-anchor/settings.yaml`), rendered to `anchors.md`, and given a small bead tree so their questions version alongside the work. Existing requirements (`REQ-*`) and ADRs (`ADR-*`) join the same record under their own IDs. A separate higher-reasoning tuner (Claude: Opus; Codex: Sol) derives a frozen oracle from the approved intent and anchor, then loops over Jev calls while refining question text. It never receives "make this plan pass" as an objective.
-3. **Planning gate.** Each planning bead is judged against every anchor by three orthogonal Jev questions: is the anchor relevant to this bead, does the bead address it, does the bead contradict it. Answers are gated in code into one verdict per anchor, coverage is computed across beads, and you iterate until nothing is forgotten or contradicted.
-4. **Development gate.** When a sprint is delivered, the same anchors are judged against the account of the work (sprint report, PR, diff summary, tests) with a fourth question: is compliance *evidenced*, not just asserted. Each satisfied anchor is paired with a deterministic check, because Jev judges text and only a diff proves the code.
-5. **Report and iterate.** A failing verdict reads: `bd-42 · ANC-012 · not addressed  Anchor: The runtime crates are created by copying the legacy repo's runtime crates and deleting the legacy-specific modules. You said (planning session, Oct 9): "copy the libraries from the legacy repo as the starting point and remove the legacy-specific code" This bead does not carry the directive forward.` Each finding is triaged (plan defect, anchor defect, question defect, or Jev error), fixed where the defect is, and re-run. An oversized bead is treated as a symptom: unapproved work is removed first, then prose and ceremony, and only remaining approved work is split.
+### Anchor capture and question tuning
 
-The design is documented in [docs/design/architecture-and-call-graphs.md](docs/design/architecture-and-call-graphs.md) (components, call graphs and fan-out for both gates, retry policy) and [docs/design/data-model-and-gating.md](docs/design/data-model-and-gating.md) (record schema, verdict gating, lifecycle). The original PRD is [docs/plan-anchor-prd.md](docs/plan-anchor-prd.md).
+While you plan, the skill watches for directives about *how* the work must be done. For each one it writes one testable requirement (the anchor `statement`), keeps your exact words as the `quote`, checks it against a testability lint, a Jev rubric and the existing anchors, and proposes it. Nothing is locked until you confirm. Locked anchors are numbered (`ANC-001`...) and stored with provenance in the phase folder's `anchors.json`, rendered to `anchors.md`, and given a small bead tree. Existing requirements (`REQ-*`) and ADRs (`ADR-*`) join the same record. An independent higher-reasoning tuner (Claude: Opus; Codex: Sol; Cursor: Grok high) freezes an oracle from the approved intent and runs a question tournament against Jev; it never receives "make this plan pass" as an objective.
+Commands: `add`, `update`, `retire`, `exclude`, `promote`, `lint`, `rubric`, `dedupe`, `validate`, `render`, `set-beads`, `check-fixtures`, `tournament`. Reference: `references/capture-and-maintenance-workflow.md`, `references/question-tuning-workflow.md`.
 
-## Use cases
+### Planning gate
 
-- **Long or multi-session planning.** You re-open a phase plan next week; the skill loads the anchors first and nothing you said has to be repeated.
-- **Multi-agent delivery.** A planning agent drafts beads, dev agents implement, a quality manager reviews. The planning gate stops forgotten directives before code exists; the development gate stops the quality manager accepting work that planned the directive and then abandoned it.
-- **Requirement and ADR enforcement.** Numbered requirements and decisions you already maintain are judged bead by bead with the same machinery, so "REQ-014 is satisfied somewhere in this plan" is computed, not remembered.
-- **Pull request review against the plan.** Point the development gate at a PR and get, per anchor, whether the PR description shows the directive was followed and where to look to confirm it.
-- **CI without a key.** Fixture answers exercise the whole pipeline offline, so the gating logic and report format are testable, and CI gates on the JSON outcome (`data.summary.pass`); a nonzero exit is reserved for tool failure.
-- **Promoting decisions.** An anchor that proves durable is promoted to an ADR and keeps its ID and history.
+Each planning bead is judged against every anchor by three orthogonal Jev questions: is the anchor relevant to this bead, does the bead address it, does the bead contradict it. Code gates the answers into one verdict per anchor, coverage is computed across beads, and you iterate until nothing is forgotten or contradicted. An oversized bead is treated as a symptom: unapproved work is removed first, then prose and ceremony, and only remaining approved work is split (`shape` measures it).
+Commands: `judge --gate plan`, `compose-item`, `shape`, `coverage`, `report`, `diff`. Reference: `references/planning-review-workflow.md`.
 
-Not for: general code review, style review, or plan hardening without anchors. It composes with plan-hardening workflows rather than replacing them.
+### Development gate
+
+When a sprint is delivered, the same anchors are judged against the account of the work (sprint report, PR, diff summary, tests) with a fourth question: is compliance *evidenced*, not just asserted. Each satisfied anchor is paired with a deterministic check, because Jev judges text and only a diff proves the code. Point it at a PR and get, per anchor, whether the PR shows the directive was followed and where to look to confirm it.
+Commands: `judge --gate dev`, `agent-preflight`, `report`, `coverage`. Reference: `references/development-review-workflow.md`.
+
+### Record trace and duplicates
+
+`trace` judges every REQ, ADR and NFR record (read only through Raptor) against the locked anchors. Each record × anchor cell is classed serves, related, exceeds (the record goes beyond the anchor), conflicts or none. The same run finds duplicates: for records that share an anchor column, Jev is asked per statement whether one record already states the other's obligation. The report has an "Anchors × Records" grid and a "Duplicates" tab with a red badge when any exist; `duplicates_pass` stays false until every duplicate is corrected.
+Commands: `trace`, then `change_report.py --trace`. Reference: `references/record-trace.md`.
+
+### Record cleanup
+
+A procedure for the lead agent that turns a trace into an approved, applied cleanup, in waves planned up front, one stacked PR per wave. It runs `anchor-cleanup-proposer` agents in parallel on slices of the trace and adds a "Proposed fixes" tab to the report. That tab has numbered panels, each with a copy icon, its justification, its source of truth and the expected improvement, plus before/after totals. You reply "approve 1-5, reject 6, change 7 to: …". Background agents then apply the approved changes and fix schema, anchor and judge-jev quality failures. A cleanup level (aggressive, standard or conservative) sets how much is removed; deletion is the default at every level.
+Commands: `trace`, then `change_report.py --trace --proposals`. Reference: `references/record-cleanup.md`. Example: [record-cleanup report from real data](https://randlee.github.io/plan-anchor/examples/).
+
+### Change reports
+
+After a planning round, `change_report.py` writes one page for you to review: every anchor and plan item changed in the round, with its scores before and after, and the drift review as a table. It builds the page from local files, git and the tracker, and never calls Jev. The same tool renders the trace and cleanup reports.
+Commands: `change_report.py`. Reference: `references/change-report.md`.
+
+### Batch and offline operation
+
+`batch` and `bead-batch` run many Jev requests from a JSONL stream or from beads × an anchor's question bead, logged one result line per request. Fixture answers (`--answers-file`) and `--dry-run` exercise the whole pipeline offline, so CI can gate on the JSON outcome (`data.summary.pass`) without a key; a nonzero exit is reserved for tool failure.
+Commands: `batch`, `bead-batch`, plus `--dry-run` and `--answers-file` on the judging commands. Reference: `references/jev-api.md`.
+
+The design is documented in [docs/design/architecture-and-call-graphs.md](docs/design/architecture-and-call-graphs.md) and [docs/design/data-model-and-gating.md](docs/design/data-model-and-gating.md). The original PRD is [docs/plan-anchor-prd.md](docs/plan-anchor-prd.md). Not for: general code review, style review, or plan hardening without anchors; it composes with plan-hardening workflows rather than replacing them.
 
 ## Installation
 
-**0.8.0 changes how plan-anchor is installed.** The marketplace plugin `sc-plan-anchor` now exposes one skill, `plan-anchor-installer`, which installs plan-anchor into a folder you choose. The `plan-anchoring` skill and its agents run from that install, not from the plugin, and every installed file names only your tracker (`br` or `bd`).
+The marketplace plugin `sc-plan-anchor` exposes one skill, `plan-anchor-installer`, which installs plan-anchor into a folder you choose. The `plan-anchoring` skill and its agents run from that install, not from the plugin, and every installed file names only your tracker (`br` or `bd`).
 
 Claude Code:
 
@@ -74,6 +94,7 @@ Hermes distribution is likewise deferred; it has no marketplace manifest and thi
 | `allow_remote_judge: true` in `.sc/plan-anchor/settings.yaml` | every live Jev operation | Your one-time answer to whether scoped plan text may be sent to TypeSafe: `install.py --allow-remote-judge` (or `--no-remote-judge`), or `python3 .claude/skills/plan-anchoring/scripts/plan_anchor_settings.py set allow_remote_judge true\|false` (in the install folder); commit the file. Absent or `false`: live calls are refused |
 
 Offline dry runs, deterministic lint/shape/render commands, fixture-answer tests, and record maintenance need neither value. They support development and inspection; they do not replace the live rubric, tuning, and gate judgments required by the skill.
+
 
 ## Cloud and remote agents
 
@@ -144,6 +165,8 @@ In a Claude Code, Codex, or Cursor session the installed skill does this for you
 
 ## What you get back
 
+### Gate verdicts
+
 | Verdict | Meaning | Planning gate | Development gate |
 | --- | --- | --- | --- |
 | `contradicted` | The item proposes or did what the anchor rules out | Change the approach or escalate | Block acceptance |
@@ -156,9 +179,47 @@ In a Claude Code, Codex, or Cursor session the installed skill does this for you
 
 Every run is stored in `anchor-runs/` so edits can be diffed against the last run. Coverage, counts and "satisfied anywhere" are computed from run files, never asked of Jev. Verdicts are gate outcomes, but before editing on one, the caller re-reads the exact text that was sent and says so in the report if Jev looks wrong.
 
+### Trace classes
+
+| Class | Meaning | Remedy (references/record-trace.md) |
+| --- | --- | --- |
+| `conflicts` (red) | The record contradicts the anchor | Resolve it: cut, reconcile, or have the owner change the anchor |
+| `exceeds` (yellow) | The record goes beyond the anchor | Delete the excess, keep it per the cleanup level, or propose an anchor |
+| `serves` (green) | The record states what the anchor requires | Nothing |
+| `related` (blue) | Same subject, neither serves nor conflicts | Nothing |
+| `none` (grey) | No relation | Nothing |
+
+A duplicate statement (one obligation stated in two records) is always corrected by keeping it in one record and deleting the other copy.
+
+## Subcommands
+
+`jev_judge.py` owns everything that must not be left to a language model.
+
+| Subcommand | Does |
+| --- | --- |
+| `add`, `update`, `retire`, `promote` | Maintain the anchor record; `add` allocates the next `ANC-NNN`, lints the statement and refuses near-duplicates |
+| `exclude` | Record that an anchor does not apply to one plan item; `judge` reports it as excluded |
+| `lint`, `rubric`, `dedupe`, `shape` | Testability lint (deterministic); Jev-judged testability rubric; similar-anchor detection (token Jaccard, optionally Jev); per-bead size and ceremony metrics |
+| `validate`, `render` | Check the record; write `anchors.md` |
+| `set-beads` | Record the anchor tree's bead IDs |
+| `compose-item` | Turn tracker `show --json` output into the labelled item text the agents send |
+| `agent-preflight` | Canonicalize and confine agent-provided paths to the repository; validate IDs and PR numbers before any read or upload |
+| `judge` | One Jev request per anchor for one item at the plan or dev gate; gating; writes the run file. Exit 0 when the run completed (outcome in `data.summary.pass`), 2 fatal; the only exit codes are 0, 2 and 130 |
+| `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
+| `tournament` | Run and score a question tournament for one anchor; `data.accepted` |
+| `batch`, `bead-batch` | Low layer: JSONL requests in, one result line per (item, candidate, repeat) out; high layer: item beads × one anchor's question bead |
+| `trace` | Judge REQ/ADR/NFR records × locked anchors, then find duplicate statements; writes `trace-<UTC>.json` |
+| `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
+
+`change_report.py` renders the change report, or with `--trace` the trace report, plus the Proposed fixes tab with `--proposals`.
+
+The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
+
 ## Repository layout
 
 ```
+site/                                      published website: announcements, reports, diagrams, examples
+scripts/build-site.py, build-examples.py   build the site's derived pages and examples at deploy
 docs/
 ├── plan-anchor-prd.md                     product requirements
 └── design/                                architecture, call graphs, data model, gating
@@ -179,25 +240,6 @@ plugins/sc-plan-anchor/
     ├── harness/{claude,codex,cursor}/     agent frontmatter and registry per harness
     └── legacy-owned.json                  bytes of earlier releases, for pre-lock upgrades
 ```
-
-### The script
-
-`jev_judge.py` owns everything that must not be left to a language model.
-
-| Subcommand | Does |
-| --- | --- |
-| `add`, `update`, `retire`, `promote` | Maintain the anchor record; `add` allocates the next `ANC-NNN`, lints the statement and refuses near-duplicates |
-| `lint`, `rubric`, `dedupe`, `shape` | Testability lint (deterministic); Jev-judged testability rubric; duplicate detection (lexical, optionally Jev); per-bead size and ceremony metrics |
-| `validate`, `render` | Check the record; write `anchors.md` |
-| `set-beads` | Record the anchor tree's bead IDs |
-| `compose-item` | Turn `bd show --json` output into the labelled item text the agents send |
-| `agent-preflight` | Canonicalize and confine agent-provided paths to the repository; validate IDs and PR numbers before any read or upload |
-| `judge` | One Jev request per anchor for one item; gating; writes the run file. Exit 0 when the run completed (outcome in `data.summary.pass`), 2 fatal; the only exit codes are 0, 2 and 130 |
-| `check-fixtures` | Judge each anchor's pass and fail fixture sentences and confirm they land as expected |
-| `report`, `coverage`, `diff` | Render a run; anchors × items matrix; verdict and composed-item size changes between runs |
-
-The shared sc-decidr client owns provider retries and status classification; plan-anchor does not resend provider failures, and records the wheel's attempt count on typed failures. Credential and consent failures abort immediately.
-
 
 ## Development
 
@@ -232,15 +274,7 @@ python3 $S judge --anchors $X/anchors.example.json --gate plan --all --item-id s
 
 ## Status
 
-Revision 0.4 builds on the first real multi-sprint use and 245 live Jev requests ([docs/experiments/2026-10-10-phase-h-jev-experiments.md](docs/experiments/2026-10-10-phase-h-jev-experiments.md)). It adds the independent Opus/Sol tuner, harness-specific agents, repository-confined inputs, credential redaction, and remediation growth checks. The measured 0.3 findings remain the basis for the gate design:
-
-- Anchors are testable requirements with the user's words kept as a `quote`; a testability lint, a Jev-judged rubric and deduplication guard capture, because the first live use minted untestable, duplicated anchors from raw sentences.
-- Anchor kinds: prohibitions are judged on contradiction only and structural anchors by their deterministic check, because the generic "addressed" question failed both on every bead.
-- The planning gate judges a bead's description and acceptance criteria; a planted contradiction scored 0.79 near the top of a bead and 0.46 when buried 28k characters into its design. An oversized bead is a symptom, triaged as unapproved work, then prose and ceremony, then split last; `shape` measures it first.
-- Per-anchor question tuning is an independent higher-reasoning agent's job. It freezes an intent-derived oracle before its first Jev call and iterates wording without access to a plan-pass objective.
-- Near-threshold cells are re-asked once because run-to-run noise flipped one cell in six; every cell reports its leaning.
-
-The offline suite runs on Linux, macOS and Windows in CI. The repository is a Claude, Codex, and Cursor marketplace containing the `sc-plan-anchor` plugin; the plugin ships the installer, which renders the shared skill body and separate harness-owned agent definitions into a folder.
+Version 0.16.0. The repository is a Claude, Codex and Cursor marketplace containing the `sc-plan-anchor` plugin, whose installer renders the shared skill body and harness-owned agent definitions into a folder. The offline suite runs on Linux, macOS and Windows in CI. [docs/experiments/2026-10-10-phase-h-jev-experiments.md](docs/experiments/2026-10-10-phase-h-jev-experiments.md) records the live measurements behind the gate design.
 
 ## Versioning
 

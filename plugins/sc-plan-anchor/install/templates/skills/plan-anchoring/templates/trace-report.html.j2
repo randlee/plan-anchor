@@ -21,6 +21,14 @@ defaults:
   dup_message: ""
   fully_restated_action: ""
   guidance_url: ""
+  proposals_run: ""
+  proposal_count: "0"
+  proposal_sections: []
+  reply_hint: ""
+  totals_rows: []
+  proposal_warnings: []
+  level: ""
+  not_proposed: []
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -88,6 +96,7 @@ defaults:
     <nav class="tabs" role="tablist">
       <button type="button" class="tab active" role="tab" data-tab="tab-grid">Anchors × Records</button>
       <button type="button" class="tab" role="tab" data-tab="tab-dup">Duplicates{% if overlap_run %}{% if dup_rows %} <span class="badge">(!)</span>{% endif %} {{ dup_count | e }}{% endif %}</button>
+      <button type="button" class="tab" role="tab" data-tab="tab-prop">Proposed fixes{% if proposals_run %} {{ proposal_count | e }}{% endif %}</button>
     </nav>
     <p class="legend"><span class="c-serves">serves</span><span class="c-related">related</span><span class="c-exceeds">exceeds</span><span class="c-conflicts">conflicts</span><span class="c-none">none</span> Click a coloured cell, a record (row) or an anchor (column).</p>
   </header>
@@ -150,6 +159,43 @@ defaults:
 {% endif %}
 {% else %}
       <p>Duplicates: not run (trace ran with --no-overlap).</p>
+{% endif %}
+    </div>
+    <div class="tab-body" id="tab-prop" hidden>
+{% if proposals_run %}
+      <p class="statement">Cleanup level: {{ level | e }}</p>
+      <p class="statement">{{ reply_hint | e }}</p>
+      <h3>If all are approved</h3>
+      <table>
+        <thead><tr><th scope="col"></th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
+        <tbody>
+{% for r in totals_rows %}
+          <tr><th scope="row">{{ r.label | e }}</th><td>{{ r.before | e }}</td><td>{{ r.after | e }}</td></tr>
+{% endfor %}
+        </tbody>
+      </table>
+{% if proposal_warnings %}
+      <h3>Check before approving</h3>
+      <ul>
+{% for w in proposal_warnings %}
+        <li>{{ w | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% if not_proposed %}
+      <h3>Not proposed</h3>
+      <p class="small">A proposer failed or timed out on these slices; nothing was proposed for them.</p>
+      <ul>
+{% for x in not_proposed %}
+        <li>{{ x | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% for section in proposal_sections %}
+{{ section | safe }}
+{% endfor %}
+{% else %}
+      <p>No proposals yet (run change_report.py --trace with --proposals; references/record-cleanup.md).</p>
 {% endif %}
     </div>
     <div id="side">

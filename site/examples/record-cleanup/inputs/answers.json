@@ -1,0 +1,6158 @@
+{
+ "REQ-SAG-0003/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.73,
+   "probabilities": {
+    "no": 0.82,
+    "unclear": 0.02,
+    "yes": 0.16
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.01,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.8,
+   "probabilities": {
+    "no": 0.87,
+    "unclear": 0.07,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.55,
+   "probabilities": {
+    "no": 0.7,
+    "unclear": 0.03,
+    "yes": 0.27
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.02,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.03,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.14,
+    "unclear": 0.0,
+    "yes": 0.86
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.02,
+    "unclear": 0.0,
+    "yes": 0.98
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "yes",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.02,
+    "unclear": 0.01,
+    "yes": 0.97
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.03,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.01,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.02,
+    "yes": 0.12
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.02,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.5,
+   "probabilities": {
+    "no": 0.67,
+    "unclear": 0.01,
+    "yes": 0.32
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.03,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.03,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.58,
+   "probabilities": {
+    "no": 0.72,
+    "unclear": 0.01,
+    "yes": 0.27
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.8,
+   "probabilities": {
+    "no": 0.87,
+    "unclear": 0.0,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.0,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.4,
+   "probabilities": {
+    "no": 0.6,
+    "unclear": 0.03,
+    "yes": 0.37
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.55,
+   "probabilities": {
+    "no": 0.29,
+    "unclear": 0.01,
+    "yes": 0.7
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.52,
+   "probabilities": {
+    "no": 0.31,
+    "unclear": 0.01,
+    "yes": 0.68
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.4,
+   "probabilities": {
+    "no": 0.6,
+    "unclear": 0.02,
+    "yes": 0.38
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.61,
+   "probabilities": {
+    "no": 0.74,
+    "unclear": 0.06,
+    "yes": 0.2
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.43,
+   "probabilities": {
+    "no": 0.37,
+    "unclear": 0.01,
+    "yes": 0.62
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.4,
+   "probabilities": {
+    "no": 0.39,
+    "unclear": 0.01,
+    "yes": 0.6
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.68,
+   "probabilities": {
+    "no": 0.79,
+    "unclear": 0.03,
+    "yes": 0.18
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0003/overlap": {
+  "REQ_SAG_0008_s0": {
+   "choice": "no",
+   "confidence": 0.35,
+   "probabilities": {
+    "no": 0.57,
+    "unclear": 0.2,
+    "yes": 0.23
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0008_s1": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.07,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0008_s2": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.48,
+   "probabilities": {
+    "no": 0.65,
+    "unclear": 0.11,
+    "yes": 0.24
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.55,
+   "probabilities": {
+    "no": 0.29,
+    "unclear": 0.01,
+    "yes": 0.7
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.4,
+   "probabilities": {
+    "no": 0.39,
+    "unclear": 0.01,
+    "yes": 0.6
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.26,
+   "probabilities": {
+    "no": 0.51,
+    "unclear": 0.06,
+    "yes": 0.43
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.64,
+   "probabilities": {
+    "no": 0.76,
+    "unclear": 0.09,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.38,
+   "probabilities": {
+    "no": 0.39,
+    "unclear": 0.02,
+    "yes": 0.59
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.58,
+   "probabilities": {
+    "no": 0.24,
+    "unclear": 0.04,
+    "yes": 0.72
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.43,
+   "probabilities": {
+    "no": 0.62,
+    "unclear": 0.07,
+    "yes": 0.31
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.72,
+   "probabilities": {
+    "no": 0.81,
+    "unclear": 0.01,
+    "yes": 0.18
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.02,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.03,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.02,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.0,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.0,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.03,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.01,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.01,
+    "yes": 0.11
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0008/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.26,
+   "probabilities": {
+    "no": 0.51,
+    "unclear": 0.11,
+    "yes": 0.38
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.19,
+    "unclear": 0.01,
+    "yes": 0.8
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.5,
+   "probabilities": {
+    "no": 0.32,
+    "unclear": 0.01,
+    "yes": 0.67
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.52,
+   "probabilities": {
+    "no": 0.68,
+    "unclear": 0.03,
+    "yes": 0.29
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.01,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.42,
+   "probabilities": {
+    "no": 0.38,
+    "unclear": 0.01,
+    "yes": 0.61
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.64,
+   "probabilities": {
+    "no": 0.76,
+    "unclear": 0.04,
+    "yes": 0.2
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.02,
+    "yes": 0.09
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.01,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.66,
+   "probabilities": {
+    "no": 0.77,
+    "unclear": 0.02,
+    "yes": 0.21
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.03,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.85,
+   "probabilities": {
+    "no": 0.9,
+    "unclear": 0.02,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.01,
+    "yes": 0.11
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0010/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.04,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.53,
+   "probabilities": {
+    "no": 0.3,
+    "unclear": 0.01,
+    "yes": 0.69
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.53,
+   "probabilities": {
+    "no": 0.3,
+    "unclear": 0.01,
+    "yes": 0.69
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.53,
+   "probabilities": {
+    "no": 0.69,
+    "unclear": 0.09,
+    "yes": 0.22
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.06,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.46,
+   "probabilities": {
+    "no": 0.64,
+    "unclear": 0.01,
+    "yes": 0.35
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.04,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.09,
+    "unclear": 0.0,
+    "yes": 0.91
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.03,
+    "unclear": 0.0,
+    "yes": 0.97
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "yes",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.01,
+    "unclear": 0.0,
+    "yes": 0.99
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.05,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.01,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.67,
+   "probabilities": {
+    "no": 0.78,
+    "unclear": 0.02,
+    "yes": 0.2
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.0,
+    "yes": 0.06
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.01,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.0,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.73,
+   "probabilities": {
+    "no": 0.82,
+    "unclear": 0.01,
+    "yes": 0.17
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.01,
+    "yes": 0.07
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.8,
+    "unclear": 0.05,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.62,
+   "probabilities": {
+    "no": 0.75,
+    "unclear": 0.02,
+    "yes": 0.23
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.01,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.72,
+   "probabilities": {
+    "no": 0.81,
+    "unclear": 0.01,
+    "yes": 0.18
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0019/overlap": {
+  "REQ_SAG_0101_s0": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0101_s1": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.05,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s0": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s1": {
+   "choice": "no",
+   "confidence": 0.72,
+   "probabilities": {
+    "no": 0.81,
+    "unclear": 0.14,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s2": {
+   "choice": "no",
+   "confidence": 0.85,
+   "probabilities": {
+    "no": 0.9,
+    "unclear": 0.06,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s4": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s0": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.05,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s1": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s2": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s3": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s4": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.03,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s5": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s6": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s7": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s8": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s9": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s0": {
+   "choice": "yes",
+   "confidence": 0.5,
+   "probabilities": {
+    "no": 0.23,
+    "unclear": 0.1,
+    "yes": 0.67
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s1": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.04,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s2": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s3": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s5": {
+   "choice": "no",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.8,
+    "unclear": 0.13,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s6": {
+   "choice": "no",
+   "confidence": 0.64,
+   "probabilities": {
+    "no": 0.76,
+    "unclear": 0.08,
+    "yes": 0.16
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s7": {
+   "choice": "yes",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.07,
+    "unclear": 0.02,
+    "yes": 0.91
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.56,
+   "probabilities": {
+    "no": 0.71,
+    "unclear": 0.14,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.09,
+    "unclear": 0.0,
+    "yes": 0.91
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.02,
+    "unclear": 0.0,
+    "yes": 0.98
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.6,
+   "probabilities": {
+    "no": 0.73,
+    "unclear": 0.09,
+    "yes": 0.18
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.04,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.66,
+   "probabilities": {
+    "no": 0.77,
+    "unclear": 0.01,
+    "yes": 0.22
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.03,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.02,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.6,
+   "probabilities": {
+    "no": 0.73,
+    "unclear": 0.16,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.67,
+   "probabilities": {
+    "no": 0.21,
+    "unclear": 0.01,
+    "yes": 0.78
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.04,
+    "unclear": 0.01,
+    "yes": 0.95
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.35,
+   "probabilities": {
+    "no": 0.57,
+    "unclear": 0.22,
+    "yes": 0.21
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.02,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.03,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.01,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.01,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.01,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.0,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.67,
+   "probabilities": {
+    "no": 0.78,
+    "unclear": 0.01,
+    "yes": 0.21
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.06,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.25,
+   "probabilities": {
+    "no": 0.5,
+    "unclear": 0.02,
+    "yes": 0.48
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.52,
+   "probabilities": {
+    "no": 0.68,
+    "unclear": 0.02,
+    "yes": 0.3
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.43,
+   "probabilities": {
+    "no": 0.62,
+    "unclear": 0.03,
+    "yes": 0.35
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0101/overlap": {
+  "REQ_SAG_0102_s0": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s1": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s2": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0102_s4": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s0": {
+   "choice": "no",
+   "confidence": 0.56,
+   "probabilities": {
+    "no": 0.71,
+    "unclear": 0.16,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s1": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s2": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s5": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s6": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s7": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s8": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s9": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s0": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s1": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.07,
+    "yes": 0.09
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s2": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.06,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s3": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.07,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s5": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s6": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s7": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.02,
+    "unclear": 0.0,
+    "yes": 0.98
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.01,
+    "unclear": 0.0,
+    "yes": 0.99
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "yes",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.02,
+    "unclear": 0.0,
+    "yes": 0.98
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.05,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.8,
+   "probabilities": {
+    "no": 0.87,
+    "unclear": 0.01,
+    "yes": 0.12
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.01,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.01,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.04,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.01,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.28,
+   "probabilities": {
+    "no": 0.47,
+    "unclear": 0.01,
+    "yes": 0.52
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.04,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.85,
+   "probabilities": {
+    "no": 0.9,
+    "unclear": 0.01,
+    "yes": 0.09
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.06,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.02,
+    "yes": 0.03
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.03,
+    "unclear": 0.0,
+    "yes": 0.97
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 0.0,
+    "unclear": 0.0,
+    "yes": 1.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "yes",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.04,
+    "unclear": 0.0,
+    "yes": 0.96
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.02,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.01,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.74,
+   "probabilities": {
+    "no": 0.83,
+    "unclear": 0.03,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.03,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.01,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.8,
+    "unclear": 0.01,
+    "yes": 0.19
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.02,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.01,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.0,
+    "yes": 0.14
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.02,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.8,
+   "probabilities": {
+    "no": 0.87,
+    "unclear": 0.02,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.01,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.02,
+    "yes": 0.07
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.61,
+   "probabilities": {
+    "no": 0.74,
+    "unclear": 0.01,
+    "yes": 0.25
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.01,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.01,
+    "yes": 0.15
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0102/overlap": {
+  "REQ_SAG_0103_s0": {
+   "choice": "no",
+   "confidence": 0.34,
+   "probabilities": {
+    "no": 0.56,
+    "unclear": 0.18,
+    "yes": 0.26
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s1": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s2": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s5": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s6": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s7": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s8": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0103_s9": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s0": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s1": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.05,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s2": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s5": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s6": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s7": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-001": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.03,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.34,
+   "probabilities": {
+    "no": 0.56,
+    "unclear": 0.01,
+    "yes": 0.43
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.61,
+   "probabilities": {
+    "no": 0.74,
+    "unclear": 0.01,
+    "yes": 0.25
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.05,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.02,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.8,
+    "unclear": 0.01,
+    "yes": 0.19
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.05,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.0,
+    "yes": 0.09
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.44,
+   "probabilities": {
+    "no": 0.63,
+    "unclear": 0.01,
+    "yes": 0.36
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.82,
+   "probabilities": {
+    "no": 0.88,
+    "unclear": 0.09,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.73,
+   "probabilities": {
+    "no": 0.82,
+    "unclear": 0.01,
+    "yes": 0.17
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.7,
+   "probabilities": {
+    "no": 0.8,
+    "unclear": 0.16,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.02,
+    "yes": 0.04
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.04,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.14,
+    "unclear": 0.01,
+    "yes": 0.85
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.1,
+    "unclear": 0.01,
+    "yes": 0.89
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.33,
+   "probabilities": {
+    "no": 0.55,
+    "unclear": 0.15,
+    "yes": 0.3
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.04,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.0,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.02,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.03,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.0,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.76,
+   "probabilities": {
+    "no": 0.84,
+    "unclear": 0.01,
+    "yes": 0.15
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.85,
+    "unclear": 0.05,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.26,
+   "probabilities": {
+    "no": 0.51,
+    "unclear": 0.01,
+    "yes": 0.48
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.55,
+   "probabilities": {
+    "no": 0.29,
+    "unclear": 0.01,
+    "yes": 0.7
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.02,
+    "yes": 0.05
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.74,
+   "probabilities": {
+    "no": 0.83,
+    "unclear": 0.05,
+    "yes": 0.12
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.38,
+   "probabilities": {
+    "no": 0.59,
+    "unclear": 0.01,
+    "yes": 0.4
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.56,
+   "probabilities": {
+    "no": 0.28,
+    "unclear": 0.01,
+    "yes": 0.71
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.8,
+   "probabilities": {
+    "no": 0.87,
+    "unclear": 0.03,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.6,
+   "probabilities": {
+    "no": 0.73,
+    "unclear": 0.01,
+    "yes": 0.26
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.01,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.01,
+    "yes": 0.13
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0103/overlap": {
+  "REQ_SAG_0801_s0": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s1": {
+   "choice": "no",
+   "confidence": 0.64,
+   "probabilities": {
+    "no": 0.76,
+    "unclear": 0.13,
+    "yes": 0.11
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s2": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s3": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s4": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s5": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s6": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "REQ_SAG_0801_s7": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.05,
+    "yes": 0.03
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-001": {
+  "conflicts": {
+   "choice": "yes",
+   "confidence": 0.61,
+   "probabilities": {
+    "no": 0.23,
+    "unclear": 0.03,
+    "yes": 0.74
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.64,
+   "probabilities": {
+    "no": 0.23,
+    "unclear": 0.01,
+    "yes": 0.76
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.62,
+   "probabilities": {
+    "no": 0.24,
+    "unclear": 0.01,
+    "yes": 0.75
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.02,
+    "yes": 0.04
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-002": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.03,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.01,
+    "yes": 0.03
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-003": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.0,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-004": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.02,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-005": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-006": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-007": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.06,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.86,
+   "probabilities": {
+    "no": 0.91,
+    "unclear": 0.01,
+    "yes": 0.08
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.31,
+   "probabilities": {
+    "no": 0.54,
+    "unclear": 0.01,
+    "yes": 0.45
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.0,
+    "yes": 0.01
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-008": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.04,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.02,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.02,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-009": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.31,
+   "probabilities": {
+    "no": 0.54,
+    "unclear": 0.06,
+    "yes": 0.4
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "yes",
+   "confidence": 0.77,
+   "probabilities": {
+    "no": 0.14,
+    "unclear": 0.01,
+    "yes": 0.85
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "yes",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.13,
+    "unclear": 0.01,
+    "yes": 0.86
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "yes",
+   "confidence": 0.73,
+   "probabilities": {
+    "no": 0.16,
+    "unclear": 0.02,
+    "yes": 0.82
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-010": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.04,
+    "yes": 0.02
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.66,
+   "probabilities": {
+    "no": 0.77,
+    "unclear": 0.01,
+    "yes": 0.22
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.62,
+   "probabilities": {
+    "no": 0.75,
+    "unclear": 0.06,
+    "yes": 0.19
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.92,
+   "probabilities": {
+    "no": 0.95,
+    "unclear": 0.01,
+    "yes": 0.04
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-011": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.03,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.83,
+   "probabilities": {
+    "no": 0.89,
+    "unclear": 0.01,
+    "yes": 0.1
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.68,
+   "probabilities": {
+    "no": 0.79,
+    "unclear": 0.02,
+    "yes": 0.19
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.96,
+   "probabilities": {
+    "no": 0.97,
+    "unclear": 0.01,
+    "yes": 0.02
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-012": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.43,
+   "probabilities": {
+    "no": 0.62,
+    "unclear": 0.03,
+    "yes": 0.35
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.58,
+   "probabilities": {
+    "no": 0.72,
+    "unclear": 0.01,
+    "yes": 0.27
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.58,
+   "probabilities": {
+    "no": 0.72,
+    "unclear": 0.01,
+    "yes": 0.27
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.88,
+   "probabilities": {
+    "no": 0.92,
+    "unclear": 0.0,
+    "yes": 0.08
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-013": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.89,
+   "probabilities": {
+    "no": 0.93,
+    "unclear": 0.01,
+    "yes": 0.06
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.85,
+   "probabilities": {
+    "no": 0.9,
+    "unclear": 0.01,
+    "yes": 0.09
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.79,
+   "probabilities": {
+    "no": 0.86,
+    "unclear": 0.01,
+    "yes": 0.13
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-014": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.91,
+   "probabilities": {
+    "no": 0.94,
+    "unclear": 0.01,
+    "yes": 0.05
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.94,
+   "probabilities": {
+    "no": 0.96,
+    "unclear": 0.0,
+    "yes": 0.04
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-015": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.58,
+   "probabilities": {
+    "no": 0.72,
+    "unclear": 0.05,
+    "yes": 0.23
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.49,
+   "probabilities": {
+    "no": 0.66,
+    "unclear": 0.02,
+    "yes": 0.32
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 0.66,
+   "probabilities": {
+    "no": 0.77,
+    "unclear": 0.02,
+    "yes": 0.21
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 0.74,
+   "probabilities": {
+    "no": 0.83,
+    "unclear": 0.03,
+    "yes": 0.14
+   },
+   "type": "choice"
+  }
+ },
+ "REQ-SAG-0801/ANC-016": {
+  "conflicts": {
+   "choice": "no",
+   "confidence": 0.98,
+   "probabilities": {
+    "no": 0.99,
+    "unclear": 0.01,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "exceeds": {
+   "choice": "no",
+   "confidence": 0.97,
+   "probabilities": {
+    "no": 0.98,
+    "unclear": 0.01,
+    "yes": 0.01
+   },
+   "type": "choice"
+  },
+  "relates": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  },
+  "serves": {
+   "choice": "no",
+   "confidence": 1.0,
+   "probabilities": {
+    "no": 1.0,
+    "unclear": 0.0,
+    "yes": 0.0
+   },
+   "type": "choice"
+  }
+ }
+}

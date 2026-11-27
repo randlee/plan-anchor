@@ -6,8 +6,9 @@ required_variables:
   - dom
   - title
   - blocks
-  - copy_json
 defaults:
+  copy_json: ""
+  copy_label: "Copy Context"
   cls: ""
   subtitle: ""
   context_text: ""
@@ -16,9 +17,11 @@ defaults:
   <div class="section-head">
     <h2>{{ title | e }}</h2>
     <div class="section-actions" role="group" aria-label="Copy">
+{% if copy_json %}
       <button type="button" class="icon-button" title="Copy JSON" data-copy-text="{{ copy_json | e }}">{}</button>
+{% endif %}
 {% if context_text %}
-      <button type="button" class="icon-button" title="Copy Context" data-copy-text="{{ context_text | e }}">&#x2398;</button>
+      <button type="button" class="icon-button" title="{{ copy_label | e }}" data-copy-text="{{ context_text | e }}">&#x2398;</button>
 {% endif %}
     </div>
   </div>
