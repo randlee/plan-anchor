@@ -37,7 +37,7 @@ def with_run(args: argparse.Namespace,
              command: Callable[[Any], Result[dict, ClientError]]) -> Result[dict, ClientError]
     # dry run or --answers-file: command(None); the wheel is never imported (REQ-016, REQ-047).
     # live: with decidr_client.open_run(model=args.model, project=args.project, timeout_secs=args.timeout,
-    #                                   workers=args.max_workers, repeat=args.repeat) as run: command(run)  (Err -> returned, nothing sent)
+    #                                   workers=args.max_workers) as run: command(run)  (Err -> returned, nothing sent)
 def dry_run_sink(args: argparse.Namespace, run_dir: pathlib.Path) -> Result[Callable[[Mapping[str, Any]], None], ClientError]
     # writes each would-send request, redact_secrets'd, as one JSON line to --out or stdout;
     # --out inside run_dir: Err VALIDATION.INPUT (REQ-083)
@@ -52,7 +52,8 @@ def run_recorded_batch(run: Any | None, lines: list, settings: decidr_client.Bat
                        on_request: Callable[[Any], object] | None = None,
                        answers_out: dict[str, Mapping[str, Any]] | None = None) -> Result[decidr_client.StreamedResult, ClientError]
     # validate_request_lines -> batch_jobs -> decidr_client.run_batch(run, jobs, settings, on_line=..., fixture=fixture,
-    #   on_request=on_request, abort_on=frozenset({"auth"}), verdict=batch_verdict, consent_what=...);
+    #   on_request=on_request, abort_on=frozenset({"auth"}), verdict=batch_verdict, consent_what=...,
+    #   cache=False if settings.repeat > 1 else None)  (REQ-085);
     # on_line appends encode_result_line(line) to log_path (None on dry run), echoes when echo, fills answers_out[request_id]
 def read_batch_results(path: str) -> Result[list[dict], ClientError]                       # /2 only
 def index_stream(raw_lines: list[dict], jobs: list[decidr_client.BatchJob],
@@ -101,7 +102,7 @@ Error ids: none new. `VALIDATION.INPUT` (dry-run `--out` inside `anchor-runs/`),
 
 New capability (counted separately): `add --dry-run` (REQ-083 names every `--dry-run`; `add --rubric` sends today with no dry run).
 
-Upstream dependency: j-3/j-4 add per-call `cache=` (`Run.send`/`send_batch`, `call_result`; about +4 Rust, planned there, not here). Lead decision 2026-11-26 (rule 0).
+Upstream dependency: j-3 adds a per-call `cache=` override on `Run.send`/`send_batch`; j-4 adds `cache: bool | None = None` to `call_result(...)` and `run_batch(...)` and drops `open_run(repeat=)` (about +4 Rust, planned there, not here). plan-anchor uses only the per-call flag: one cache mechanism. Lead decision 2026-11-26 (rule 0).
 
 ## External contracts (examples)
 
