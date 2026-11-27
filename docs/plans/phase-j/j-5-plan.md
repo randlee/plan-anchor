@@ -53,7 +53,7 @@ def run_recorded_batch(run: Any | None, lines: list, settings: decidr_client.Bat
                        answers_out: dict[str, Mapping[str, Any]] | None = None) -> Result[decidr_client.StreamedResult, ClientError]
     # validate_request_lines -> batch_jobs -> decidr_client.run_batch(run, jobs, settings, on_line=..., fixture=fixture,
     #   on_request=on_request, abort_on=frozenset({"auth"}), verdict=batch_verdict, consent_what=...,
-    #   cache=False if settings.repeat > 1 else None)  (REQ-085);
+    #   cache=None)  (repeats > 1 are uncached inside j-4 run_batch; not restated here, ANC-015);
     # on_line appends encode_result_line(line) to log_path (None on dry run), echoes when echo, fills answers_out[request_id]
 def read_batch_results(path: str) -> Result[list[dict], ClientError]                       # /2 only
 def index_stream(raw_lines: list[dict], jobs: list[decidr_client.BatchJob],
