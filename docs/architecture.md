@@ -312,9 +312,9 @@ Date: 2026-11-24.
 
 Every Jev query from every tool goes through sc-agent `send` or
 `send_batch` and gets one session-log row keyed by its ULID `session_id`
-(owner ruling, 2026-11-24). Run files, result lines and the tournament log
-copied the answers, `model_answered` and attempt counts that the row already
-holds.
+(owner ruling, 2026-11-24). The problem: run files, result lines and the
+tournament log copied the answers, `model_answered` and attempt counts that
+the row already holds, so each was recorded twice.
 
 ### Decision
 
@@ -337,5 +337,6 @@ Every Jev query from every tool already goes through sc-agent send or send_batch
 
 ### Consequences
 
-Reading an answer, or rescoring a tournament with `--results`,
+Each answer, `model_answered` and attempt count is recorded once, in the
+session-log row. Reading an answer, or rescoring a tournament with `--results`,
 needs the sc-agent session log. REQ-PA-0013, REQ-PA-0038, REQ-PA-0076, REQ-PA-0083.
