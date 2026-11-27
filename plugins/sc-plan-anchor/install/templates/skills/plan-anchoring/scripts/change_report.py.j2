@@ -799,6 +799,9 @@ PROPOSALS_SCHEMA = "plan-anchoring/record-cleanup-proposals/1"
 PROPOSAL_KINDS = {"delete": "delete", "consolidate": "consolidate", "cut_excess": "cut excess",
                   "resolve_conflict": "resolve conflict", "propose_anchor": "propose anchor",
                   "keep_with_reason": "keep with reason"}
+LEVELS = ("aggressive", "standard", "conservative")
+RESOLUTIONS = ("cut", "reconcile", "propose_anchor")
+CODE_RE = re.compile(r"\S+:\S+(?: \S+:\S+)*")
 REPLY_HINT = "Reply e.g.: approve 1-5, reject 6, change 7 to: <text>"
 WORD_RE = re.compile(r"[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*")
 
@@ -827,7 +830,7 @@ def statement_index(record: dict, text: str) -> Optional[int]:
 
 
 def is_cut(before: str, after: str, ids: set) -> bool:
-    """True when ``after`` is ``before`` with words deleted (record ids may be added): a cut, never a rewording."""
+    """True when ``after`` is ``before`` with words deleted (record ids may be added): a cut, not a rewording."""
     words = iter(w.lower() for w in WORD_RE.findall(before))
     return all(w in ids or w.lower() in words for w in WORD_RE.findall(after))
 
@@ -837,6 +840,13 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
     if not isinstance(doc, dict) or doc.get("schema") != PROPOSALS_SCHEMA or not isinstance(doc.get("proposals"), list):
         return [f"schema must be {PROPOSALS_SCHEMA} with a proposals array"]
     out = []
+    level = doc.get("level", "standard")
+    if level not in LEVELS:
+        out.append(f"level must be one of {', '.join(LEVELS)}")
+    skipped = doc.get("not_proposed", [])
+    if not isinstance(skipped, list) or not all(isinstance(x, dict) and isinstance(x.get("slice"), str)
+                                                and isinstance(x.get("reason"), str) for x in skipped):
+        out.append("not_proposed must be a list of {slice, reason}")
     for n, p in enumerate(doc["proposals"], start=1):
         if not isinstance(p, dict):
             out.append(f"proposal {n} must be an object")
@@ -865,14 +875,27 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
         if not isinstance(changes, list):
             out.append(f"proposal {n}: changes must be an array")
             continue
+        has_anchor = isinstance(p.get("proposed_anchor"), str) and bool(p["proposed_anchor"].strip())
+        resolution = p.get("resolution")
         if kind == "keep_with_reason":
             if changes:
                 out.append(f"proposal {n}: keep_with_reason changes nothing; move the changes to another proposal")
-            out += [f"proposal {n}: keep_with_reason is only for a record no anchor covers; {r} is covered" for r in recs
-                    if r in records and r not in no_relation]
+            covered = [r for r in recs if r in records and r not in no_relation]
+            if covered and level == "aggressive":
+                out.append(f"proposal {n}: keep_with_reason is refused at aggressive for a record an anchor covers ({', '.join(covered)})")
+            elif covered and not CODE_RE.fullmatch(str(p.get("code") or "")):
+                out.append(f"proposal {n}: keep_with_reason for a record an anchor covers ({', '.join(covered)}) must cite the code it "
+                           "documents as code: \"file:symbol\"")
+        elif kind == "resolve_conflict":
+            if resolution not in RESOLUTIONS:
+                out.append(f"proposal {n}: resolve_conflict needs resolution, one of {', '.join(RESOLUTIONS)}")
+            elif resolution == "propose_anchor" and not has_anchor:
+                out.append(f"proposal {n}: resolution propose_anchor needs proposed_anchor (the anchor the owner would state)")
+            elif resolution != "propose_anchor" and not changes:
+                out.append(f"proposal {n}: resolution {resolution} must list its changes")
         elif not changes:
             out.append(f"proposal {n}: {kind} must list its changes")
-        if kind == "propose_anchor" and (not isinstance(p.get("proposed_anchor"), str) or not p["proposed_anchor"].strip()):
+        if kind == "propose_anchor" and not has_anchor:
             out.append(f"proposal {n}: propose_anchor needs proposed_anchor, and its changes delete the excess until the owner anchors it")
         for m, c in enumerate(changes, start=1):
             where = f"proposal {n} change {m}"
@@ -881,11 +904,14 @@ def proposal_problems(doc: Any, records: Dict[str, dict], no_relation: set) -> L
                 continue
             before, after = c.get("before"), c.get("after")
             if before is None and after is not None:
-                out.append(f"{where}: after needs before (the statement it cuts)")
+                out.append(f"{where}: after needs before (the statement it changes)")
             elif before is not None and not isinstance(before, str) or after is not None and not isinstance(after, str):
                 out.append(f"{where}: before and after must be strings")
             elif before is not None and after is not None and not is_cut(before, after, set(records)):
-                out.append(f"{where}: after is not a cut of before (it adds or rewords words); rewording is not a remedy")
+                if not isinstance(c.get("reword_justification"), str) or not c["reword_justification"].strip():
+                    out.append(f"{where}: after rewords before; rewording is rare and needs reword_justification")
+                elif kind == "resolve_conflict" and resolution == "cut":
+                    out.append(f"{where}: resolution cut only deletes words; a rewording is resolution reconcile")
     return out
 
 
@@ -931,17 +957,22 @@ def effect_line(e: dict) -> str:
 
 def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict]) -> dict:
     """One numbered "Proposed fixes" panel in the trace panel layout; its copy icon copies the panel as plain text."""
-    changes = []
+    changes, reworded = [], []
     for c in p.get("changes", []):
         rid, before, after = c["record"], c.get("before"), c.get("after")
         if before is None:
             changes.append(f"Delete record {rid} ({len(counted_statements(records[rid]))} statements).")
         elif after is None:
             changes.append(f"Delete from {rid}: “{_norm(before)}”")
-        else:
+        elif is_cut(before, after, set(records)):
             changes.append(f"Cut {rid}: “{_norm(before)}” → “{_norm(after)}”")
+        else:
+            changes.append(f"Reword {rid}: “{_norm(before)}” → “{_norm(after)}”")
+            reworded.append(f"{rid}: {_norm(c['reword_justification'])}")
+    if p.get("resolution"):
+        changes.insert(0, f"Resolution: {p['resolution'].replace('_', ' ')}.")
     if p["kind"] == "keep_with_reason":
-        changes.append("No change.")
+        changes.append("No change." + (f" Documents the code at {p['code']}." if p.get("code") else ""))
     if p.get("proposed_anchor"):
         changes.append(f"Proposed anchor for the owner: “{_norm(p['proposed_anchor'])}”")
     src = p["source"]
@@ -951,6 +982,8 @@ def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict]) -> dict:
               {"heading": "Justification", "items": [p["justification"]]},
               {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner: “{src['quote']}”" if src.get("quote") else "")]},
               {"heading": "Expected improvement", "items": [p["improvement"], effect_line(effect)]}]
+    if reworded:
+        blocks.insert(2, {"heading": "Rewording (rare; justified)", "items": reworded, "list": len(reworded) > 1})
     if warnings:
         blocks.append({"heading": "Check before approving", "items": warnings, "list": True})
     title, subtitle = f"{n}. {p['title']}", f"Wave {p['wave']} · {PROPOSAL_KINDS[p['kind']]}"
@@ -975,7 +1008,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
         return err("VALIDATION.INPUT", f"--name {name!r} must be a file stem of letters, digits, '.', '_' or '-'", "Pass --name like trace-phase-b.")
     anchors = {a["id"]: a for a in t["anchors"]}
     records = {r["id"]: r for r in t["records"]}
-    proposals = None
+    proposals, level, not_proposed = None, "", []
     if args.proposals:
         loaded = read_json(Path(args.proposals), "proposals file")
         if isinstance(loaded, Err):
@@ -987,6 +1020,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                        "Fix every problem in data.problems (references/record-cleanup.md, Proposals file) and rerun.",
                        data={"problems": problems})
         proposals = list(enumerate(loaded.value["proposals"], start=1))
+        level, not_proposed = loaded.value.get("level", "standard"), loaded.value.get("not_proposed", [])
     binary = find_sc_compose()
     if isinstance(binary, Err):
         return binary
@@ -1077,7 +1111,8 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                      {"label": "Statements", "before": str(totals["statements_before"]), "after": str(totals["statements_after"])},
                      {"label": "Duplicates", "before": str(totals["duplicates"]), "after": str(totals["duplicates"] - totals["duplicates_cleared"])},
                      {"label": "Conflicts", "before": str(totals["conflicts"]), "after": str(totals["conflicts"] - totals["conflicts_resolved"])}],
-                 "proposal_warnings": warnings}
+                 "proposal_warnings": warnings, "level": level,
+                 "not_proposed": [f"{x['slice']}: {x['reason']}" for x in not_proposed]}
         page = out / f"{name}.html"
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
@@ -1085,7 +1120,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"]),
                "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
-               "warnings": warnings})
+               "warnings": warnings, "level": level or None, "not_proposed": not_proposed})
 
 
 # ---------------------------------------------------------------- command

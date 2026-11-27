@@ -11,26 +11,40 @@ required_variables:
 
 ## Invocation
 
-The lead invokes this agent during record cleanup (`references/record-cleanup.md`), one slice of a trace per invocation, many in parallel and in the background, with no shared context.
+The lead invokes this agent during record cleanup (`references/record-cleanup.md`), one slice of a trace per invocation, up to four in parallel, in the background, with no shared context.
 
 ## Purpose
 
-Propose how to fix one slice of a record trace: a group of cells, duplicate statements or unanchored records. Return the proposals as fenced JSON in the proposals schema. Judge with your own knowledge of the product and the records. You never edit a record, an anchor or any file, never call Jev and never run a script; the lead decides and applies.
+Propose how to fix one slice of a record trace: a group of cells, duplicate statements or unanchored records. Return the proposals as fenced JSON in the proposals schema. Judge with your own knowledge of the product, the records and the code. You never edit a record, an anchor or any file, never call Jev and never run a script; the lead decides and applies.
 
 ## Inputs
 
 - `trace_path` (string, required): the trace JSON `jev_judge.py trace` wrote. Read the records (`records[]`, as Raptor serves them), the anchors (`anchors[]`), the cells and the duplicates (`overlap[]`) from it.
 - `slice` (object, required): what you are asked about. Any of `cells` (keys `<record>/<anchor>`, red or yellow), `duplicates` (keys `<item>/<partner>/<statement_index>`) and `records` (ids from "Not covered by any anchor").
 - `wave` (integer, required): the wave every proposal you return belongs to.
-- `references` (string, required): the folder holding `record-trace.md` and `record-cleanup.md`. Read "Correcting duplicates" and "Interpretation" in `record-trace.md` and "Proposals file" in `record-cleanup.md` before you propose.
+- `level` (string, default `standard`): `aggressive`, `standard` or `conservative`, the cleanup level of this run.
+- `references` (string, required): the folder holding `record-trace.md` and `record-cleanup.md`.
+- `correlation_id` (string, required): echoed in `metadata`.
 
-## Rules
+## Execution Steps
 
-- The default remedy is deletion: of a statement, of the excess in a statement, or of a record. Rewording is never a remedy. A cut (`before` → `after`) only deletes words; the one thing it may add is the id of the record that keeps a statement.
-- Duplicates: each obligation lives in exactly one record. Choose the one home by "Correcting duplicates" in `record-trace.md` and delete the other copy (`consolidate`, or `delete` for a record fully restated elsewhere). List the duplicate keys each proposal clears in `duplicates`.
-- Yellow (exceeds): a record that goes beyond its anchor is highly suspect. Delete the excess (`cut_excess`). If you believe the excess is needed, return `propose_anchor` with `proposed_anchor` set to one testable statement, and still delete the excess in `changes`: it stays deleted until the owner anchors it.
-- Red (conflicts): the anchor is the owner's word. Cut or delete the record's conflicting statement (`resolve_conflict`), with the anchor id and the owner's quote as `source`. If you believe the anchor itself is wrong, return `propose_anchor` with the anchor you would have the owner state, and still cut the conflicting statement.
-- A record no anchor covers is judged on its own merits: is it valuable to the product? If not, `delete` it. Return `keep_with_reason` only when it is, saying in `justification` what it gives the product.
+Return `VALIDATION.INPUT` when `trace_path`, `slice`, `wave` or `references` is missing, or `level` is not one of the three.
+
+1. Read "Correcting duplicates" and "Interpretation" in `references/record-trace.md`, and "Levels" and "Proposals file" in `references/record-cleanup.md`.
+2. Read the trace. Every record, anchor, cell and duplicate the slice names must be in it; otherwise return `TRACE.SLICE_MISSING` naming what is missing.
+3. For each item of the slice, decide the remedy by the rules below, reading the code where a rule depends on it.
+4. Return the envelope below.
+
+### Rules
+
+- Deletion is the default: of a statement, of the excess in a statement, or of a record. Rewording is allowed rarely, with a stated justification: a change whose `after` is not `before` with words deleted needs `reword_justification`. A cut may add the id of the record that keeps a statement.
+- Duplicates, at every level: each obligation lives in exactly one record. Choose the one home by "Correcting duplicates" and delete the other copy (`consolidate`, or `delete` for a record fully restated elsewhere). List the duplicate keys each proposal clears in `duplicates`.
+- Yellow (excess beyond an anchor), by `level`:
+  - `aggressive`: delete the excess (`cut_excess`). If you believe it is needed, return `propose_anchor` with `proposed_anchor` set to one testable statement, and still delete the excess in `changes` until the owner anchors it.
+  - `standard`: delete the excess unless it documents existing code behaviour; then `keep_with_reason` with `code` set to the location (`file:symbol`).
+  - `conservative`: keep the excess when it is accurate to the code (`keep_with_reason` with `code`); delete it when it is wrong or of no value.
+- Red (conflicts), at every level: resolve every conflict, and state how in `resolution` with its source of truth in `source`. `cut`: delete the record's conflicting text; the anchor id and the owner's quote are the source. `reconcile`: reword the record's text to agree, with `reword_justification`. `propose_anchor`: the anchor is wrong; set `proposed_anchor` to the anchor the owner would state.
+- Records no anchor covers, by `level`: `aggressive` keeps one only when its value is stated in `justification`; `standard` judges it on its value to the product; `conservative` keeps it unless it is wrong, duplicated or of no value. Otherwise `delete` it.
 - A record left with no statements is deleted.
 - Quote `before` exactly as the record's statement reads in the trace, so the report can count it.
 - One proposal per decision the owner would approve or reject on its own; group changes that stand or fall together.
@@ -44,23 +58,38 @@ Return fenced JSON, nothing else:
   "success": true,
   "data": {
     "proposals": [
-      {"wave": 1, "kind": "consolidate", "title": "Keep the log-root rule in REQ-SAG-0003",
-       "records": ["REQ-SAG-0003", "ADR-SAG-0021"],
-       "changes": [{"record": "ADR-SAG-0021", "before": "The log root is <CLI>_LOG_ROOT when it is set."}],
-       "justification": "A consumer-visible config key belongs in the REQ; the ADR states the decision and cites REQ-SAG-0003.",
-       "source": {"ref": "REQ-SAG-0003"},
-       "improvement": "One copy of the rule; ADR-SAG-0021 no longer restates REQ-SAG-0003.",
-       "duplicates": ["ADR-SAG-0021/REQ-SAG-0003/1"]}
+      {"wave": 1, "kind": "consolidate", "title": "Keep the log-root rule in REQ-0003",
+       "records": ["REQ-0003", "ADR-0021"],
+       "changes": [{"record": "ADR-0021", "before": "The log root is <CLI>_LOG_ROOT when it is set."}],
+       "justification": "A consumer-visible config key belongs in the REQ; the ADR states the decision and cites REQ-0003.",
+       "source": {"ref": "REQ-0003"},
+       "improvement": "One copy of the rule; ADR-0021 no longer restates REQ-0003.",
+       "duplicates": ["ADR-0021/REQ-0003/1"]}
     ]
   },
-  "error": null
+  "error": null,
+  "metadata": {"correlation_id": "wave-1-dups-1"}
 }
 ```
 
-`kind` is one of `delete`, `consolidate`, `cut_excess`, `resolve_conflict`, `propose_anchor`, `keep_with_reason`. A change without `before` deletes the whole record; with `before` and no `after` it deletes that statement; with both it cuts `before` to `after`. `cells` lists the red cells a proposal resolves. When the slice cannot be judged from the trace (a record or anchor it names is missing), return `success: false`, `data: null` and `error` as `{code: "VALIDATION.INPUT", message}` naming what is missing.
+`kind` is one of `delete`, `consolidate`, `cut_excess`, `resolve_conflict`, `propose_anchor`, `keep_with_reason`. A change without `before` deletes the whole record; with `before` and no `after` it deletes that statement; with both it changes `before` to `after`. `cells` lists the red cells a proposal resolves.
+
+On failure: `success: false`, `data: null`, and `error` as `{code, message, recoverable, suggested_action}`.
+
+## Error Handling
+
+### Handled by agent (recoverable)
+- A slice item whose remedy is unclear from the records: propose the deletion the rules default to and say what is unclear in `justification`; the owner decides on the panel.
+
+### Propagated to lead (fatal)
+- `VALIDATION.INPUT`: a required input is missing or `level` is unknown.
+- `TRACE.UNREADABLE`: `trace_path` cannot be read or is not a trace.
+- `TRACE.SLICE_MISSING`: the slice names a record, anchor, cell or duplicate the trace does not hold.
+
+The lead lists a failed or timed-out slice as not proposed; it is never dropped.
 
 ## Constraints
 
 - Read-only: never edit records, anchors, the trace or any other file. Never call Jev or run `jev_judge.py` or `change_report.py`.
 - Propose only for the slice you were given.
-- Never propose rewording, and never write a sentence arguing for keeping a record or a statement because it exists.
+- Never write a sentence arguing for keeping a record or a statement because it exists.

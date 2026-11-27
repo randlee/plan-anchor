@@ -495,10 +495,12 @@ def proposal(n_kind, records, changes=(), **extra):
                  "improvement": "One record fewer to keep in step."}, **extra)
 
 
-PROPOSALS = {"schema": "plan-anchoring/record-cleanup-proposals/1", "proposals": [
+PROPOSALS = {"schema": "plan-anchoring/record-cleanup-proposals/1", "level": "conservative",
+             "not_proposed": [{"slice": "duplicates of NFR-003", "reason": "proposer timed out"}], "proposals": [
     proposal("consolidate", ["REQ-001", "ADR-002"], [{"record": "REQ-001", "before": "It shall log every copy."}],
              title="Keep the logging rule in ADR-002", source={"ref": "ADR-002"}),
-    proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001"], title="Delete ADR-002"),
+    proposal("resolve_conflict", ["ADR-002"], [{"record": "ADR-002"}], cells=["ADR-002/ANC-001"], resolution="cut",
+             title="Delete ADR-002"),
     proposal("cut_excess", ["REQ-001"], [{"record": "REQ-001", "before": "The tool MUST copy the legacy crates.",
                                           "after": "The tool MUST copy the crates."}], wave=2, title="Cut 'legacy'"),
     proposal("keep_with_reason", ["NFR-003"], wave=2, title="Keep NFR-003: the page-load budget is product value")]}
@@ -537,6 +539,10 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertIn('data-tab="tab-prop">Proposed fixes 4</button>', page)
         tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
         self.assertIn("Reply e.g.: approve 1-5, reject 6, change 7 to: &lt;text&gt;", tab)
+        self.assertIn("Cleanup level: conservative", tab)
+        self.assertEqual(env["data"]["level"], "conservative")
+        self.assertIn("<h3>Not proposed</h3>", tab)
+        self.assertIn("<li>duplicates of NFR-003: proposer timed out</li>", tab)
         self.assertIn("<tr><th scope=\"row\">Records</th><td>3</td><td>2</td></tr>", tab)
         self.assertIn("<tr><th scope=\"row\">Statements</th><td>3</td><td>1</td></tr>", tab)
         self.assertIn("<tr><th scope=\"row\">Duplicates</th><td>1</td><td>0</td></tr>", tab)
@@ -559,6 +565,7 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertIn("Records 3 → 3; statements 3 → 2; duplicates cleared 1 of 1; conflicts resolved 0 of 1", first)
         second = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
         self.assertIn("Delete record ADR-002 (1 statements).", second)
+        self.assertIn("Resolution: cut.", second)
         self.assertIn("ANC-001 — Owner: “copy them”", second)
         third = Path(env["data"]["proposal_panels"][2]).read_text(encoding="utf-8")
         self.assertIn("Wave 2 · cut excess", third)
@@ -573,6 +580,7 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertIn('data-tab="tab-prop">Proposed fixes</button>', page)
         tab = page[page.index('id="tab-prop"'):page.index('id="side"')]
         self.assertIn("No proposals yet", tab)
+        self.assertNotIn("Cleanup level", tab)
         self.assertNotIn("trace-panel", tab)
         self.assertNotIn("Reply e.g.", tab)
 
@@ -596,7 +604,8 @@ class ProposedFixesTests(unittest.TestCase):
         rc, env = self.report("--proposals", write(self.tmp, "bad.json", doc))
         self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
         problems = "\n".join(env["data"]["problems"])
-        for text in ("proposal 1 change 1: after is not a cut", "proposal 2: keep_with_reason is only for a record no anchor covers",
+        for text in ("proposal 1 change 1: after rewords before; rewording is rare and needs reword_justification",
+                     "proposal 2: keep_with_reason for a record an anchor covers (REQ-001) must cite the code",
                      "proposal 3: propose_anchor must list its changes", "proposal 3: propose_anchor needs proposed_anchor",
                      "proposal 4: wave must be", "proposal 4: kind must be", "proposal 4: record REQ-404 is not in the trace"):
             self.assertIn(text, problems)
@@ -607,6 +616,36 @@ class ProposedFixesTests(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = cr.main(["--anchors", "a.json", "--baseline-rev", "HEAD", "--proposals", "p.json", "--out", self.tmp])
         self.assertEqual((rc, json.loads(buf.getvalue())["error"]["code"]), (2, "VALIDATION.INPUT"))
+
+    def test_the_level_governs_keeps_and_rewording_needs_a_justification(self):
+        keep = proposal("keep_with_reason", ["REQ-001"], code="src/copy.rs:copy_crates", title="Keep: documents copy_crates")
+        reword = proposal("resolve_conflict", ["ADR-002"], resolution="reconcile", cells=["ADR-002/ANC-001"], title="Reconcile ADR-002",
+                          changes=[{"record": "ADR-002", "before": "Runtime crates must be written from scratch.",
+                                    "after": "Runtime crates are copied, then trimmed.",
+                                    "reword_justification": "The anchor requires the copy; the decision text must say so."}])
+        doc = {"schema": PROPOSALS["schema"], "level": "aggressive", "proposals": [keep]}
+        rc, env = self.report("--proposals", write(self.tmp, "a.json", doc))
+        self.assertEqual((rc, env["error"]["code"]), (2, "PROPOSALS.INVALID"))
+        self.assertIn("keep_with_reason is refused at aggressive for a record an anchor covers (REQ-001)", env["data"]["problems"][0])
+        rc, env = self.report("--proposals", write(self.tmp, "s.json", dict(doc, level="standard", proposals=[keep, reword])))
+        self.assertEqual(rc, 0, env)
+        self.assertEqual(env["data"]["level"], "standard")
+        kept = Path(env["data"]["proposal_panels"][0]).read_text(encoding="utf-8")
+        self.assertIn("No change. Documents the code at src/copy.rs:copy_crates.", kept)
+        panel = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
+        self.assertIn("Resolution: reconcile.", panel)
+        self.assertIn("Reword ADR-002: “Runtime crates must be written from scratch.” → “Runtime crates are copied, then trimmed.”", panel)
+        self.assertIn("<h3>Rewording (rare; justified)</h3>", panel)
+        self.assertIn("ADR-002: The anchor requires the copy; the decision text must say so.", panel)
+        self.assertEqual(env["data"]["totals"]["conflicts_resolved"], 1)
+        bad = [dict(keep, code="copy_crates"), dict(reword, resolution="cut"), dict(reword, resolution=None),
+               dict(reword, resolution="propose_anchor", changes=[])]
+        rc, env = self.report("--proposals", write(self.tmp, "b.json", dict(doc, level="loose", proposals=bad)))
+        problems = "\n".join(env["data"]["problems"])
+        for text in ("level must be one of aggressive, standard, conservative", "proposal 1: keep_with_reason for a record an anchor covers",
+                     "proposal 2 change 1: resolution cut only deletes words", "proposal 3: resolve_conflict needs resolution",
+                     "proposal 4: resolution propose_anchor needs proposed_anchor"):
+            self.assertIn(text, problems)
 
 
 STATEMENT_START = "The runtime crates are created by copying"

@@ -27,6 +27,8 @@ defaults:
   reply_hint: ""
   totals_rows: []
   proposal_warnings: []
+  level: ""
+  not_proposed: []
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -161,6 +163,7 @@ defaults:
     </div>
     <div class="tab-body" id="tab-prop" hidden>
 {% if proposals_run %}
+      <p class="statement">Cleanup level: {{ level | e }}</p>
       <p class="statement">{{ reply_hint | e }}</p>
       <h3>If all are approved</h3>
       <table>
@@ -176,6 +179,15 @@ defaults:
       <ul>
 {% for w in proposal_warnings %}
         <li>{{ w | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+{% if not_proposed %}
+      <h3>Not proposed</h3>
+      <p class="small">A proposer failed or timed out on these slices; nothing was proposed for them.</p>
+      <ul>
+{% for x in not_proposed %}
+        <li>{{ x | e }}</li>
 {% endfor %}
       </ul>
 {% endif %}
