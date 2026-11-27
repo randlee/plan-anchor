@@ -1,0 +1,6 @@
+schema_version = "1.0.0"
+
+[[sources]]
+root = "docs"
+include = ["requirements.md", "architecture.md"]
+exclude = []

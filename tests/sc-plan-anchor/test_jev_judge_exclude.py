@@ -389,7 +389,7 @@ class LintTests(unittest.TestCase):
             bad = write(d, "bad.json", {"sprints": [{"title": "no id"}]})
             code, out = self.lint(d, "--plan-items", bad)
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "INPUT.MALFORMED"))
-            # ADR-014: plan_source discover output is no longer an accepted form.
+            # ADR-PA-0014: plan_source discover output is no longer an accepted form.
             discover = write(d, "discover.json", {"success": True, "data": {"sprints": [{"id": "atm-bi-2"}]}, "error": None})
             code, out = self.lint(d, "--plan-items", discover)
             self.assertEqual((code, out["success"], out["error"]["code"]), (2, False, "INPUT.MALFORMED"))

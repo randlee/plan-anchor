@@ -117,7 +117,7 @@ class JevPropagationTests(unittest.TestCase):
         refused = jj.ClientError("AUTH.CREDENTIALS", "Jev HTTP 401", status=401)
         refused.attempts = 1
         with mock.patch.object(jj, "call_jev", return_value=Err(refused)) as called:
-            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, {})
         self.assertIs(out.error, refused)
         self.assertEqual(out.error.attempts, 1)
         self.assertEqual(called.call_count, 1)
@@ -126,7 +126,7 @@ class JevPropagationTests(unittest.TestCase):
         down = jj.ClientError("DECIDR.NETWORK", "down", retryable=True)
         down.attempts = 5
         with mock.patch.object(jj, "call_jev", return_value=Err(down)) as called:
-            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, {})
         self.assertIs(out.error, down)
         self.assertEqual((called.call_count, out.error.attempts), (1, 5))
 
@@ -134,7 +134,7 @@ class JevPropagationTests(unittest.TestCase):
         for sends in (5, None):
             with self.subTest(sends=sends), mock.patch.object(jj, "call_jev", return_value=Ok(
                     {"answers": {}, "attempts": sends})) as called:
-                out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
+                out = jj.judge_with_policy(self.body(), 1.0, {})
             self.assertIsInstance(out, Ok)
             self.assertEqual(out.value[1]["attempts"], sends)
             called.assert_called_once()
@@ -142,7 +142,7 @@ class JevPropagationTests(unittest.TestCase):
     def test_wheel_typed_response_error_is_returned_without_consumer_retry(self):
         error = jj.ClientError("DECIDR.RESPONSE_INVALID", "invalid typed response")
         with mock.patch.object(jj, "call_jev", return_value=Err(error)) as called:
-            out = jj.judge_with_policy(self.body(), 1.0, 24000, 2000, {})
+            out = jj.judge_with_policy(self.body(), 1.0, {})
         self.assertIs(out.error, error)
         called.assert_called_once()
 

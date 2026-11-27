@@ -1,4 +1,4 @@
-"""The anchor record lives in the current phase folder, docs/plans/phase-<current>/ (REQ-088).
+"""The anchor record lives in the current phase folder, docs/plans/phase-<current>/ (REQ-PA-0088).
 
 ``plan_dir`` in .sc/plan-anchor/settings.yaml names that folder with the phase id
 written out (docs/plans/phase-b). The skill reads it as ``$P`` and sets
