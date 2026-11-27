@@ -33,8 +33,10 @@ Inputs
   --guidance-url U     with --trace: the Correcting duplicates link (default: the installed references/record-trace.md)
                        Every --trace report lists the red and yellow cells and duplicates with no annotation carrying git
                        history (data.unannotated_cells)
-  --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, and one XHTML panel per unit
-                       in DIR/<name>/
+  --out DIR            writes DIR/<name>.html, the sidecar DIR/<name>.json, one XHTML panel per unit in DIR/<name>/
+                       and the JSON sources in DIR/<name>/sources/ (default DIR: reports_dir from the settings)
+  --name N             default YYYYMMDD-HHMMSS-<kind>-<subject>, kind change, trace or cleanup
+                       (references/html-reporting-guidelines.md)
 
 Item text before the round is the version judged by the item's first run: for {{ tracker }} plans{% if tracker == "bd" %} the
 ``bd history`` entry at or before that run{% elif tracker == "br" %} the ``.beads/issues.jsonl`` committed at or
@@ -765,7 +767,7 @@ def trace_anchor_vars(anchor: dict, keep: Optional[set] = None) -> dict:
             "copy_json": _dump(anchor)}
 
 
-ANNOTATION_NOTE = "anchor-cleanup-proposer text, not Jev"
+ANNOTATION_NOTE = "written by the anchor-cleanup-proposer agent, not Jev"
 
 
 def annotated(note: Optional[dict]) -> bool:
@@ -799,7 +801,7 @@ def trace_cell_vars(c: dict, anchor: dict, record: dict, props: Sequence[int] = 
         if note:
             blocks += [{"items": [what]}, {"heading": "Proposed remedy", "note": ANNOTATION_NOTE, "items": [note.get("remedy", "")]}]
             blocks += history_blocks(note)
-    blocks.append({"heading": "Anchor", "items": [anchor["statement"], f"Owner: “{anchor['quote']}”", f"Scope: {anchor['scope']}"]})
+    blocks.append({"heading": "Anchor", "items": [anchor["statement"], f"Owner said: “{anchor['quote']}”", f"Scope: {anchor['scope']}"]})
     blocks.append({"heading": "Record statements", "items": stm or [(record.get("obligations") or {}).get("note") or "No obligation statements."],
                    "list": bool(stm)})
     jev = "Jev P(yes): " + " · ".join(f"{q} {c['p_yes'][q]:.2f}" for q in TRACE_QUESTION_ORDER if q in c["p_yes"])
@@ -1143,7 +1145,7 @@ def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict], xref: Sequ
                "links": [{"text": r, "panel": dom_id("rec", r)} for r in p["records"]]},
               {"heading": "Change", "items": changes, "list": len(changes) > 1},
               {"heading": "Justification", "items": [p["justification"]]},
-              {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner: “{src['quote']}”" if src.get("quote") else "")
+              {"heading": "Source of truth", "items": [src["ref"] + (f" — Owner said: “{src['quote']}”" if src.get("quote") else "")
                                                        + (f" — commit {src['commit']}" if src.get("commit") else "")]},
               {"heading": "Expected improvement", "items": [p["improvement"], effect_line(effect)]}]
     if clears:
@@ -1164,7 +1166,7 @@ def proposal_vars(n: int, p: dict, t: dict, records: Dict[str, dict], xref: Sequ
                                   else f"{b['heading']}: {b['items'][0]}" if len(b["items"]) == 1
                                   else "\n".join([f"{b['heading']}:", *(f"- {x}" for x in b["items"])]) for b in blocks]]
     return {"dom": f"prop-{n}", "cls": "proposal", "title": title, "subtitle": subtitle, "blocks": blocks,
-            "copy_json": "", "copy_label": "Copy panel text", "context_text": "\n".join(context)}
+            "copy_json": "", "copy_label": "Copy Context", "context_text": "\n".join(context)}
 
 
 def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError]:
@@ -1177,7 +1179,11 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
         return err("TRACE.INVALID", f"{args.trace} is not a usable trace file: " + "; ".join(problems[:5]),
                    "Pass a file written by `jev_judge.py trace`.")
     t = doc.value
-    name = args.name or Path(args.trace).stem
+    subject = Path(str(t.get("anchors_path") or "")).parent.name or "records"
+    where = report_location(args, "cleanup" if args.proposals else "trace", subject)
+    if isinstance(where, Err):
+        return where
+    out, name = where.value
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         return err("VALIDATION.INPUT", f"--name {name!r} must be a file stem of letters, digits, '.', '_' or '-'", "Pass --name like trace-phase-b.")
     anchors = {a["id"]: a for a in t["anchors"]}
@@ -1212,7 +1218,6 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
     if isinstance(binary, Err):
         return binary
     cells = {(c["record"], c["anchor"]): c for c in t["cells"]}
-    out = Path(args.out).resolve()
     panels_dir = out / name
     try:
         panels_dir.mkdir(parents=True, exist_ok=True)
@@ -1293,7 +1298,7 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
                     {"label": "Requested ids Raptor did not serve", "value": "; ".join(f"{x['id']}: {x['reason']}" for x in t.get("not_served", [])) or "-"},
                     {"label": "Records with no relation", "value": ", ".join((t.get("summary") or {}).get("records_with_no_relation", [])) or "-"}]
         shell = {"title": args.title or f"Records x anchors ({len(t['records'])} x {len(t['anchors'])})",
-                 "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes); what, remedy and history text in red, yellow and duplicate panels comes from the anchor-cleanup-proposer agents' annotations, not Jev.",
+                 "subtitle": "Classes are computed by jev_judge.py from Jev's P(yes). What, remedy and history text in red, yellow and duplicate panels is written by the anchor-cleanup-proposer agent, not Jev.",
                  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                  "anchor_cols": [{"id": a["id"], "statement": a["statement"], "dom": dom_id("anc", a["id"])} for a in t["anchors"]],
                  "grid_rows": grid, "summary_rows": summary_rows, "sections": sections, "metadata_rows": metadata,
@@ -1321,7 +1326,12 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
         rendered = render(binary.value, "trace-report.html.j2", shell, page, scratch, run)
         if isinstance(rendered, Err):
             return rendered
-    return Ok({"html": page.as_posix(), "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
+    # The trace holds every record as Raptor served it (the record snapshot) and the merged annotations.
+    sources = save_sources(panels_dir, [("trace.json", Path(args.trace))] + ([("proposals.json", Path(args.proposals))] if args.proposals else []))
+    if isinstance(sources, Err):
+        return sources
+    return Ok({"html": page.as_posix(), "sources": sources.value, "index_entry": index_entry(name),
+               "panels": panel_paths, "pair_panels": pair_panels, "duplicates": len(dup_rows), "cells": len(panel_paths) - len(t["records"]) - len(t["anchors"]),
                "records": len(t["records"]), "anchors": len(t["anchors"]),
                "proposals": None if proposals is None else len(proposals), "proposal_panels": prop_panels, "totals": totals,
                "warnings": warnings, "level": level or None, "not_proposed": not_proposed, "unannotated_cells": unannotated,
@@ -1331,19 +1341,72 @@ def build_trace(args: argparse.Namespace, run: Runner) -> Result[dict, ToolError
 # ---------------------------------------------------------------- command
 
 
-def issue_template(root: Path) -> Result[Optional[str], ToolError]:
-    import plan_anchor_settings as pas  # lazy: PyYAML only when a settings file exists
+def settings_module():
+    import plan_anchor_settings as pas  # lazy: PyYAML only when a settings file exists, for issue_url_template and reports_dir
 
-    found = pas.effective_settings(root)
+    return pas
+
+
+def issue_template(root: Path) -> Result[Optional[str], ToolError]:
+    found = settings_module().effective_settings(root)
     if isinstance(found, Err):
         return found
     s = found.value.settings
     return Ok(s.issue_url_template if s is not None else None)
 
 
+def report_location(args: argparse.Namespace, kind: str, subject: str) -> Result[Tuple[Path, str], ToolError]:
+    """Where a report goes (references/html-reporting-guidelines.md): --out, else ``reports_dir`` from the settings
+    (default site/reports/plan-anchor) under the folder holding .sc/; and --name, else the stamped, non-intersecting
+    ``YYYYMMDD-HHMMSS-<kind>-<subject>`` (with -2, -3... if a report of that name already exists)."""
+    if args.out:
+        out = Path(args.out).resolve()
+    else:
+        pas = settings_module()
+        found = pas.effective_settings(Path(args.repository_root).resolve())
+        if isinstance(found, Err):
+            return found
+        base = found.value.path.parent.parent.parent if found.value.path is not None else None
+        if base is None:
+            top = pas.find_repo_root(Path(args.repository_root))
+            base = top.value if isinstance(top, Ok) else Path(args.repository_root).resolve()
+        settings = found.value.settings
+        out = (base / ((settings.reports_dir if settings is not None else None) or pas.REPORTS_DIR_DEFAULT)).resolve()
+    if args.name:
+        return Ok((out, args.name))
+    stem = "-".join([datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S"), kind,
+                     re.sub(r"[^A-Za-z0-9._-]+", "-", subject).strip("-.") or "report"])
+    name, n = stem, 1
+    while (out / f"{name}.html").exists() or (out / name).exists():
+        n += 1
+        name = f"{stem}-{n}"
+    return Ok((out, name))
+
+
+def save_sources(panels_dir: Path, files: Sequence[Tuple[str, Any]]) -> Result[List[str], ToolError]:
+    """Copy the report's JSON sources (and the records it rendered) to ``<name>/sources/``, so it can be rebuilt.
+    Each entry is (file name, a Path to copy or a JSON value to write)."""
+    dest, saved = panels_dir / "sources", []
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        for name, src in files:
+            target = dest / name
+            if isinstance(src, Path):
+                shutil.copyfile(src, target)
+            else:
+                target.write_text(json.dumps(src, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            saved.append(target.as_posix())
+    except OSError as exc:
+        return err("SCRIPT.IO", f"could not save the report's sources in {dest}: {exc}", "Pass a writable --out folder.")
+    return Ok(saved)
+
+
+def index_entry(name: str) -> str:
+    """The line the agent adds to <reports_dir>/index.html, newest first (references/html-reporting-guidelines.md)."""
+    return f'<li><a href="{E(name)}.html">{E(name)}</a></li>'
+
+
 def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, ToolError]:
-    if not args.out:
-        return err("VALIDATION.INPUT", "--out is required", "Pass --out <folder> for the report.")
     if args.trace:
         return build_trace(args, run)
     if args.proposals:
@@ -1351,15 +1414,15 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
     if not args.anchors or not args.baseline_rev:
         return err("VALIDATION.INPUT", "--anchors and --baseline-rev are required (or pass --trace)",
                    "Pass --anchors <anchors.json> --baseline-rev <rev>, or --trace <trace.json>.")
-    name = args.name or "change-report"
-    args.name = name
     anchors = Path(args.anchors)
     if not anchors.is_file():
         return err("SCRIPT.IO", f"anchors file {anchors} does not exist", "Pass --anchors naming anchors.json.")
     anchors = anchors.resolve()
     plan_dir = Path(args.plan_dir).resolve() if args.plan_dir else anchors.parent
-    if not args.out:
-        return err("VALIDATION.INPUT", "--out is required", "Pass --out <folder> for the report.")
+    where = report_location(args, "change", plan_dir.name)
+    if isinstance(where, Err):
+        return where
+    out, args.name = where.value
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.name):
         return err("VALIDATION.INPUT", f"--name {args.name!r} must be a file stem of letters, digits, '.', '_' or '-'",
                    "Pass --name like phase-b-changes.")
@@ -1401,7 +1464,6 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
     items = [item_unit(i, runs.value[i], root.value, run, template.value) for i in sorted(runs.value, key=natural)]
     warnings += [f"{u['id']}: {u['text_note']}" for u in items if u["text_note"]]
 
-    out = Path(args.out).resolve()
     panels_dir = out / args.name
     try:
         panels_dir.mkdir(parents=True, exist_ok=True)
@@ -1484,7 +1546,16 @@ def build(args: argparse.Namespace, run: Runner = run_command) -> Result[dict, T
         sidecar.write_text(json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     except OSError as exc:
         return err("SCRIPT.IO", f"could not write {sidecar}: {exc}", "Pass a writable --out folder.")
+    files = [("anchors.json", anchors), (f"anchors-at-{re.sub(r'[^A-Za-z0-9._-]+', '-', args.baseline_rev)}.json", old_doc.value)]
+    files += [(f"drift-review.json", Path(args.drift_file))] if args.drift_file else []
+    files += [(f"fixture-checks-{n}.json", Path(x)) for n, x in enumerate(args.fixture_checks, start=1)]
+    files += [(f"tuning-result-{n}.json", Path(x)) for n, x in enumerate(args.tuning_result, start=1)]
+    files += [(Path(r["_path"]).name, Path(r["_path"])) for rs in runs.value.values() for r in rs]
+    sources = save_sources(panels_dir, files)
+    if isinstance(sources, Err):
+        return sources
     return Ok({"html": page.as_posix(), "sidecar": sidecar.as_posix(), "panels": panel_paths, "status": status,
+               "sources": sources.value, "index_entry": index_entry(args.name),
                "items": len(items), "anchors": len(anchor_units),
                "drift": None if drift is None else {"findings": len(drift["findings"]),
                                                     "open": sum(1 for f in drift["findings"] if f["status"] == "open")},
@@ -1521,8 +1592,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--tuning-result", action="append", default=[], metavar="FILE",
                    help="tournament result_vars.json, oldest first; repeatable")
     p.add_argument("--drift-file", default="", help="drift review JSON (assets/schemas/drift-review.schema.json)")
-    p.add_argument("--out", required=True, help="output folder")
-    p.add_argument("--name", default="", help="file stem of the page, sidecar and panel folder (default change-report; with --trace the trace file's stem)")
+    p.add_argument("--out", default="", help="output folder (default: reports_dir from .sc/plan-anchor/settings.yaml, "
+                   "else site/reports/plan-anchor; references/html-reporting-guidelines.md)")
+    p.add_argument("--name", default="", help="file stem of the page, sidecar and panel folder (default YYYYMMDD-HHMMSS-<kind>-<subject>, "
+                   "kind change, trace or cleanup)")
     p.add_argument("--title", default="")
     p.add_argument("--repository-root", default=".", help="where .sc/plan-anchor/settings.yaml is looked up (default: .)")
     return p

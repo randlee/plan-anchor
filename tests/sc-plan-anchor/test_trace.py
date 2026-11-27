@@ -314,8 +314,8 @@ class TraceTests(unittest.TestCase):
         self.assertIn("Forbids the copy.", red)
         self.assertIn("Copy instead.", red)
         self.assertIn("Reviewer disputes Jev: Forbids the copy.", red)
-        self.assertIn("anchor-cleanup-proposer text, not Jev", red)
-        self.assertNotIn("anchor-cleanup-proposer text, not Jev", green)
+        self.assertIn("written by the anchor-cleanup-proposer agent, not Jev", red)
+        self.assertNotIn("written by the anchor-cleanup-proposer agent, not Jev", green)
         for heading in ("What conflicts", "Proposed remedy", "Anchor", "Record statements"):
             self.assertIn(f"<h3>{heading}</h3>", red)
         self.assertLess(red.index("What conflicts"), red.index("Proposed remedy"))
@@ -571,7 +571,7 @@ class ProposedFixesTests(unittest.TestCase):
         self.assertIn("<tr><th scope=\"row\">Statements</th><td>3</td><td>1</td></tr>", tab)
         self.assertIn("<tr><th scope=\"row\">Duplicates</th><td>1</td><td>0</td></tr>", tab)
         self.assertIn("<tr><th scope=\"row\">Conflicts</th><td>1</td><td>0</td></tr>", tab)
-        self.assertEqual(tab.count('title="Copy panel text"'), 4)
+        self.assertEqual(tab.count('title="Copy Context"'), 4)
         self.assertNotIn('title="Copy JSON"', tab)
         for n, title in enumerate(["Keep the logging rule in ADR-002", "Delete ADR-002", "Cut 'legacy'",
                                    "Keep NFR-003: the page-load budget is product value"], start=1):
@@ -590,7 +590,7 @@ class ProposedFixesTests(unittest.TestCase):
         second = Path(env["data"]["proposal_panels"][1]).read_text(encoding="utf-8")
         self.assertIn("Delete record ADR-002 (1 statements).", second)
         self.assertIn("Resolution: cut.", second)
-        self.assertIn("ANC-001 — Owner: “copy them”", second)
+        self.assertIn("ANC-001 — Owner said: “copy them”", second)
         third = Path(env["data"]["proposal_panels"][2]).read_text(encoding="utf-8")
         self.assertIn("Wave 2 · cut excess", third)
         self.assertIn("“The tool MUST copy the legacy crates.” → “The tool MUST copy the crates.”", third)
@@ -706,7 +706,7 @@ class ProposedFixesTests(unittest.TestCase):
         red = next(Path(x).read_text(encoding="utf-8") for x in env["data"]["panels"] if "-cell-ADR-002-ANC-001" in x)
         self.assertNotIn("No reviewer annotation yet.", red)
         for text in ("“Runtime crates must be written from scratch.”", "Forbids the copy the anchor asks for.", "Delete ADR-002.",
-                     "anchor-cleanup-proposer text, not Jev", "<h3>History (git)</h3>",
+                     "written by the anchor-cleanup-proposer agent, not Jev", "<h3>History (git)</h3>",
                      "ADR-002 “Runtime crates must be written from scratch.” — abc1234 2026-01-02: Add ADR-002",
                      "<h3>Stale</h3>", "Added before the copy anchor; the anchor is newer.", "Proposals: 2"):
             self.assertIn(text, red)
@@ -773,6 +773,29 @@ class ProposedFixesTests(unittest.TestCase):
                      "Approving applies the changes above now; the proposed anchor is added only if the owner also approves its text."):
             self.assertIn(text, second)
         self.assertNotIn("Check before approving", second)
+
+    def test_default_output_follows_the_settings_and_saves_the_sources(self):
+        settings = Path(self.tmp) / ".sc" / "plan-anchor" / "settings.yaml"
+        settings.parent.mkdir(parents=True)
+        settings.write_text("schema_version: 1\nreports_dir: \"web/reports\"\n", encoding="utf-8")
+        proposals = write(self.tmp, "proposals.json", PROPOSALS)
+        pages = []
+        for _ in range(2):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = cr.main(["--trace", self.trace, "--proposals", proposals, "--repository-root", self.tmp])
+            env = json.loads(buf.getvalue())
+            self.assertEqual(rc, 0, env)
+            page = Path(env["data"]["html"])
+            pages.append(page)
+            self.assertEqual(page.parent, (Path(self.tmp) / "web" / "reports").resolve())
+            self.assertRegex(page.name, r"^\d{8}-\d{6}-cleanup-[A-Za-z0-9._-]+\.html$")
+            sources = page.parent / page.stem / "sources"
+            self.assertEqual(sorted(x.name for x in sources.iterdir()), ["proposals.json", "trace.json"])
+            self.assertEqual(json.loads((sources / "trace.json").read_text(encoding="utf-8"))["schema"], "plan-anchoring/trace/2")
+            self.assertEqual(env["data"]["index_entry"], f'<li><a href="{page.stem}.html">{page.stem}</a></li>')
+        self.assertNotEqual(pages[0], pages[1], "two runs never share a name")
+        self.assertTrue(pages[0].is_file() and pages[1].is_file())
 
     def test_aggressive_keep_of_an_unanchored_record_needs_code_or_an_owner_quote(self):
         keep = proposal("keep_with_reason", ["NFR-003"], source={"ref": "NFR-003"})

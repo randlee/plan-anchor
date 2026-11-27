@@ -263,7 +263,8 @@ class EndToEndTests(unittest.TestCase):
         page = Path(data["html"]).read_text(encoding="utf-8")
         model = json.loads(Path(data["sidecar"]).read_text(encoding="utf-8"))
         self.assertEqual(Path(data["html"]).parent, project.out)
-        self.assertEqual(Path(data["sidecar"]), project.out / "change-report.json")
+        self.assertRegex(Path(data["sidecar"]).name, r"^\d{8}-\d{6}-change-phase-a\.json$", "the stamped default name")
+        self.assertEqual(Path(data["html"]).with_suffix(".json"), Path(data["sidecar"]))
         self.assertEqual((data["items"], data["anchors"], data["status"]), (2, 3, "DRIFT"))
         self.assertEqual(data["drift"], {"findings": 2, "open": 1})
         for panel in data["panels"]:
@@ -394,6 +395,27 @@ class IssueUrlSettingTests(unittest.TestCase):
         path.write_text("schema_version: 1\nissue_url_template: 5\n", encoding="utf-8")
         code, out = self.cli("show")
         self.assertEqual((code, out["error"]["code"]), (2, "SETTINGS.INVALID_ISSUE_URL"))
+
+    def test_reports_dir_is_set_shown_with_its_default_and_kept_by_the_installer(self):
+        code, out = self.cli("show")
+        self.assertEqual((code, out["data"]["reports_dir"]), (0, "site/reports/plan-anchor"))
+        code, out = self.cli("set", "reports_dir", "web/reports")
+        self.assertEqual(code, 0, out)
+        code, out = self.cli("show")
+        self.assertEqual(out["data"]["reports_dir"], "web/reports")
+        for value in ("../x", "/abs", "a\\b"):
+            code, out = self.cli("set", "reports_dir", value)
+            self.assertEqual((code, out["error"]["code"]), (2, "VALIDATION.INPUT"), value)
+        spec = importlib.util.spec_from_file_location("sc_plan_anchor_install_rd", PLUGIN / "install.py")
+        inst = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = inst
+        spec.loader.exec_module(inst)
+        import yaml
+
+        parsed = inst.parse_settings("schema_version: 1\nanchor_tracker: br\nreports_dir: \"web/reports\"\n", yaml)
+        self.assertEqual(parsed.value.reports_dir, "web/reports")
+        self.assertEqual(inst.parse_settings(inst.render_settings(parsed.value), yaml).value, parsed.value)
+        self.assertEqual(inst.parse_settings("schema_version: 1\nreports_dir: \"../x\"\n", yaml).error.code, "SETTINGS.INVALID_REPORTS_DIR")
 
     def test_installer_reads_and_keeps_it(self):
         spec = importlib.util.spec_from_file_location("sc_plan_anchor_install_cr", PLUGIN / "install.py")

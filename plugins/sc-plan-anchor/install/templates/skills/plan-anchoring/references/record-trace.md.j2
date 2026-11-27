@@ -25,8 +25,10 @@ After anchors are locked, to check the requirement records (REQ, ADR, NFR) again
 
 ```
 python3 scripts/jev_judge.py trace --anchors <plan>/anchors.json --source <repo> [--source <repo> ...] [--raptor <checkout>] [--index <raptor-index.json> ...] [--ids ids.txt] [--annotations notes.json] [--out-dir DIR] [--no-overlap] [--dry-run | --answers-file F] [--workers N]
-python3 scripts/change_report.py --trace DIR/trace-<UTC>.json --out <folder> [--guidance-url URL]
+python3 scripts/change_report.py --trace DIR/trace-<UTC>.json [--out <folder>] [--guidance-url URL]
 ```
+
+The report's folder, name, saved sources, index entry and wording follow `references/html-reporting-guidelines.md`.
 
 - Records come only from Raptor. `--source <repo>` runs Raptor's importer (`--raptor <checkout>`) on a repository with a `.raptor/` inventory; `--index` takes a saved Raptor import index as Raptor wrote it. Nothing parses record Markdown, splits headings or finds obligations in text. Raptor missing: `DEPENDENCY.RAPTOR` with the install command; no inventory: `RAPTOR.NO_INVENTORY`; importer failure: `RAPTOR.IMPORT_FAILED`.
 - Each record: `id`, `kind` (ADR for Raptor's decisions; REQ or NFR from the id for its requirements), `repository` (Raptor's repository URN; Raptor's index carries no per-record file path), the whole record as Raptor serves it (`raptor`), its import `diagnostics`, and `obligations`: Raptor's `requirement_statement.statements` verbatim, or, when Raptor serves none (ADRs, or an empty list), `statements: null` with a note saying so. Obligations are never synthesized.

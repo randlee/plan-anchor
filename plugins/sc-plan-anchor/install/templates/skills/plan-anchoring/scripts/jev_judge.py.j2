@@ -3931,7 +3931,7 @@ def cmd_trace(args) -> Result[dict, ClientError]:
             "duplicates_pass": None if overlap is None else not to_correct, "duplicates_to_correct": None if overlap is None else to_correct,
             "message": actions and actions["duplicates"],
             "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
-            "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
+            "next": f"python3 scripts/change_report.py --trace {path}"}
     if failures:
         return jev_failure("trace requests", failures, len(jobs) + len(overlap_replies), data)
     return Ok({"success": True, "data": data, "error": None})
