@@ -60,6 +60,10 @@ Subcommands
                   repeat) on stdout as each answer arrives, teed to anchor-runs/tournament-<run>.jsonl; never writes beads
   bead-batch      high layer: item beads x an anchor's question bead (and its open candidate children) as batch
                   request lines (--emit prints them), then the low layer; reads beads only
+  trace           records (REQ/ADR/NFR, read only through Raptor; DEPENDENCY.RAPTOR without it) x locked anchors:
+                  four Jev questions per cell, classified here as serves, related, exceeds, conflicts or none; then
+                  (--overlap, default on) which statements of records sharing an anchor column another already states;
+                  writes trace-<UTC>.json (render: change_report.py --trace)
   tournament      run one anchor's question tournament through the low layer (oracle x candidate bundles x repeats) and
                   score it; writes result_vars.json for the anchor-tuning agent; data.accepted; never writes beads
 
@@ -3405,6 +3409,501 @@ def cmd_batch(args) -> Result[Any, ClientError]:
 
 
 # --------------------------------------------------------------------------- #
+# trace: records (REQ/ADR/NFR) x locked anchors, four questions per cell, classified here (references/record-trace.md)
+# --------------------------------------------------------------------------- #
+TRACE_SCHEMA = "plan-anchoring/trace/2"
+TRACE_CANDIDATE = "trace"
+TRACE_CONFLICT_MIN = 0.5    # P(conflicts=yes) at or above this: conflicts, whatever the other answers
+TRACE_RELATION_MIN = 0.6    # P(serves=yes) or P(relates=yes) at or above this: the record touches the anchor
+TRACE_EXCEEDS_MIN = 0.6     # a related record with P(exceeds=yes) at or above this: exceeds
+TRACE_DUPLICATE_MIN = 0.6   # overlap: Jev answers yes with confidence at or above this: the statement is a duplicate
+TRACE_POSSIBLE_MIN = 0.4    # overlap: yes with confidence at or above this (below the duplicate threshold): possible
+OVERLAP_CANDIDATE = "overlap"
+# What the caller must do with the overlap results; the tool never chooses which copy to keep (references/record-trace.md).
+OVERLAP_ACTIONS = {
+    "duplicates": "{n} duplicate statements must be corrected: keep each obligation in one record and delete the other copy. "
+                  "See Correcting duplicates in references/record-trace.md.",
+    "fully_restated": "Fully restated: every statement is in another record; delete this record."}
+OVERLAP_CRITERIA = {
+    "yes": "item.text already states this obligation, with the same meaning (it may be worded differently or be part of a larger statement).",
+    "no": "item.text does not state this obligation.",
+    "unclear": "item.text touches the same subject but it cannot be decided whether it states this obligation."}
+TRACE_CLASSES = ("conflicts", "exceeds", "serves", "related", "none")
+TRACE_ANNOTATED = ("exceeds", "conflicts")
+TRACE_PROVENANCE = "reviewer-agent"
+TRACE_PROVENANCE_LABEL = "written by a reviewer agent, not Jev"
+# Records are read only through Raptor (https://github.com/randlee/raptor): its import index is the one source of record
+# identity, text and obligation statements. Nothing here parses Markdown or finds obligations in text.
+RAPTOR_PIN = "8ce2be8363318be2f7c2e2b79d1f646399cab2fd"  # the Raptor revision judge-jev pins
+RAPTOR_INSTALL = (f"Install Raptor (needs a Rust toolchain): git clone https://github.com/randlee/raptor raptor && "
+                  f"git -C raptor checkout {RAPTOR_PIN} && uv venv raptor/.venv -p 3.11 && "
+                  "uv pip install -p raptor/.venv/bin/python ./raptor markdown; then pass --raptor raptor "
+                  "(references/installation-and-troubleshooting.md). Or pass a saved Raptor index with --index.")
+RAPTOR_OBLIGATIONS_FIELD = {"requirements": "requirement_statement.statements"}  # Raptor serves no statements for decisions
+RAPTOR_NO_OBLIGATIONS = "No obligation statements."
+TRACE_QUESTIONS = {
+    "relates": {"type": "choice",
+                "instructions": "Does `record.raptor` (the record as Raptor serves it) govern any behavior that falls inside `anchor.scope`, the area `anchor.statement` constrains? Answer only whether the two cover the same behavior or code, not whether they agree.",
+                "criteria": {"yes": "At least one obligation in the record governs behavior inside the anchor's scope.",
+                             "no": "The record governs only other behavior.",
+                             "unclear": "Cannot tell from the text."}},
+    "serves": {"type": "choice",
+               "instructions": "Does at least one obligation in `record.raptor` (the record as Raptor serves it) carry out what `anchor.statement` requires, so that satisfying the record also satisfies the anchor within the anchor's scope?",
+               "criteria": {"yes": "An obligation in the record implements or states the anchor's requirement.",
+                            "no": "No obligation in the record implements the anchor's requirement.",
+                            "unclear": "The record touches the anchor's topic but it is not possible to tell whether it implements it."}},
+    "conflicts": {"type": "choice",
+                  "instructions": "Does any obligation in `record.raptor` (the record as Raptor serves it) contradict `anchor.statement`: requiring what the anchor forbids, forbidding or limiting what the anchor requires or permits, or requiring a behavior the anchor says must not exist? Judge only inside `anchor.scope`.",
+                  "criteria": {"yes": "At least one obligation in the record contradicts the anchor.",
+                               "no": "No obligation in the record contradicts the anchor.",
+                               "unclear": "An obligation might contradict the anchor but the text does not make it certain."}},
+    "exceeds": {"type": "choice",
+                "instructions": "Among the obligations in `record.raptor` (the record as Raptor serves it) that concern the anchor's topic, does any go beyond `anchor.statement`: stricter, applying outside `anchor.scope`, or adding constraints (limits, prohibitions, required structure) the anchor does not ask for? Answer no if the record does not concern the anchor's topic.",
+                "criteria": {"yes": "An obligation on the anchor's topic is broader or stricter than the anchor.",
+                             "no": "Every obligation on the anchor's topic stays within the anchor.",
+                             "unclear": "Cannot tell whether an obligation goes beyond the anchor."}},
+}
+
+
+def trace_class(p_yes: dict, conflict_min: float, relation_min: float, exceeds_min: float) -> str:
+    """One cell's class from Jev's P(yes) per question; counted here, never asked of Jev."""
+    if p_yes["conflicts"] >= conflict_min:
+        return "conflicts"
+    if p_yes["serves"] >= relation_min or p_yes["relates"] >= relation_min:
+        if p_yes["exceeds"] >= exceeds_min:
+            return "exceeds"
+        return "serves" if p_yes["serves"] >= relation_min else "related"
+    return "none"
+
+
+def p_yes_of(answer) -> Result[float, ClientError]:
+    if hasattr(answer, "noul"):
+        return Ok(float(answer.noul))
+    probs = getattr(answer, "probabilities", None)
+    if isinstance(probs, Mapping) and isinstance(probs.get("yes"), (int, float)):
+        return Ok(float(probs["yes"]))
+    return fail("DECIDR.RESPONSE_INVALID", "a trace answer has no probability for 'yes'")
+
+
+def raptor_checkout(root: str) -> Result[dict, ClientError]:
+    """The Raptor checkout trace runs (``--raptor``): its venv python and scripts/extract.py. Read from no environment variable."""
+    if not root:
+        return fail("DEPENDENCY.RAPTOR", "trace reads REQ, NFR and ADR records only through Raptor, and no Raptor checkout was given (--raptor)",
+                    action=RAPTOR_INSTALL)
+    base = pathlib.Path(root).expanduser()
+    python, extract = base / ".venv" / "bin" / "python", base / "scripts" / "extract.py"
+    if not python.is_file() or not extract.is_file():
+        return fail("DEPENDENCY.RAPTOR", f"{root} is not an installed Raptor checkout (needs .venv/bin/python and scripts/extract.py)",
+                    action=RAPTOR_INSTALL)
+    revision = None
+    try:
+        got = subprocess.run(["git", "-C", str(base), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+        revision = got.stdout.strip() or None if got.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return Ok({"root": str(base), "python": str(python), "extract": str(extract), "revision": revision})
+
+
+def raptor_import(raptor: dict, project_root: str, output: pathlib.Path, run=subprocess.run) -> Result[str, ClientError]:
+    """Run Raptor's importer on one repository (its .raptor/ inventory) and return the index path it wrote."""
+    if not pathlib.Path(project_root, ".raptor").is_dir():
+        return fail("RAPTOR.NO_INVENTORY", f"{project_root} has no .raptor/ inventory, so Raptor cannot read its records",
+                    action="Add a .raptor/ inventory naming the record files (Raptor's README), or leave this repository out.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        got = run([raptor["python"], raptor["extract"], "--project-root", ".", "--output", str(output.resolve())],
+                  cwd=project_root, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor could not import {project_root}: {exc}", action=RAPTOR_INSTALL)
+    # Raptor's importer exits 1 when it imported with diagnostics; it still writes the index and a JSON report
+    # ({"index", "files", "records", "issues"}) as its last stdout line. Each record carries its own diagnostics here.
+    report = None
+    try:
+        report = json.loads((got.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        pass
+    with_issues = got.returncode == 1 and isinstance(report, dict) and isinstance(report.get("issues"), int) and report["issues"] > 0
+    if (got.returncode != 0 and not with_issues) or not output.is_file():
+        tail = (got.stderr or got.stdout or "")[-600:]
+        return fail("RAPTOR.IMPORT_FAILED", f"Raptor's importer failed on {project_root} (exit {got.returncode}): {tail}",
+                    action="Fix what Raptor reports, then rerun.")
+    return Ok(str(output))
+
+
+def raptor_index_records(index_path: str) -> Result[dict, ClientError]:
+    """Records and import diagnostics from one Raptor import index, as Raptor serves them (no field is re-derived from text).
+    kind: ADR for Raptor's decisions table; for its requirements table, the record id's prefix (REQ or NFR)."""
+    loaded = load_json(index_path, "Raptor import index")
+    if isinstance(loaded, Err):
+        return loaded
+    d = loaded.value
+    meta = d.get("metadata") if isinstance(d, dict) else None
+    issues = (d.get("diagnostics") or {}).get("issues") if isinstance(d, dict) else None
+    if not isinstance(meta, dict) or not isinstance(meta.get("repository"), str) or not isinstance(issues, list) \
+            or not all(isinstance(d.get(t), list) for t in ("requirements", "decisions")):
+        return fail("INPUT.MALFORMED", f"{index_path} is not a Raptor import index (metadata.repository, requirements, decisions, diagnostics.issues)",
+                    action="Pass the JSON written by Raptor's scripts/extract.py --output.")
+    repository = meta["repository"]
+    by_id = {}
+    for i in issues:
+        if isinstance(i, dict) and isinstance(i.get("id"), str):
+            by_id.setdefault(i["id"], []).append(i)
+    records = []
+    for table in ("requirements", "decisions"):
+        for rec in d[table]:
+            rid = rec.get("id") if isinstance(rec, dict) else None
+            checked = decidr_client.safe_id(rid, f"{index_path} {table} id")
+            if not checked["ok"]:
+                return Err(checked["error"])
+            field = RAPTOR_OBLIGATIONS_FIELD.get(table)
+            statements = None
+            if field:
+                value = rec
+                for part in field.split("."):
+                    value = value.get(part) if isinstance(value, dict) else None
+                statements = value if isinstance(value, list) and value else None
+            obligations = {"source": "raptor", "field": field if statements is not None else None, "statements": statements,
+                           "note": None if statements is not None else RAPTOR_NO_OBLIGATIONS}
+            records.append({"id": rid, "kind": "ADR" if table == "decisions" else rid.split("-", 1)[0],
+                            "repository": repository, "index": index_path, "raptor": rec, "obligations": obligations,
+                            "diagnostics": by_id.get(rid, [])})
+    imported = {r["id"] for r in records}
+    not_imported = {rid: v for rid, v in by_id.items() if rid not in imported}
+    return Ok({"repository": repository, "records": records, "not_imported": not_imported})
+
+
+def load_trace_records(args, out_dir: pathlib.Path, stamp_: str) -> Result[dict, ClientError]:
+    """Records from Raptor only: --source repositories imported by the Raptor checkout, and/or --index saved Raptor indexes.
+    --ids restricts them; a requested id Raptor did not serve is listed in ``not_served``, never filled from elsewhere."""
+    if not args.source and not args.index:
+        return fail("VALIDATION.INPUT", "pass at least one --source <repository root> (read through Raptor) or --index <Raptor index>",
+                    action="trace reads records only through Raptor.")
+    indexes, raptor = list(args.index), None
+    if args.source:
+        got = raptor_checkout(args.raptor)
+        if isinstance(got, Err):
+            return got
+        raptor = got.value
+        for n, src in enumerate(args.source, start=1):
+            made = raptor_import(raptor, src, out_dir / f"trace-{stamp_}.raptor-{n}.json")
+            if isinstance(made, Err):
+                return made
+            indexes.append(made.value)
+    records, seen, not_imported, repos = [], {}, {}, []
+    for path in indexes:
+        got = raptor_index_records(path)
+        if isinstance(got, Err):
+            return got
+        repos.append({"repository": got.value["repository"], "index": path})
+        not_imported.update(got.value["not_imported"])
+        for r in got.value["records"]:
+            if r["id"] in seen:
+                return fail("VALIDATION.INPUT", f"record id {r['id']} is served by two Raptor indexes ({seen[r['id']]}, {path})",
+                            action="Pass each repository once.")
+            seen[r["id"]] = path
+            records.append(r)
+    not_served = []
+    if args.ids:
+        try:
+            wanted = [x.strip() for x in pathlib.Path(args.ids).read_text(encoding="utf-8").splitlines() if x.strip()]
+        except (OSError, UnicodeDecodeError) as exc:
+            return fail("INPUT.MISSING", f"--ids file could not be read: {exc}", action="Pass a file with one record id per line.")
+        keep = set(wanted)
+        records = [r for r in records if r["id"] in keep]
+        for rid in dict.fromkeys(wanted):
+            if rid not in seen:
+                reason = ("Raptor did not import it: " + "; ".join(str(i.get("message", "")) for i in not_imported[rid][:3])) \
+                    if rid in not_imported else "not in any Raptor index given"
+                not_served.append({"id": rid, "reason": reason})
+    if not records:
+        return fail("INPUT.EMPTY", "Raptor served no records to trace", action="Check the --source/--index repositories and --ids.")
+    return Ok({"records": records, "not_served": not_served, "repositories": repos,
+               "raptor": {k: raptor[k] for k in ("root", "revision")} if raptor else None})
+
+
+def load_trace_annotations(path: str) -> Result[list, ClientError]:
+    if not path:
+        return Ok([])
+    loaded = load_json(path, "annotations file")
+    if isinstance(loaded, Err):
+        return loaded
+    rows = loaded.value
+    if not isinstance(rows, list):
+        return fail("INPUT.MALFORMED", "annotations must be a JSON array of {record, anchor, clauses, what, remedy, jev_disputed}")
+    out = []
+    for n, row in enumerate(rows, start=1):
+        if not isinstance(row, dict) or not isinstance(row.get("record"), str) or not isinstance(row.get("anchor"), str) \
+                or not isinstance(row.get("clauses", []), list) or not all(isinstance(c, str) for c in row.get("clauses", [])) \
+                or not isinstance(row.get("what", ""), str) or not isinstance(row.get("remedy", ""), str) \
+                or not isinstance(row.get("jev_disputed", False), bool):
+            return fail("INPUT.MALFORMED", f"annotation {n} needs record and anchor strings, clauses (strings), what, remedy and jev_disputed (bool)")
+        out.append({"record": row["record"], "anchor": row["anchor"], "clauses": list(row.get("clauses", [])),
+                    "what": row.get("what", ""), "remedy": row.get("remedy", ""), "jev_disputed": row.get("jev_disputed", False),
+                    "provenance": TRACE_PROVENANCE, "provenance_label": TRACE_PROVENANCE_LABEL})
+    return Ok(out)
+
+
+def trace_answer_json(answer) -> dict:
+    if hasattr(answer, "noul"):
+        return {"noul": answer.noul}
+    return {"choice": answer.choice, "confidence": answer.confidence, "probabilities": dict(answer.probabilities)}
+
+
+def trace_summary(cells: list, records: list, anchors: list) -> dict:
+    per_anchor = {a["id"]: {c: 0 for c in TRACE_CLASSES} for a in anchors}
+    totals = {c: 0 for c in TRACE_CLASSES}
+    related = set()
+    for c in cells:
+        per_anchor[c["anchor"]][c["class"]] += 1
+        totals[c["class"]] += 1
+        if c["class"] != "none":
+            related.add(c["record"])
+    return {"per_anchor": per_anchor, "totals": totals,
+            "records_with_no_relation": [r["id"] for r in records if r["id"] not in related],
+            "conflicts": [{"record": c["record"], "anchor": c["anchor"]} for c in cells if c["class"] == "conflicts"]}
+
+
+def record_statements(r: dict) -> list:
+    """A record's statements as Raptor serves them: its statement list (REQ/NFR), else an ADR's decision as one block."""
+    listed = r["obligations"]["statements"] or []
+    if listed:
+        return [s.get("text", "") if isinstance(s, dict) else str(s) for s in listed]
+    decision = r["raptor"].get("decision")
+    text = decision.get("text") if isinstance(decision, dict) else decision
+    return [text] if text else []
+
+
+def record_text(r: dict) -> str:
+    """The record as Raptor serves it, as text: id and title, its statement paragraph (an ADR's context), then each statement."""
+    raptor = r["raptor"]
+    head = [v.get("text") if isinstance(v, dict) else v for v in (raptor.get("requirement_statement"), raptor.get("context"))]
+    return "\n".join([f"{r['id']}: {raptor.get('title', '')}", next((h for h in head if h), ""),
+                      *(f"- {s}" for s in record_statements(r))])
+
+
+def overlap_partners(cells: list) -> dict:
+    """Item id -> partner ids: in each anchor column, every unordered pair of records whose cell is judged and not none;
+    the lower id (string order) is the item."""
+    columns = {}
+    for c in cells:
+        if c["class"] not in ("none", "error"):
+            columns.setdefault(c["anchor"], set()).add(c["record"])
+    partners = {}
+    for a, b in sorted({(a, b) for ids in columns.values() for a in ids for b in ids if a < b}):
+        partners.setdefault(a, []).append(b)
+    return partners
+
+
+def overlap_jobs(model: str, partners: dict, by_id: dict) -> tuple:
+    """One request per item: one choice question per statement of each partner. Returns (jobs, {(item, qid): (partner, i, statement)})."""
+    jobs, asked = [], {}
+    for item, ids in partners.items():
+        questions = {}
+        for pid in ids:
+            for i, statement in enumerate(record_statements(by_id[pid])):
+                qid = f"{pid.replace('-', '_')}_s{i}"
+                questions[qid] = {"type": "choice", "criteria": OVERLAP_CRITERIA,
+                                  "instructions": f"Does item.text already state this obligation from {pid}?\nOBLIGATION: {statement}"}
+                asked[(item, qid)] = (pid, i, statement)
+        if questions:
+            r = by_id[item]
+            body = {"model": model, "state": {"item": {"id": item, "title": r["raptor"].get("title", ""), "text": record_text(r)}},
+                    "questions": questions}
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, item, None, OVERLAP_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(item, None, OVERLAP_CANDIDATE, 1, rid, body, questions, {}, OVERLAP_CANDIDATE))
+    return jobs, asked
+
+
+def overlap_class(choice: str, confidence: float, duplicate_min: float, possible_min: float) -> str:
+    """One statement's class from Jev's choice and confidence; counted here, never asked of Jev."""
+    if choice != "yes" or confidence < possible_min:
+        return "none"
+    return "duplicate" if confidence >= duplicate_min else "possible"
+
+
+def overlap_summary(overlap: list, records: list) -> dict:
+    restated = {}
+    for o in overlap:
+        if o["class"] == "duplicate":
+            restated.setdefault(o["partner"], set()).add(o["statement_index"])
+    per_record = {r["id"]: {"statements_restated": len(restated.get(r["id"], ())), "statements_total": len(record_statements(r))}
+                  for r in records}
+    return {"per_record": per_record,
+            "fully_restated": [rid for rid, n in per_record.items() if n["statements_total"] and n["statements_restated"] == n["statements_total"]]}
+
+
+def trace_replies(args, jobs: list, fixture) -> Result[list, ClientError]:
+    """Each job's reply in job order, (answers, session_id, model_answered) or a ClientError: from the fixture, or one batch."""
+    replies = []
+    if fixture is not None:
+        for job in jobs:
+            got = decidr_client.fixture_attempt(job, fixture, 1)
+            if not got["ok"]:
+                return Err(got["error"])
+            replies.append((got["value"]["answers"], None, "fixture"))
+        return Ok(replies)
+    if not jobs:
+        return Ok(replies)
+    allowed = decidr_client.remote_preflight(args.repository_root, "The record texts and anchor statements")
+    if not allowed["ok"]:
+        return Err(allowed["error"])
+    result = decidr_client.call_batch_results([j.body for j in jobs], model=args.model, abort_on=frozenset({"auth"}),
+                                              timeout_secs=args.timeout, repository_root=args.repository_root,
+                                              consent_what="The record texts and anchor statements", workers=args.workers)
+    if not result["ok"]:
+        return Err(result["error"])
+    by_position = {line.get("position"): line for line in result["value"]}
+    for n in range(len(jobs)):
+        line = by_position.get(n)
+        if line is None:
+            replies.append(ClientError("DECIDR.INVALID_RESULT", "sc-decidr returned no result for this request"))
+        elif not line["ok"]:
+            replies.append(line["error"])
+        else:
+            replies.append((line["value"], line.get("session_id"), line.get("model_answered")))
+    return Ok(replies)
+
+
+def cmd_trace(args) -> Result[dict, ClientError]:
+    thresholds = {}
+    for name, flag, value in (("conflicts", "--conflict-threshold", args.conflict_threshold),
+                              ("relation", "--relation-threshold", args.relation_threshold),
+                              ("exceeds", "--exceeds-threshold", args.exceeds_threshold),
+                              ("duplicate", "--duplicate-threshold", args.duplicate_threshold),
+                              ("possible", "--possible-threshold", args.possible_threshold)):
+        checked = check_threshold(value, flag)
+        if isinstance(checked, Err):
+            return checked
+        thresholds[name] = checked.value
+    if not 1 <= args.workers <= decidr_client.BATCH_MAX_WORKERS:
+        return fail("VALIDATION.INPUT", f"--workers must be between 1 and {decidr_client.BATCH_MAX_WORKERS}")
+    if args.dry_run and args.answers_file:
+        return fail("VALIDATION.INPUT", "pass --dry-run or --answers-file, not both")
+    rec = _valid_record(args.anchors)
+    if isinstance(rec, Err):
+        return rec
+    anchors = [a for a in rec.value["anchors"] if a.get("status") == "locked"]
+    if not anchors:
+        return fail("ANCHOR.NONE_LOCKED", f"{args.anchors} has no locked anchor to trace against",
+                    action="Lock the anchors the owner approved (references/anchor-capture.md), then rerun.")
+    out_dir = pathlib.Path(args.out_dir) if args.out_dir else pathlib.Path(args.anchors).parent / "anchor-runs"
+    name = f"trace-{stamp()}"
+    loaded_records = load_trace_records(args, out_dir, name[len("trace-"):])
+    if isinstance(loaded_records, Err):
+        return loaded_records
+    source = loaded_records.value
+    records = Ok(source["records"])
+    annotations = load_trace_annotations(args.annotations)
+    if isinstance(annotations, Err):
+        return annotations
+    loaded = answers_file(args.answers_file, "'<record>/<anchor>', '<anchor>', '<item record>/overlap' or 'overlap'")
+    if isinstance(loaded, Err):
+        return loaded
+    fixture = loaded.value
+
+    jobs = []
+    for r in records.value:
+        for a in anchors:
+            state = {"record": {"id": r["id"], "kind": r["kind"], "repository": r["repository"], "raptor": r["raptor"]},
+                     "anchor": {"id": a["id"], "statement": a["statement"], "scope": a.get("scope") or "", "quote": anchor_quote(a)}}
+            body = {"model": args.model, "state": state, "questions": TRACE_QUESTIONS}
+            rid = decidr_client.batch_request_id(TRACE_CANDIDATE, r["id"], a["id"], TRACE_CANDIDATE, 1)
+            jobs.append(decidr_client.BatchJob(r["id"], a["id"], a["id"], 1, rid, body, TRACE_QUESTIONS, {}, TRACE_CANDIDATE))
+    if args.dry_run:  # overlap requests are formed from the cells' answers, which a dry run does not have
+        return Ok({"success": True, "error": None, "data": {
+            "dry_run": True, "requests": [{"request_id": j.request_id, "request": j.body} for j in jobs],
+            "overlap": "not formed: overlap pairs come from the cells' answers" if args.overlap else "off"}})
+
+    replies = trace_replies(args, jobs, fixture)
+    if isinstance(replies, Err):
+        return replies
+    notes = {(n["record"], n["anchor"]): n for n in annotations.value}
+    cells, failures, warnings = [], [], []
+    for job, reply in zip(jobs, replies.value):
+        cell = {"record": job.item_id, "anchor": job.anchor_id, "request_id": job.request_id}
+        p_yes = {}
+        if not isinstance(reply, ClientError):
+            for q in TRACE_QUESTIONS:
+                got = p_yes_of(reply[0].get(q)) if q in reply[0] else fail("DECIDR.RESPONSE_INVALID", f"no answer for {q}")
+                if isinstance(got, Err):
+                    reply = got.error
+                    break
+                p_yes[q] = round(got.value, 4)
+        if isinstance(reply, ClientError):
+            failures.append((f"{job.item_id}/{job.anchor_id}", reply))
+            cells.append(dict(cell, **{"class": "error", "error": {"code": reply.code, "message": reply.message}}))
+            continue
+        answers, session_id, _ = reply
+        cls = trace_class(p_yes, thresholds["conflicts"], thresholds["relation"], thresholds["exceeds"])
+        cell.update({"class": cls, "p_yes": p_yes, "answers": {q: trace_answer_json(answers[q]) for q in TRACE_QUESTIONS},
+                     "session_id": session_id})
+        note = notes.pop((job.item_id, job.anchor_id), None)
+        if note is not None:
+            if cls in TRACE_ANNOTATED:
+                cell["annotation"] = {k: v for k, v in note.items() if k not in ("record", "anchor")}
+            else:
+                warnings.append(f"annotation for {job.item_id}/{job.anchor_id} not merged: the cell is {cls}, not exceeds or conflicts")
+        cells.append(cell)
+    warnings += [f"annotation for {r}/{a} not merged: no such record or locked anchor" for r, a in notes]
+
+    overlap, overlap_replies = None, []
+    if args.overlap:
+        ojobs, asked = overlap_jobs(args.model, overlap_partners(cells), {r["id"]: r for r in records.value})
+        got = trace_replies(args, ojobs, fixture)
+        if isinstance(got, Err):
+            return got
+        overlap, overlap_replies = [], got.value
+        for job, reply in zip(ojobs, overlap_replies):
+            if not isinstance(reply, ClientError) and set(reply[0]) != set(job.questions):
+                reply = ClientError("DECIDR.RESPONSE_INVALID", "the answer IDs do not match the question IDs")
+            if isinstance(reply, ClientError):
+                failures.append((f"{job.item_id}/{OVERLAP_CANDIDATE}", reply))
+                continue
+            for qid, answer in reply[0].items():
+                partner, i, statement = asked[(job.item_id, qid)]
+                overlap.append({"item": job.item_id, "partner": partner, "statement_index": i, "statement": statement,
+                                "choice": answer.choice, "confidence": answer.confidence, "session_id": reply[1],
+                                "class": overlap_class(answer.choice, answer.confidence, thresholds["duplicate"], thresholds["possible"])})
+                if overlap[-1]["class"] == "duplicate":
+                    overlap[-1]["action"] = "correct"
+        overlap.sort(key=lambda o: (o["item"], o["partner"], o["statement_index"]))
+    answered = [r for r in replies.value + overlap_replies if not isinstance(r, ClientError)]
+    judged = [c for c in cells if c["class"] != "error"]
+    summary = trace_summary(judged, records.value, anchors)
+    actions, to_correct = None, 0
+    if overlap is not None:
+        summary.update(overlap_summary(overlap, records.value))
+        to_correct = sum(1 for o in overlap if o["class"] == "duplicate")
+        actions = dict(OVERLAP_ACTIONS, duplicates=OVERLAP_ACTIONS["duplicates"].format(n=to_correct) if to_correct else None)
+    trace = {
+        "schema": TRACE_SCHEMA, "generated_at": now_utc().isoformat(timespec="seconds"),
+        "anchors_path": args.anchors, "model": args.model, "model_answered": sorted({r[2] for r in answered if r[2]}),
+        "answered_by": "fixture" if fixture is not None else "jev", "session_ids": [r[1] for r in answered if r[1]],
+        "thresholds": thresholds, "questions": TRACE_QUESTIONS,
+        "questions_digest": canonical_digest(TRACE_QUESTIONS),
+        "question_digests": {q: canonical_digest(v) for q, v in TRACE_QUESTIONS.items()},
+        "anchors": [dict(a, scope=a.get("scope") or "", quote=anchor_quote(a)) for a in anchors],
+        "raptor": source["raptor"], "repositories": source["repositories"], "not_served": source["not_served"],
+        "records": [{k: r[k] for k in ("id", "kind", "repository", "index", "raptor", "obligations", "diagnostics")}
+                    for r in records.value],
+        "cells": cells, "overlap": overlap, "actions": actions, "summary": summary, "warnings": warnings,
+    }
+    path = out_dir / f"{name}.json"
+    try:
+        save_json(str(path), trace)
+    except OSError as exc:
+        return fail("SCRIPT.IO", f"trace file could not be written: {exc}", action="Pass a writable --out-dir.")
+    data = {"trace_path": str(path), "cells": len(cells), "overlap": None if overlap is None else len(overlap),
+            "duplicates_pass": None if overlap is None else not to_correct, "duplicates_to_correct": None if overlap is None else to_correct,
+            "message": actions and actions["duplicates"],
+            "not_served": source["not_served"], "summary": trace["summary"], "warnings": warnings,
+            "next": f"python3 scripts/change_report.py --trace {path} --out <folder>"}
+    if failures:
+        return jev_failure("trace requests", failures, len(jobs) + len(overlap_replies), data)
+    return Ok({"success": True, "data": data, "error": None})
+
+
+# --------------------------------------------------------------------------- #
 # bead-batch (high layer): resolve tracker records into request lines, then the low layer
 # --------------------------------------------------------------------------- #
 class TrackerReader:
@@ -4555,6 +5054,29 @@ def build_parser() -> argparse.ArgumentParser:
     tn.add_argument("--answers-file", default="", help="fixture answers keyed '<case>/<bundle>/r<n>', '<case>/<bundle>', '<bundle>' or '*'; no network")
     tn.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
     tn.set_defaults(func=cmd_tournament)
+
+    tr = sub.add_parser("trace", help="judge records (REQ/ADR/NFR) x locked anchors: serves, related, exceeds, conflicts or none per cell; writes trace-<UTC>.json")
+    tr.add_argument("--anchors", required=True, help="anchors.json; only locked anchors are traced")
+    tr.add_argument("--source", action="append", default=[], help="repository root with a .raptor/ inventory; its REQ/NFR/ADR records are read through Raptor (repeatable)")
+    tr.add_argument("--index", action="append", default=[], help="a saved Raptor import index (scripts/extract.py --output), used as Raptor wrote it (repeatable)")
+    tr.add_argument("--raptor", default="", help="Raptor checkout with .venv; required with --source")
+    tr.add_argument("--ids", default="", help="file of record ids, one per line: trace only these; ids Raptor did not serve are listed in not_served")
+    tr.add_argument("--annotations", default="", help="JSON [{record, anchor, clauses, what, remedy, jev_disputed}] merged into exceeds/conflicts cells, labelled as written by a reviewer agent, not Jev")
+    tr.add_argument("--out-dir", default="", help="default <anchors dir>/anchor-runs")
+    tr.add_argument("--conflict-threshold", type=float, default=TRACE_CONFLICT_MIN, help="P(conflicts=yes) at or above this: conflicts")
+    tr.add_argument("--relation-threshold", type=float, default=TRACE_RELATION_MIN, help="P(serves=yes) or P(relates=yes) at or above this: related")
+    tr.add_argument("--exceeds-threshold", type=float, default=TRACE_EXCEEDS_MIN, help="a related cell with P(exceeds=yes) at or above this: exceeds")
+    tr.add_argument("--duplicate-threshold", type=float, default=TRACE_DUPLICATE_MIN, help="overlap: Jev's yes with confidence at or above this: duplicate statement")
+    tr.add_argument("--possible-threshold", type=float, default=TRACE_POSSIBLE_MIN, help="overlap: Jev's yes with confidence at or above this, below --duplicate-threshold: possible")
+    tr.add_argument("--overlap", action=argparse.BooleanOptionalAction, default=True,
+                    help="also ask, for each pair of records sharing an anchor column (cells not none), which of one's statements the other already states (default on)")
+    tr.add_argument("--workers", type=int, default=decidr_client.BATCH_MAX_WORKERS, help=f"parallel Jev calls, 1 to {decidr_client.BATCH_MAX_WORKERS}")
+    tr.add_argument("--model", default=DEFAULT_MODEL)
+    tr.add_argument("--timeout", type=float, default=30.0)
+    tr.add_argument("--dry-run", action="store_true", help="show the cell requests on stdout; call nothing, write nothing")
+    tr.add_argument("--answers-file", default="", help="fixture answers keyed '<record>/<anchor>', '<anchor>', '<item record>/overlap', 'overlap' or '*'; no network")
+    tr.add_argument("--repository-root", default=".", help=decidr_client.REPO_ROOT_HELP)
+    tr.set_defaults(func=cmd_trace)
 
     rp = sub.add_parser("report", help="render a run")
     rp.add_argument("--run", required=True)

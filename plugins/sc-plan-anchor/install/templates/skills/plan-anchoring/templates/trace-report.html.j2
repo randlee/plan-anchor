@@ -1,0 +1,230 @@
+---
+metadata:
+  name: trace-report
+  description: The plan-anchoring trace report, records x locked anchors; receives top-level arrays and pre-rendered cell panels only.
+required_variables:
+  - title
+  - generated_at
+  - anchor_cols
+  - grid_rows
+  - summary_rows
+  - sections
+  - metadata_rows
+defaults:
+  subtitle: ""
+  summary_copy_json: ""
+  overlap_run: ""
+  dup_rows: []
+  dup_count: "0"
+  fully_restated: []
+  no_relation: []
+  dup_message: ""
+  fully_restated_action: ""
+  guidance_url: ""
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title | e }}</title>
+  <style type="text/css">
+    :root { --bg: #ffffff; --fg: #1f2937; --muted: #6b7280; --line: #e5e7eb; --head: #f3f4f6; --panel: #ffffff; --code: #f3f4f6; --ch-bg: #fff7d6; --link: #1d4ed8; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --bg: #0b1220; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --head: #1f2937; --panel: #111827; --code: #1f2937; --ch-bg: #3b3414; --link: #93c5fd; }
+    }
+    :root[data-theme="dark"] { --bg: #0b1220; --fg: #e5e7eb; --muted: #9ca3af; --line: #1f2937; --head: #1f2937; --panel: #111827; --code: #1f2937; --ch-bg: #3b3414; --link: #93c5fd; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0 auto; padding: 24px; color: var(--fg); background: var(--bg); line-height: 1.5; }
+    a { color: var(--link); }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 20px; position: relative; }
+    h1 { margin: 0 0 6px 0; font-size: 1.6rem; padding-right: 48px; }
+    h3 { font-size: 1rem; margin: 16px 0 6px 0; }
+    .subtitle, .generated-at, .small { color: var(--muted); font-size: 0.85rem; margin: 2px 0; }
+    .theme-toggle { position: absolute; top: 0; right: 0; }
+    .summary-block, .section { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 16px 0; background: var(--panel); }
+    .section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .section-head h2 { margin: 0; font-size: 1.15rem; }
+    .section-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .icon-button { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 14px; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; display: block; overflow-x: auto; }
+    th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; font-size: 0.88rem; }
+    thead th { background: var(--head); }
+    .statement { font-weight: 600; margin: 8px 0 2px 0; } .quote { color: var(--muted); font-style: italic; margin: 0 0 8px 0; }
+    footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+    .trace { display: flex; gap: 16px; align-items: flex-start; }
+    .grid-wrap { flex: 0 0 auto; overflow-x: auto; }
+    table.grid { width: auto; }
+    table.grid td { width: 18px; height: 16px; padding: 0; }
+    table.grid td.cell { cursor: pointer; }
+    table.grid td.cell:hover, table.grid td.sel { outline: 2px solid var(--fg); }
+    table.grid th.hdr { cursor: pointer; }
+    table.grid th.hdr:hover { text-decoration: underline; }
+    table.grid th.sel { background: var(--ch-bg); font-weight: 700; }
+    table.grid th.rec { white-space: nowrap; font-weight: 400; }
+    table.grid th.anc { writing-mode: vertical-rl; font-weight: 400; }
+    .c-serves { background: #2e7d32; } .c-related { background: #90caf9; } .c-exceeds { background: #f9a825; }
+    .c-conflicts { background: #c62828; } .c-none { background: #f5f5f5; } .c-error { background: #6b7280; }
+    .legend span { padding: 2px 8px; margin-right: 4px; color: #111; }
+    #side { position: sticky; top: 8px; flex: 1 1 520px; max-height: 95vh; overflow: auto; }
+    #side .trace-panel { display: none; background: var(--panel); }
+    #side .trace-panel.shown { display: block; }
+    .tabs { display: flex; gap: 4px; margin-top: 12px; }
+    .tab { border: 1px solid var(--line); border-bottom: none; border-radius: 8px 8px 0 0; background: var(--head); color: var(--fg); padding: 6px 14px; cursor: pointer; font-size: 0.95rem; }
+    .tab.active { background: var(--panel); font-weight: 700; }
+    .badge { background: #c62828; color: #fff; border-radius: 999px; padding: 0 7px; font-weight: 700; }
+    .tab-body { flex: 0 1 auto; overflow-x: auto; }
+    .tab-body[hidden] { display: none; }
+    table.dups tr.hdr { cursor: pointer; } table.dups tr.hdr:hover, table.dups tr.sel { background: var(--ch-bg); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ title | e }}</h1>
+    <button type="button" class="icon-button theme-toggle" title="Toggle dark mode" data-theme-toggle="1">&#x25D0;</button>
+{% if subtitle %}
+    <p class="subtitle">{{ subtitle | e }}</p>
+{% endif %}
+    <p class="generated-at">Generated: {{ generated_at | e }}</p>
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab active" role="tab" data-tab="tab-grid">Anchors × Records</button>
+      <button type="button" class="tab" role="tab" data-tab="tab-dup">Duplicates{% if overlap_run %}{% if dup_rows %} <span class="badge">(!)</span>{% endif %} {{ dup_count | e }}{% endif %}</button>
+    </nav>
+    <p class="legend"><span class="c-serves">serves</span><span class="c-related">related</span><span class="c-exceeds">exceeds</span><span class="c-conflicts">conflicts</span><span class="c-none">none</span> Click a coloured cell, a record (row) or an anchor (column).</p>
+  </header>
+
+  <div class="trace">
+    <div class="tab-body grid-wrap" id="tab-grid">
+      <table class="grid">
+        <thead><tr><th scope="col"></th>
+{% for a in anchor_cols %}
+          <th scope="col" class="anc hdr" data-panel="{{ a.dom | e }}" title="{{ a.statement | e }}">{{ a.id | e }}</th>
+{% endfor %}
+        </tr></thead>
+        <tbody>
+{% for row in grid_rows %}
+          <tr><th scope="row" class="rec hdr" data-panel="{{ row.dom | e }}">{% if row.repo %}{{ row.repo | e }}: {% endif %}{{ row.id | e }}</th>
+{% for c in row.cells %}
+            <td class="c-{{ c.cls | e }}{% if c.dom %} cell{% endif %}"{% if c.dom %} data-panel="{{ c.dom | e }}"{% endif %} title="{{ row.id | e }} x {{ c.anchor | e }}: {{ c.cls | e }}"></td>
+{% endfor %}
+          </tr>
+{% endfor %}
+        </tbody>
+      </table>
+{% if no_relation %}
+      <h3>Not covered by any anchor</h3>
+      <ul>
+{% for r in no_relation %}
+        <li>{{ r | e }}</li>
+{% endfor %}
+      </ul>
+{% endif %}
+    </div>
+    <div class="tab-body" id="tab-dup" hidden>
+{% if overlap_run %}
+      <h2>Duplicated statements</h2>
+{% if dup_message %}
+      <p class="statement">{{ dup_message | e }}</p>
+{% endif %}
+{% if dup_rows %}
+      <table class="dups">
+        <thead><tr><th scope="col">Pair</th><th scope="col">Statement</th><th scope="col">Confidence</th><th scope="col">Action</th></tr></thead>
+        <tbody>
+{% for d in dup_rows %}
+          <tr class="hdr" data-panel="{{ d.dom | e }}"><td>{{ d.pair | e }}</td><td>{{ d.statement | e }}</td><td>{{ d.confidence | e }}</td><td><a href="{{ guidance_url | e }}">correct: Correcting duplicates</a></td></tr>
+{% endfor %}
+        </tbody>
+      </table>
+{% else %}
+      <p class="small">No duplicated statements.</p>
+{% endif %}
+      <h2>Fully restated records (deletion candidates)</h2>
+      <p class="small">{{ fully_restated_action | e }}</p>
+{% if fully_restated %}
+      <ul>
+{% for r in fully_restated %}
+        <li>{{ r | e }}</li>
+{% endfor %}
+      </ul>
+{% else %}
+      <p class="small">None.</p>
+{% endif %}
+{% else %}
+      <p>Duplicates: not run (trace ran with --no-overlap).</p>
+{% endif %}
+    </div>
+    <div id="side">
+      <p class="small" id="side-hint">Click a coloured cell, a record or an anchor to see its panel.</p>
+{% for section in sections %}
+{{ section | safe }}
+{% endfor %}
+    </div>
+  </div>
+
+  <section class="summary-block" id="summary">
+    <div class="section-head">
+      <h2>Per anchor</h2>
+{% if summary_copy_json %}
+      <div class="section-actions"><button class="icon-button" type="button" title="Copy JSON" data-copy-text="{{ summary_copy_json | e }}">{}</button></div>
+{% endif %}
+    </div>
+    <p class="small">A record not covered by any anchor is judged on its own merits: is it valuable to the product? A missing anchor is not a reason to delete it (references/record-trace.md).</p>
+    <table>
+      <thead><tr><th scope="col">Anchor</th><th scope="col">serves</th><th scope="col">related</th><th scope="col">exceeds</th><th scope="col">conflicts</th><th scope="col">none</th></tr></thead>
+      <tbody>
+{% for r in summary_rows %}
+        <tr><th scope="row">{{ r.id | e }}</th><td>{{ r.serves | e }}</td><td>{{ r.related | e }}</td><td>{{ r.exceeds | e }}</td><td>{{ r.conflicts | e }}</td><td>{{ r.none | e }}</td></tr>
+{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section metadata">
+    <h2>Metadata</h2>
+    <table><tbody>
+{% for row in metadata_rows %}
+      <tr><th scope="row">{{ row.label | e }}</th><td>{{ row.value | e }}</td></tr>
+{% endfor %}
+    </tbody></table>
+  </section>
+
+  <footer>Generated by plan-anchoring change_report.py --trace; the trace JSON holds the same data, the cells under <code>cells</code> and the duplicates under <code>overlap</code>.</footer>
+
+  <script>
+    document.addEventListener("click", async function (event) {
+      var toggle = event.target.closest("[data-theme-toggle]");
+      if (toggle) {
+        var root = document.documentElement;
+        var dark = root.getAttribute("data-theme") === "dark" ||
+          (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        root.setAttribute("data-theme", dark ? "light" : "dark");
+        return;
+      }
+      var tab = event.target.closest("[data-tab]");
+      if (tab) {
+        document.querySelectorAll("[data-tab]").forEach(function (x) { x.classList.toggle("active", x === tab); });
+        document.querySelectorAll(".tab-body").forEach(function (x) { x.hidden = x.id !== tab.getAttribute("data-tab"); });
+        return;
+      }
+      var cell = event.target.closest("[data-panel]");
+      if (cell) {
+        document.querySelectorAll(".sel").forEach(function (x) { x.classList.remove("sel"); });
+        document.querySelectorAll("#side .trace-panel.shown").forEach(function (x) { x.classList.remove("shown"); });
+        cell.classList.add("sel");
+        var panel = document.getElementById(cell.getAttribute("data-panel"));
+        if (panel) panel.classList.add("shown");
+        var hint = document.getElementById("side-hint");
+        if (hint) hint.style.display = "none";
+        return;
+      }
+      var button = event.target.closest("[data-copy-text]");
+      if (!button) return;
+      try {
+        await navigator.clipboard.writeText(button.getAttribute("data-copy-text") || "");
+        button.setAttribute("title", "Copied");
+      } catch (err) {
+        button.setAttribute("title", "Copy failed");
+      }
+    });
+  </script>
+</body>
+</html>
